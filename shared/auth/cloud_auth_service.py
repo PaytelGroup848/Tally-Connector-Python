@@ -115,7 +115,7 @@ class CloudAuthService:
     def __init__(self, base_url: Optional[str] = None):
         settings = get_settings()
         self.base_url = (base_url or settings.cloud_api_base_url).rstrip("/")
-        self.device_id = get_or_create_device_id()
+        self._device_id = get_or_create_device_id()
 
         self.access_token: Optional[str] = None
         self.refresh_token_val: Optional[str] = None
@@ -194,9 +194,58 @@ class CloudAuthService:
             or self.current_user.get("organization_id")
             or self.current_user.get("connector", {}).get("organizationId")
             or self.current_user.get("connector", {}).get("organization_id")
-            or getattr(self, "organization_id", None)
         )
         return str(org_id) if org_id else None
+
+    @property
+    def organization_id(self) -> Optional[str]:
+        return self.get_organization_id()
+
+    def get_email(self) -> str:
+        """Extracts user email from current_user, connector, or local profile."""
+        if isinstance(self.current_user, dict):
+            email = (
+                self.current_user.get("email")
+                or self.current_user.get("userEmail")
+                or self.current_user.get("connector", {}).get("email")
+            )
+            if email:
+                return str(email).strip().lower()
+        try:
+            p_file = Path("data/profile.json")
+            if not p_file.exists():
+                p_file = _get_writable_data_file("profile.json")
+            if p_file.exists():
+                with open(p_file, "r", encoding="utf-8") as f:
+                    p_data = json.load(f)
+                    if p_data.get("email"):
+                        return str(p_data["email"]).strip().lower()
+        except Exception:
+            pass
+        return ""
+
+    @property
+    def email(self) -> str:
+        return self.get_email()
+
+    def get_device_id(self) -> str:
+        """Extracts device identifier from connector session or hardware file."""
+        if isinstance(self.current_user, dict):
+            conn = self.current_user.get("connector") or {}
+            d_id = conn.get("deviceId") or conn.get("device_id")
+            if d_id:
+                return str(d_id)
+        if getattr(self, "_device_id", None):
+            return self._device_id
+        return get_or_create_device_id()
+
+    @property
+    def device_id(self) -> str:
+        return self.get_device_id()
+
+    @device_id.setter
+    def device_id(self, val: str):
+        self._device_id = val
 
     def sync_user_to_mongodb(self, user_data: Dict[str, Any]) -> None:
         try:

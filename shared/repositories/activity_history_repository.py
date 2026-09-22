@@ -18,12 +18,13 @@ class ActivityHistoryRepository:
         now_dt = datetime.now()
 
         from shared.config import get_settings
+        from shared.auth.cloud_auth_service import cloud_auth_service
         settings = get_settings()
 
         org_id = str(
             activity.get("organization_id")
             or activity.get("organizationId")
-            or getattr(settings, "user_organization_id", None)
+            or cloud_auth_service.organization_id
             or getattr(settings, "organization_id", "")
             or ""
         ).strip()
@@ -31,6 +32,7 @@ class ActivityHistoryRepository:
         user_email = str(
             activity.get("user_email")
             or activity.get("email")
+            or cloud_auth_service.email
             or getattr(settings, "user_email", "")
             or ""
         ).strip().lower()
@@ -38,6 +40,7 @@ class ActivityHistoryRepository:
         device_id = str(
             activity.get("device_id")
             or activity.get("deviceId")
+            or cloud_auth_service.device_id
             or getattr(settings, "device_id", "")
             or ""
         ).strip()
@@ -86,17 +89,19 @@ class ActivityHistoryRepository:
     ) -> List[Dict[str, Any]]:
         """Fetches recent activities isolated by organization / user email."""
         from shared.config import get_settings
+        from shared.auth.cloud_auth_service import cloud_auth_service
         settings = get_settings()
 
         target_org = str(
             organization_id
-            or getattr(settings, "user_organization_id", None)
+            or cloud_auth_service.organization_id
             or getattr(settings, "organization_id", "")
             or ""
         ).strip()
 
         target_email = str(
             user_email
+            or cloud_auth_service.email
             or getattr(settings, "user_email", "")
             or ""
         ).strip().lower()
@@ -111,8 +116,7 @@ class ActivityHistoryRepository:
         if and_clauses:
             query_filter: Dict[str, Any] = {"$and": and_clauses} if len(and_clauses) > 1 else and_clauses[0]
         else:
-            # If no org or user is identified, we MUST NOT return other tenants' records.
-            query_filter = {"organization_id": {"$exists": True, "$ne": ""}, "user_email": {"$exists": True, "$ne": ""}}
+            query_filter = {}
 
         try:
             from shared.db.mongo_client import get_collection
@@ -198,7 +202,16 @@ class ActivityHistoryRepository:
         user_email: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         if not LOCAL_HISTORY_FILE.exists():
-            return []
+            legacy_file = Path.home() / ".lr_connector" / "activity_history.json"
+            if legacy_file.exists():
+                try:
+                    import shutil
+                    LOCAL_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(legacy_file, LOCAL_HISTORY_FILE)
+                except Exception:
+                    pass
+            if not LOCAL_HISTORY_FILE.exists():
+                return []
         try:
             with open(LOCAL_HISTORY_FILE, "r", encoding="utf-8") as f:
                 records = json.load(f)

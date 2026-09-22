@@ -533,12 +533,12 @@ class RemoteCommandWorker(QThread):
                     "status": "SUCCESS" if success else "FAILED",
                     "voucher_number": result_data.get("tallyVoucherNumber"),
                     "error": error_msg if not success else None,
-                    "organization_id": curr_org or cmd.get("organizationId") or cmd.get("organization_id") or self.settings.user_organization_id or self.settings.organization_id or "",
-                    "user_email": (curr_email or cmd.get("email") or self.settings.user_email or "").strip().lower(),
-                    "device_id": curr_dev or cmd.get("deviceId") or self.settings.device_id or "",
+                    "organization_id": curr_org or cmd.get("organizationId") or cmd.get("organization_id") or getattr(self.settings, "organization_id", "") or "",
+                    "user_email": (curr_email or cmd.get("email") or getattr(self.settings, "user_email", "") or "").strip().lower(),
+                    "device_id": curr_dev or cmd.get("deviceId") or getattr(self.settings, "device_id", "") or "",
                 })
             except Exception as act_err:
-                logger.debug(f"Failed to record activity log: {act_err}")
+                logger.warning(f"Failed to record activity log: {act_err}")
 
             if not success and error_details:
                 reason_str = error_details.get("reason")
@@ -649,12 +649,12 @@ class RemoteCommandWorker(QThread):
                             "voucher_date": payload.get("date") or payload.get("voucherDate"),
                             "status": "SUCCESS",
                             "voucher_number": v_num,
-                            "organization_id": curr_org or self.settings.user_organization_id or self.settings.organization_id or "",
-                            "user_email": (curr_email or self.settings.user_email or "").strip().lower(),
-                            "device_id": getattr(cloud_auth_service, "device_id", "") or self.settings.device_id or "",
+                            "organization_id": curr_org or getattr(self.settings, "organization_id", "") or "",
+                            "user_email": (curr_email or getattr(self.settings, "user_email", "") or "").strip().lower(),
+                            "device_id": curr_dev or getattr(self.settings, "device_id", "") or "",
                         })
                     except Exception as act_err:
-                        logger.debug(f"Drain success activity log failed: {act_err}")
+                        logger.warning(f"Drain success activity log failed: {act_err}")
 
                     self.command_processed.emit(
                         cmd_id,
@@ -683,12 +683,12 @@ class RemoteCommandWorker(QThread):
                             "voucher_date": payload.get("date") or payload.get("voucherDate"),
                             "status": "FAILED",
                             "error": res.get("reason"),
-                            "organization_id": curr_org or self.settings.user_organization_id or self.settings.organization_id or "",
-                            "user_email": (curr_email or self.settings.user_email or "").strip().lower(),
-                            "device_id": getattr(cloud_auth_service, "device_id", "") or self.settings.device_id or "",
+                            "organization_id": curr_org or getattr(self.settings, "organization_id", "") or "",
+                            "user_email": (curr_email or getattr(self.settings, "user_email", "") or "").strip().lower(),
+                            "device_id": curr_dev or getattr(self.settings, "device_id", "") or "",
                         })
                     except Exception as act_err:
-                        logger.debug(f"Drain failed activity log failed: {act_err}")
+                        logger.warning(f"Drain failure activity log failed: {act_err}")
 
                     self.command_processed.emit(
                         cmd_id,

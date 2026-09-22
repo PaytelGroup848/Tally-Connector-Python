@@ -264,10 +264,8 @@ class ActivityHistoryScreen(QWidget):
         """Loads activity cards dynamically from the repository in the background."""
         def _fetch_bg():
             try:
-                settings = get_settings()
-                curr_user = getattr(cloud_auth_service, "current_user", None) or {}
-                curr_org = getattr(cloud_auth_service, "organization_id", None) or curr_user.get("organizationId") or curr_user.get("organization_id") or getattr(settings, "organization_id", None)
-                curr_email = getattr(cloud_auth_service, "email", None) or curr_user.get("email") or getattr(settings, "user_email", None)
+                curr_org = cloud_auth_service.organization_id or ""
+                curr_email = cloud_auth_service.email or ""
 
                 activities = activity_history_repo.get_recent_activities(
                     limit=50,
