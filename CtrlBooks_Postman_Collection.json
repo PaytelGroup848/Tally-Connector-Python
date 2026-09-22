@@ -1,0 +1,294 @@
+{
+  "info": {
+    "_postman_id": "81c234da-8233-4459-a913-7b8b429868a4",
+    "name": "CtrlBooks - Complete API Collection",
+    "description": "Comprehensive Postman collection for CtrlBooks, including Cloud Server APIs (connector.cloudata.in) and Local Gateway APIs.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "cloud_base_url",
+      "value": "https://connector.cloudata.in/api/connector",
+      "type": "string"
+    },
+    {
+      "key": "local_base_url",
+      "value": "http://127.0.0.1:8000/api/v1/website",
+      "type": "string"
+    },
+    {
+      "key": "bearer_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Cloud Connector APIs",
+      "item": [
+        {
+          "name": "Auth - Send OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nikuraj200@gmail.com\",\n  \"context\": \"CONNECTOR\"\n}"
+            },
+            "url": {
+              "raw": "{{cloud_base_url}}/auth/send-otp",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["auth", "send-otp"]
+            }
+          }
+        },
+        {
+          "name": "Auth - Verify OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nikuraj200@gmail.com\",\n  \"otp\": \"1234\",\n  \"deviceId\": \"52d47628-bc54-4b52-a5ec-311ef1bf8af2\",\n  \"deviceName\": \"DESKTOP-PC\"\n}"
+            },
+            "url": {
+              "raw": "{{cloud_base_url}}/auth/verify-otp",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["auth", "verify-otp"]
+            }
+          }
+        },
+        {
+          "name": "Auth - Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{cloud_base_url}}/auth/refresh",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["auth", "refresh"]
+            }
+          }
+        },
+        {
+          "name": "Get Companies List",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bearer_token}}" }
+            ],
+            "url": {
+              "raw": "{{cloud_base_url}}/companies",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["companies"]
+            }
+          }
+        },
+        {
+          "name": "Link Company",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bearer_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tallyCompanyName\": \"Annai Agency - 2022-2023\",\n  \"tallyCompanyGuid\": \"9d5fd80c-3872-4025-8c0f-37f207c69025\"\n}"
+            },
+            "url": {
+              "raw": "{{cloud_base_url}}/companies/link",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["companies", "link"]
+            }
+          }
+        },
+        {
+          "name": "Sync - 1. Start Session",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bearer_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"6a980c7590e82fd29a2f008b\",\n  \"type\": \"INITIAL\"\n}"
+            },
+            "url": {
+              "raw": "{{cloud_base_url}}/sync/start",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["sync", "start"]
+            }
+          }
+        },
+        {
+          "name": "Sync - 2. Push Batch (501 Records)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bearer_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"syncJobId\": \"{{syncJobId}}\",\n  \"batchNumber\": 1,\n  \"entityType\": \"LEDGER\",\n  \"records\": [\n    {\n      \"name\": \"Cash\",\n      \"parent\": \"Current Assets\",\n      \"closingBalance\": 1500\n    }\n  ],\n  \"isLastBatch\": false\n}"
+            },
+            "url": {
+              "raw": "{{cloud_base_url}}/sync/batch",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["sync", "batch"]
+            }
+          }
+        },
+        {
+          "name": "Sync - 3. Complete Session",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bearer_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"syncJobId\": \"{{syncJobId}}\",\n  \"status\": \"COMPLETED\"\n}"
+            },
+            "url": {
+              "raw": "{{cloud_base_url}}/sync/complete",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["sync", "complete"]
+            }
+          }
+        },
+        {
+          "name": "Commands - 1. Get Pending Commands (2-Way Sync)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bearer_token}}" }
+            ],
+            "url": {
+              "raw": "{{cloud_base_url}}/commands",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["commands"]
+            }
+          }
+        },
+        {
+          "name": "Commands - 2. Send Command Result",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bearer_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DONE\",\n  \"result\": {\n    \"tallyVoucherNumber\": \"INV-101\"\n  },\n  \"errorMessage\": null\n}"
+            },
+            "url": {
+              "raw": "{{cloud_base_url}}/commands/:commandId/result",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["commands", ":commandId", "result"],
+              "variable": [
+                { "key": "commandId", "value": "6a990531b190998273a27e6b" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "System - Get Config",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bearer_token}}" }
+            ],
+            "url": {
+              "raw": "{{cloud_base_url}}/config",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["config"]
+            }
+          }
+        },
+        {
+          "name": "System - Get Version",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{cloud_base_url}}/version",
+              "host": ["{{cloud_base_url}}"],
+              "path": ["version"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Local Gateway Website APIs",
+      "item": [
+        {
+          "name": "Local - Get Config",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{local_base_url}}/config",
+              "host": ["{{local_base_url}}"],
+              "path": ["config"]
+            }
+          }
+        },
+        {
+          "name": "Local - Get Version",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{local_base_url}}/version",
+              "host": ["{{local_base_url}}"],
+              "path": ["version"]
+            }
+          }
+        },
+        {
+          "name": "Local - Get Commands",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{local_base_url}}/commands",
+              "host": ["{{local_base_url}}"],
+              "path": ["commands"]
+            }
+          }
+        },
+        {
+          "name": "Local - Submit Command Result",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DONE\",\n  \"result\": {\n    \"tallyVoucherNumber\": \"INV-101\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{local_base_url}}/commands/6a990531b190998273a27e6b/result",
+              "host": ["{{local_base_url}}"],
+              "path": ["commands", "6a990531b190998273a27e6b", "result"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

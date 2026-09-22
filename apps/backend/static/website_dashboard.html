@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CtrlBooks — Accounting Data Web Portal</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0F172A;
+            --bg-card: #1E293B;
+            --bg-card-hover: #334155;
+            --border-color: #334155;
+            --primary: #10B981;
+            --primary-glow: rgba(16, 185, 129, 0.2);
+            --text-main: #F8FAFC;
+            --text-muted: #94A3B8;
+            --accent-blue: #3B82F6;
+            --accent-purple: #8B5CF6;
+            --accent-amber: #F59E0B;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background-color: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 16px 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .brand-container {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .brand-logo {
+            background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+            color: white;
+            font-size: 18px;
+            font-weight: 900;
+            width: 42px;
+            height: 42px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 14px var(--primary-glow);
+        }
+
+        .brand-text h1 {
+            font-size: 18px;
+            font-weight: 800;
+            color: #FFFFFF;
+            letter-spacing: -0.3px;
+        }
+
+        .brand-text span {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .status-badge {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--primary);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-badge::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background-color: var(--primary);
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 8px var(--primary);
+        }
+
+        main {
+            flex: 1;
+            padding: 32px;
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            margin-bottom: 32px;
+        }
+
+        .stat-card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 20px;
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--primary);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 800;
+            color: #FFFFFF;
+        }
+
+        /* Content Card */
+        .content-card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .tabs-container {
+            display: flex;
+            gap: 8px;
+            background-color: var(--bg-dark);
+            padding: 4px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 700;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .tab-btn.active {
+            background-color: var(--primary);
+            color: #FFFFFF;
+            box-shadow: 0 2px 8px var(--primary-glow);
+        }
+
+        .search-container {
+            display: flex;
+            gap: 12px;
+            flex: 1;
+            max-width: 480px;
+        }
+
+        .search-input {
+            flex: 1;
+            background-color: var(--bg-dark);
+            border: 1px solid var(--border-color);
+            color: #FFFFFF;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s ease;
+        }
+
+        .search-input:focus {
+            border-color: var(--primary);
+        }
+
+        .action-btn {
+            background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+            color: #FFFFFF;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+        }
+
+        .action-btn:hover {
+            opacity: 0.9;
+        }
+
+        /* Data Table */
+        .table-wrapper {
+            overflow-x: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th {
+            background-color: var(--bg-dark);
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        td {
+            padding: 14px 18px;
+            font-size: 13.5px;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-main);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover td {
+            background-color: var(--bg-card-hover);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .badge-ledger { background: rgba(59, 130, 246, 0.2); color: #60A5FA; }
+        .badge-stock { background: rgba(139, 92, 246, 0.2); color: #A78BFA; }
+        .badge-voucher { background: rgba(245, 158, 11, 0.2); color: #FBBF24; }
+
+        .api-docs-card {
+            margin-top: 32px;
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 24px;
+        }
+
+        .api-docs-card h3 {
+            font-size: 16px;
+            font-weight: 800;
+            color: #FFFFFF;
+            margin-bottom: 12px;
+        }
+
+        pre {
+            background-color: var(--bg-dark);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 14px;
+            overflow-x: auto;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12.5px;
+            color: #10B981;
+        }
+
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: var(--text-muted);
+            font-size: 12px;
+            border-top: 1px solid var(--border-color);
+            margin-top: 40px;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="brand-container">
+            <div class="brand-logo">LR</div>
+            <div class="brand-text">
+                <h1>CtrlBooks Web Connector Portal</h1>
+                <span>Real-Time Tally & BUSY Data API Viewer</span>
+            </div>
+        </div>
+        <div class="status-badge">Website REST API Active (Port 8000)</div>
+    </header>
+
+    <main>
+        <!-- Statistics Widgets -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Total Synced Companies</div>
+                <div class="stat-value" id="stat-companies">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Ledgers</div>
+                <div class="stat-value" id="stat-ledgers">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Stock Items</div>
+                <div class="stat-value" id="stat-items">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Vouchers</div>
+                <div class="stat-value" id="stat-vouchers">0</div>
+            </div>
+        </div>
+
+        <!-- Main Content Card -->
+        <div class="content-card">
+            <div class="toolbar">
+                <div class="tabs-container">
+                    <button class="tab-btn active" onclick="switchEntity('LEDGER')">Ledgers</button>
+                    <button class="tab-btn" onclick="switchEntity('STOCK_ITEM')">Stock Items</button>
+                    <button class="tab-btn" onclick="switchEntity('VOUCHER')">Vouchers</button>
+                    <button class="tab-btn" onclick="switchEntity('ACCOUNT_GROUP')">Account Groups</button>
+                </div>
+
+                <div class="search-container">
+                    <input type="text" id="search-input" class="search-input" placeholder="Search record by name or ID..." onkeyup="handleSearch(event)">
+                    <button class="action-btn" onclick="fetchRecords()">Search</button>
+                </div>
+            </div>
+
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Record Name</th>
+                            <th>Entity Type</th>
+                            <th>Company</th>
+                            <th>External ID</th>
+                            <th>Last Extracted</th>
+                            <th>JSON Details</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body">
+                        <tr>
+                            <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">Loading stored accounting data from Website REST API...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- External Website REST API Reference -->
+        <div class="api-docs-card">
+            <h3>🌐 External Website Integration API Reference</h3>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+                Use the following REST API endpoints to fetch live Tally / BUSY data directly into your custom website, web app, or portal:
+            </p>
+            <pre>
+# 1. Fetch Summary Stats for Web Widgets
+GET http://127.0.0.1:8000/api/v1/website/dashboard/summary
+
+# 2. Fetch Stored Ledgers for Website Display
+GET http://127.0.0.1:8000/api/v1/website/entities/LEDGER?page=1&page_size=50
+
+# 3. Fetch Stored Stock Items with Search Query
+GET http://127.0.0.1:8000/api/v1/website/entities/STOCK_ITEM?search=Item
+
+# 4. Trigger Live Tally Pull + Save to DB + Return Data
+POST http://127.0.0.1:8000/api/v1/website/sync-and-store
+Payload: {"connector_id": "...", "company_identifier": "Demo Tally Company", "entity_type": "LEDGER"}
+            </pre>
+        </div>
+    </main>
+
+    <footer>
+        CtrlBooks &copy; 2026 — Powered by High-Performance Python & FastAPI Gateway Architecture
+    </footer>
+
+    <script>
+        let currentEntity = 'LEDGER';
+
+        async function loadSummary() {
+            try {
+                const res = await fetch('/api/v1/website/dashboard/summary');
+                const json = await res.json();
+                if (json.success) {
+                    document.getElementById('stat-companies').innerText = json.data.total_companies || 0;
+                    document.getElementById('stat-ledgers').innerText = json.data.total_ledgers || 0;
+                    document.getElementById('stat-items').innerText = json.data.total_stock_items || 0;
+                    document.getElementById('stat-vouchers').innerText = json.data.total_vouchers || 0;
+                }
+            } catch (err) {
+                console.error("Error loading summary:", err);
+            }
+        }
+
+        async function fetchRecords() {
+            const tbody = document.getElementById('table-body');
+            const search = document.getElementById('search-input').value.trim();
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">Fetching records...</td></tr>`;
+
+            try {
+                let url = `/api/v1/website/entities/${currentEntity}?page=1&page_size=50`;
+                if (search) {
+                    url += `&search=${encodeURIComponent(search)}`;
+                }
+                const res = await fetch(url);
+                const json = await res.json();
+
+                if (!json.success || !json.data.items || json.data.items.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">No stored records found for entity '${currentEntity}'. Extract data from Desktop App / API first.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = json.data.items.map(r => {
+                    let badgeClass = 'badge-ledger';
+                    if (r.entity_type === 'STOCK_ITEM') badgeClass = 'badge-stock';
+                    if (r.entity_type === 'VOUCHER') badgeClass = 'badge-voucher';
+
+                    const detailStr = JSON.stringify(r.canonical_data, null, 2);
+                    return `
+                        <tr>
+                            <td><strong>${escapeHtml(r.record_name)}</strong></td>
+                            <td><span class="badge ${badgeClass}">${r.entity_type}</span></td>
+                            <td>${escapeHtml(r.company_identifier)}</td>
+                            <td><code style="color: #94A3B8;">${escapeHtml(r.external_id)}</code></td>
+                            <td>${r.extracted_at ? new Date(r.extracted_at).toLocaleString() : 'N/A'}</td>
+                            <td><button onclick="alert(\`${escapeHtml(detailStr)}\`)" style="background: rgba(59,130,246,0.15); color: #60A5FA; border: 1px solid rgba(59,130,246,0.3); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 700;">View JSON</button></td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #EF4444; padding: 30px;">Failed to load records from REST API: ${err.message}</td></tr>`;
+            }
+        }
+
+        function switchEntity(entity) {
+            currentEntity = entity;
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.innerText.toUpperCase().includes(entity.replace('_', ' ')) || (entity==='LEDGER' && btn.innerText==='Ledgers') || (entity==='STOCK_ITEM' && btn.innerText==='Stock Items')) {
+                    btn.classList.add('active');
+                }
+            });
+            fetchRecords();
+        }
+
+        function handleSearch(event) {
+            if (event.key === 'Enter') {
+                fetchRecords();
+            }
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        window.onload = function() {
+            loadSummary();
+            fetchRecords();
+        };
+    </script>
+</body>
+</html>
