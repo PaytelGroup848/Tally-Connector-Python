@@ -19,6 +19,8 @@ class RemoteCommandWorker(QThread):
         self.poll_interval = poll_interval_seconds
         self._is_running = True
         self.importer_service = ImporterService()
+        self.last_heartbeat_time: float = 0.0
+        self.heartbeat_interval_seconds: float = 30.0
 
     def stop(self):
         self._is_running = False
@@ -37,11 +39,24 @@ class RemoteCommandWorker(QThread):
 
         while self._is_running:
             if cloud_auth_service.access_token:
+                # 1. Periodic presence heartbeat to Cloud Server (keeps web status ONLINE)
+                now = time.time()
+                if now - self.last_heartbeat_time >= self.heartbeat_interval_seconds:
+                    self.last_heartbeat_time = now
+                    try:
+                        ok, hb_msg, hb_data = cloud_auth_service.send_heartbeat()
+                        if ok:
+                            logger.debug(f"Heartbeat sent to cloud: {hb_msg} (Tally: {hb_data.get('tallyConnected')})")
+                    except Exception as exc:
+                        logger.debug(f"Heartbeat cycle notice: {exc}")
+
+                # 2. Remote command polling
                 try:
                     self._poll_and_execute_commands()
                 except Exception as exc:
                     logger.warning(f"Error in remote command cycle: {exc}")
 
+                # 3. Drain pending voucher queue
                 try:
                     self._drain_pending_voucher_queue()
                 except Exception as exc:

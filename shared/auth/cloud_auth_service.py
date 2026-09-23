@@ -1083,4 +1083,60 @@ class CloudAuthService:
             logger.error(f"Error fetching connector version: {exc}")
             return False, f"Connection error fetching connector version: {exc}", {}
 
+    def is_tally_online(self, host: Optional[str] = None, port: Optional[int] = None) -> bool:
+        """Lightweight TCP probe to check if Tally Prime / ERP 9 is responding."""
+        import socket
+        settings = get_settings()
+        target_host = host or settings.tally_host or "127.0.0.1"
+        target_port = port or settings.tally_port or 9000
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1.0)
+            res = sock.connect_ex((target_host, target_port))
+            sock.close()
+            return res == 0
+        except Exception:
+            return False
+
+    def send_heartbeat(self, tally_connected: Optional[bool] = None) -> Tuple[bool, str, Dict[str, Any]]:
+        """Sends periodic connector heartbeat to Cloud Server (POST /heartbeat)."""
+        if not self.access_token:
+            return False, "Not authenticated. Please login first.", {}
+
+        if tally_connected is None:
+            tally_connected = self.is_tally_online()
+
+        url = f"{self.base_url}/heartbeat"
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json",
+        }
+        payload: Dict[str, Any] = {
+            "tallyConnected": bool(tally_connected),
+            "status": "ONLINE",
+            "connectorVersion": "1.0.1",
+        }
+
+        try:
+            client = self._get_client(10.0)
+            res = client.post(url, json=payload, headers=headers)
+            data = res.json() if res.text else {}
+
+            if res.status_code == 401 and self.refresh_token_val:
+                refreshed, _ = self.refresh_token()
+                if refreshed and self.access_token:
+                    headers["Authorization"] = f"Bearer {self.access_token}"
+                    res = client.post(url, json=payload, headers=headers)
+                    data = res.json() if res.text else {}
+
+            if res.status_code == 200 or data.get("success") is True:
+                resp_data = data.get("data") or data
+                return True, data.get("message", "Heartbeat recorded"), resp_data
+            else:
+                err_msg = self._extract_error_message(res, data, "Failed to send heartbeat")
+                return False, err_msg, {}
+        except Exception as exc:
+            logger.debug(f"Heartbeat call warning (non-fatal): {exc}")
+            return False, str(exc), {}
+
 cloud_auth_service = CloudAuthService()

@@ -11,6 +11,13 @@ class TestCloudAuthService(unittest.TestCase):
 
     def setUp(self):
         self.auth_svc = CloudAuthService(base_url="https://connector.cloudata.in/api/connector")
+        self.auth_svc.sync_user_to_mongodb = MagicMock()
+        def mock_save(access_token, refresh_token=None, user=None):
+            self.auth_svc.access_token = access_token
+            self.auth_svc.refresh_token_val = refresh_token
+            if user:
+                self.auth_svc.current_user = user
+        self.auth_svc.save_session = mock_save
 
     def test_device_id_generation(self):
         """Verifies device ID is created and is non-empty."""
@@ -48,8 +55,10 @@ class TestCloudAuthService(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(self.auth_svc.access_token, "tok_123")
 
+    @patch("shared.auth.cloud_auth_service.AUTH_SESSION_FILE")
     @patch("httpx.Client.post")
-    def test_logout(self, mock_post):
+    def test_logout(self, mock_post, mock_session_file):
+        mock_session_file.exists.return_value = False
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = '{"success": true}'
@@ -125,6 +134,34 @@ class TestCloudAuthService(unittest.TestCase):
         ok, msg, data = self.auth_svc.sync_complete("sync_101", "Demo Company", "COMPLETED", 100, 20205)
         self.assertTrue(ok)
         self.assertEqual(data["totalSynced"], 100)
+
+    @patch("httpx.Client.post")
+    def test_send_heartbeat_success(self, mock_post):
+        self.auth_svc.access_token = "tok_test_123"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = '{"success": true, "message": "Heartbeat recorded", "data": {"status": "ONLINE", "tallyConnected": true}}'
+        mock_resp.json.return_value = {"success": True, "message": "Heartbeat recorded", "data": {"status": "ONLINE", "tallyConnected": True}}
+        mock_post.return_value = mock_resp
+
+        ok, msg, data = self.auth_svc.send_heartbeat(tally_connected=True)
+        self.assertTrue(ok)
+        self.assertEqual(data["status"], "ONLINE")
+        self.assertTrue(data["tallyConnected"])
+        mock_post.assert_called_once()
+
+    @patch("socket.socket")
+    def test_is_tally_online_check(self, mock_socket_cls):
+        mock_sock = MagicMock()
+        mock_sock.connect_ex.return_value = 0
+        mock_socket_cls.return_value = mock_sock
+
+        is_online = self.auth_svc.is_tally_online("127.0.0.1", 9000)
+        self.assertTrue(is_online)
+
+        mock_sock.connect_ex.return_value = 111
+        is_online_fail = self.auth_svc.is_tally_online("127.0.0.1", 9000)
+        self.assertFalse(is_online_fail)
 
 
 if __name__ == "__main__":

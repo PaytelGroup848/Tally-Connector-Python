@@ -21,7 +21,7 @@ class TestOTAUpdater(unittest.TestCase):
             "Success",
             {
                 "latestVersion": "1.0.1",
-                "downloadUrl": "https://connector.cloudedata.com/downloads/CtrlBooks_Setup_v1.0.1.exe",
+                "downloadUrl": "https://ctrlbooks.com/downloads/CtrlBooks_Setup_v1.0.1.exe",
                 "releaseNotes": "Fixes and performance updates.",
                 "mandatory": False,
             }

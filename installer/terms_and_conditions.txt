@@ -13,7 +13,7 @@ CtrlBooks ("Licensor") grants you ("User" or "Licensee") a non-exclusive,
 non-transferable, revocable license to install and use the CtrlBooks
 desktop client application solely for connecting your local accounting software
 (such as Tally ERP9 / Tally Prime) to the CtrlBooks Cloud Analytics platform
-(https://connector.cloudedata.com).
+(https://ctrlbooks.com).
 
 2. DATA PRIVACY & SECURITY
 --------------------------
@@ -73,7 +73,7 @@ exclusive jurisdiction of the courts located in New Delhi, India.
 
 ================================================================================
 Copyright (c) 2026 CtrlBooks. All rights reserved.
-Official Website: https://connector.cloudedata.com
+Official Website: https://ctrlbooks.com
 Support: support@cloudedata.com
 ================================================================================
 

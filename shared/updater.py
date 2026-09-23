@@ -81,7 +81,7 @@ class OTAUpdater:
                 or res.get("url")
             )
             if not download_url:
-                web_base = (self.settings.web_portal_url or "https://connector.cloudedata.com").rstrip("/")
+                web_base = (self.settings.web_portal_url or "https://ctrlbooks.com").rstrip("/")
                 download_url = f"{web_base}/downloads/CtrlBooks_Setup.exe"
             expected_sha256 = (
                 res.get("sha256")

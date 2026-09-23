@@ -11,7 +11,7 @@
 #define MyAppName "CtrlBooks"
 #define MyAppVersion "1.0.1"
 #define MyAppPublisher "CtrlBooks"
-#define MyAppURL "https://connector.cloudedata.com"
+#define MyAppURL "https://ctrlbooks.com"
 #define MyAppExeName "ctrlbooks.exe"
 
 [Setup]

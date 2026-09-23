@@ -178,6 +178,5 @@ class CloudClient:
         return self._request("POST", endpoint, json=payload)
 
     def send_heartbeat(self, telemetry_payload: Dict[str, Any]) -> Dict[str, Any]:
-       
-        return self._request("POST", "/api/v1/connector/heartbeat", json=telemetry_payload)
+        return self._request("POST", "/heartbeat", json=telemetry_payload)
 

@@ -105,6 +105,8 @@ class TelemetryManager:
             "client_id": self.cloud_client.client_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "tally_status": tally_st,
+            "tallyConnected": (tally_st == "ONLINE"),
+            "status": "ONLINE",
             "connector_uptime_seconds": uptime,
             "app_version": self.settings.app_version,
             "last_sync_timestamp": last_sync,

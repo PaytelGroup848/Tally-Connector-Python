@@ -64,7 +64,7 @@ class Settings(BaseModel):
 
     cloud_api_base_url: str = Field(default="https://connector.cloudata.in/api/connector")
     gateway_url: str = Field(default="http://127.0.0.1:8000")
-    web_portal_url: str = Field(default="https://connector.cloudedata.com")
+    web_portal_url: str = Field(default="https://ctrlbooks.com")
 
     jwt_secret: Optional[str] = None
     otp_provider_key: Optional[str] = None
@@ -137,7 +137,7 @@ class Settings(BaseModel):
             tally_port=int(os.getenv("CTRLBOOKS_TALLY_PORT", "9000")),
             cloud_api_base_url=os.getenv("CLOUD_API_BASE_URL", os.getenv("CTRLBOOKS_CLOUD_API_URL", "https://connector.cloudata.in/api/connector")),
             gateway_url=os.getenv("CTRLBOOKS_GATEWAY_URL", f"http://{os.getenv('HOST', '127.0.0.1')}:{os.getenv('PORT', '8000')}"),
-            web_portal_url=os.getenv("CTRLBOOKS_WEB_PORTAL_URL", "https://connector.cloudedata.com"),
+            web_portal_url=os.getenv("CTRLBOOKS_WEB_PORTAL_URL", "https://ctrlbooks.com"),
             jwt_secret=os.getenv("JWT_SECRET"),
             otp_provider_key=os.getenv("OTP_PROVIDER_KEY"),
             sync_worker_count=int(os.getenv("SYNC_WORKER_COUNT", "2")),

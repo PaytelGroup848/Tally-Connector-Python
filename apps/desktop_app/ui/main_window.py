@@ -141,7 +141,7 @@ class ConnectorMainWindow(QMainWindow):
 
         logger = get_logger("app.desktop.main_window")
         settings = get_settings()
-        web_base = (settings.web_portal_url or "https://connector.cloudedata.com").rstrip("/")
+        web_base = (settings.web_portal_url or "https://ctrlbooks.com").rstrip("/")
 
         company_id = None
         c_name = (company_name or "").strip()
