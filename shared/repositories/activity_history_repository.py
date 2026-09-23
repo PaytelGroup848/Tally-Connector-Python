@@ -45,6 +45,12 @@ class ActivityHistoryRepository:
             or ""
         ).strip()
 
+        raw_amt = activity.get("amount")
+        try:
+            parsed_amt = float(raw_amt) if raw_amt is not None else 0.0
+        except (ValueError, TypeError):
+            parsed_amt = 0.0
+
         doc = {
             "command_id": str(activity.get("command_id", "")),
             "organization_id": org_id,
@@ -58,7 +64,7 @@ class ActivityHistoryRepository:
             "timestamp": activity.get("timestamp") or now_dt.isoformat(),
             "voucher_type": activity.get("voucher_type") or activity.get("type", "Sales Bill"),
             "party": activity.get("party") or activity.get("party_ledger", "Unknown Party"),
-            "amount": float(activity.get("amount", 0.0)),
+            "amount": parsed_amt,
             "company": activity.get("company") or activity.get("company_name", ""),
             "status": activity.get("status", "SUCCESS").upper(),
             "voucher_number": activity.get("voucher_number"),
@@ -138,15 +144,17 @@ class ActivityHistoryRepository:
         from shared.config import get_settings
         settings = get_settings()
 
+        from shared.auth.cloud_auth_service import cloud_auth_service
         target_org = str(
             organization_id
-            or getattr(settings, "user_organization_id", None)
+            or cloud_auth_service.organization_id
             or getattr(settings, "organization_id", "")
             or ""
         ).strip()
 
         target_email = str(
             user_email
+            or cloud_auth_service.email
             or getattr(settings, "user_email", "")
             or ""
         ).strip().lower()
@@ -157,11 +165,18 @@ class ActivityHistoryRepository:
         if target_email:
             and_clauses.append({"$or": [{"user_email": target_email}, {"email": target_email}]})
 
-        if not and_clauses:
-            logger.warning("clear_activities called with no org or email specified; suppressing global wipe.")
-            return
-
-        delete_query = {"$and": and_clauses} if len(and_clauses) > 1 else and_clauses[0]
+        # Allow dropping scoped user entries AND local untagged legacy entries
+        legacy_clause = {
+            "$and": [
+                {"$or": [{"organization_id": None}, {"organization_id": ""}, {"organization_id": {"$exists": False}}]},
+                {"$or": [{"user_email": None}, {"user_email": ""}, {"user_email": {"$exists": False}}]}
+            ]
+        }
+        if and_clauses:
+            user_clause = {"$and": and_clauses} if len(and_clauses) > 1 else and_clauses[0]
+            delete_query = {"$or": [user_clause, legacy_clause]}
+        else:
+            delete_query = legacy_clause
 
         try:
             from shared.db.mongo_client import get_collection

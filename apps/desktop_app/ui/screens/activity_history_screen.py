@@ -117,7 +117,7 @@ class ActivityHistoryScreen(QWidget):
                 color: #0284C7;
             }
         """)
-        self.btn_refresh.clicked.connect(self.load_activities)
+        self.btn_refresh.clicked.connect(lambda: self.load_activities(is_manual=True))
         top_row.addWidget(self.btn_refresh)
 
         self.btn_clear = QPushButton("🗑️ Clear")
@@ -258,10 +258,20 @@ class ActivityHistoryScreen(QWidget):
         self.footer = CtrlBooksFooter()
         layout.addWidget(self.footer)
 
-        self.load_activities()
+        self.load_activities(is_manual=False)
 
-    def load_activities(self):
+        # 10s Background Auto-Refresh Timer
+        self.auto_refresh_timer = QTimer(self)
+        self.auto_refresh_timer.setInterval(10000)
+        self.auto_refresh_timer.timeout.connect(lambda: self.load_activities(is_manual=False))
+        self.auto_refresh_timer.start()
+
+    def load_activities(self, is_manual: bool = False):
         """Loads activity cards dynamically from the repository in the background."""
+        if is_manual:
+            self.btn_refresh.setText("⏳ Refreshing...")
+            self.btn_refresh.setEnabled(False)
+
         def _fetch_bg():
             try:
                 curr_org = cloud_auth_service.organization_id or ""
@@ -280,6 +290,11 @@ class ActivityHistoryScreen(QWidget):
         threading.Thread(target=_fetch_bg, daemon=True, name="ActivityFetchThread").start()
 
     def _on_activities_loaded(self, activities: list):
+        self.btn_refresh.setText("🔄 Refresh")
+        self.btn_refresh.setEnabled(True)
+        self.btn_clear.setText("🗑️ Clear")
+        self.btn_clear.setEnabled(True)
+
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
             if item is not None:
@@ -427,13 +442,18 @@ class ActivityHistoryScreen(QWidget):
         return card
 
     def on_clear_clicked(self):
+        self.btn_clear.setText("⏳ Clearing...")
+        self.btn_clear.setEnabled(False)
+
+        # Clear UI cards immediately for instant responsiveness
+        self._on_activities_loaded([])
+
         import threading
         def _clear_bg():
             try:
                 settings = get_settings()
-                curr_user = getattr(cloud_auth_service, "current_user", None) or {}
-                curr_org = getattr(cloud_auth_service, "organization_id", None) or curr_user.get("organizationId") or curr_user.get("organization_id") or getattr(settings, "organization_id", None)
-                curr_email = getattr(cloud_auth_service, "email", None) or curr_user.get("email") or getattr(settings, "user_email", None)
+                curr_org = cloud_auth_service.organization_id or getattr(settings, "organization_id", None)
+                curr_email = cloud_auth_service.email or getattr(settings, "user_email", None)
 
                 activity_history_repo.clear_activities(
                     organization_id=curr_org,
@@ -441,6 +461,5 @@ class ActivityHistoryScreen(QWidget):
                 )
             except Exception as exc:
                 logger.debug(f"Async activity clear error: {exc}")
-            self.load_activities()
 
         threading.Thread(target=_clear_bg, daemon=True, name="ActivityClearThread").start()

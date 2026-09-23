@@ -523,11 +523,17 @@ class RemoteCommandWorker(QThread):
                 else:
                     label_type = f"{v_type} Voucher"
 
+                raw_card_amt = norm_payload.get("amount") if norm_payload.get("amount") is not None else (amt if "amt" in locals() and amt is not None else 0.0)
+                try:
+                    card_amt = float(raw_card_amt) if raw_card_amt is not None else 0.0
+                except (ValueError, TypeError):
+                    card_amt = 0.0
+
                 activity_history_repo.record_activity({
                     "command_id": cmd_id,
                     "voucher_type": label_type,
                     "party": norm_payload.get("party_ledger") or norm_payload.get("name", "Cash"),
-                    "amount": float(norm_payload.get("amount", amt if "amt" in locals() else 0.0)),
+                    "amount": card_amt,
                     "company": norm_payload.get("company_name") or resolved_company,
                     "voucher_date": norm_payload.get("date") or norm_payload.get("voucherDate"),
                     "status": "SUCCESS" if success else "FAILED",
@@ -640,11 +646,15 @@ class RemoteCommandWorker(QThread):
                         error_message=None
                     )
                     try:
+                        d_amt = float(payload.get("amount")) if payload.get("amount") is not None else 0.0
+                    except (ValueError, TypeError):
+                        d_amt = 0.0
+                    try:
                         activity_history_repo.record_activity({
                             "command_id": cmd_id,
                             "voucher_type": payload.get("voucher_type", "Sales Bill"),
                             "party": payload.get("party_ledger") or payload.get("name", "Cash"),
-                            "amount": float(payload.get("amount", 0.0)),
+                            "amount": d_amt,
                             "company": target_comp,
                             "voucher_date": payload.get("date") or payload.get("voucherDate"),
                             "status": "SUCCESS",
@@ -674,11 +684,15 @@ class RemoteCommandWorker(QThread):
                         error_message=res.get("error")
                     )
                     try:
+                        d_err_amt = float(payload.get("amount")) if payload.get("amount") is not None else 0.0
+                    except (ValueError, TypeError):
+                        d_err_amt = 0.0
+                    try:
                         activity_history_repo.record_activity({
                             "command_id": cmd_id,
                             "voucher_type": payload.get("voucher_type", "Sales Bill"),
                             "party": payload.get("party_ledger") or payload.get("name", "Cash"),
-                            "amount": float(payload.get("amount", 0.0)),
+                            "amount": d_err_amt,
                             "company": target_comp,
                             "voucher_date": payload.get("date") or payload.get("voucherDate"),
                             "status": "FAILED",
