@@ -28,9 +28,10 @@ def main():
     print("=========================================================")
     try:
         for name, module, port in SERVICES:
-            print(f"[+] Launching {name:<25} on http://127.0.0.1:{port}")
+            host = "0.0.0.0" if name == "api_gateway" else "127.0.0.1"
+            print(f"[+] Launching {name:<25} on http://{host}:{port}")
             p = subprocess.Popen(
-                [PY, "-m", "uvicorn", module, "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"],
+                [PY, "-m", "uvicorn", module, "--host", host, "--port", str(port), "--log-level", "warning"],
                 cwd=str(ROOT)
             )
             processes.append(p)
