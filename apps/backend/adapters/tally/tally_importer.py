@@ -3,7 +3,7 @@
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List, Set, Union
 from shared.logging_config import get_logger
 from apps.backend.adapters.tally.tally_client import TallyClient
 
