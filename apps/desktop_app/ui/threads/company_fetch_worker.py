@@ -5,43 +5,67 @@ from PySide6.QtCore import QObject, Signal
 logger = logging.getLogger("app.desktop.company_fetch_worker")
 
 
-def fetch_real_tally_companies(settings=None) -> tuple:
+def fetch_real_tally_companies(settings=None, return_port: bool = False) -> tuple:
     """Fetch active companies list from local Tally extractor or direct XML port."""
     if settings is None:
         from shared.config import get_settings
         settings = get_settings()
 
-    try:
-        import httpx
-        t_host = settings.tally_host
-        t_port = settings.tally_port
-        host = settings.host
+    configured_port = getattr(settings, "tally_port", 9000) or 9000
+    candidate_ports = []
+    for p in [configured_port, 9000, 9001, 9002, 9003, 9004]:
+        if p not in candidate_ports:
+            candidate_ports.append(p)
 
-        # Try local extractor service first (short timeout)
+    t_host = getattr(settings, "tally_host", "127.0.0.1") or "127.0.0.1"
+
+    import socket
+    import httpx
+    from apps.backend.adapters.tally.request_builder import build_company_list_xml
+    from apps.backend.adapters.tally.response_parser import parse_company_list
+
+    xml_req = build_company_list_xml()
+
+    # 1. Primary: Direct Tally Prime Collection query across candidate ports
+    for p in candidate_ports:
+        # Fast TCP ping
         try:
-            res = httpx.get(f"http://{host}:8002/extract/companies", timeout=1.0)
-            if res.status_code == 200 and res.json().get("companies"):
-                return [
-                    {"name": c.get("name"), "path": c.get("path", "C:\\TallyPrime\\Data")}
-                    for c in res.json()["companies"]
-                ], True
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.6)
+            res = sock.connect_ex((t_host, p))
+            sock.close()
+            if res != 0:
+                continue
         except Exception:
-            pass
+            continue
 
-        # Direct TDL request to Tally XML port
-        tdl = (
-            "<ENVELOPE><HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>"
-            "<BODY><EXPORTDATA><REQUESTDESC><REPORTNAME>List of Companies</REPORTNAME>"
-            "</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"
-        )
-        h_res = httpx.post(f"http://{t_host}:{t_port}/", content=tdl, timeout=1.2)
-        if h_res.status_code == 200:
-            names = [e.text for e in ET.fromstring(h_res.text).findall(".//COMPANYNAME") if e.text]
-            if names:
-                return [{"name": n, "path": "C:\\TallyPrime\\Data"} for n in names], True
+        # Port is open! Query companies with valid TDL collection
+        try:
+            h_res = httpx.post(f"http://{t_host}:{p}/", content=xml_req, headers={"Content-Type": "text/xml"}, timeout=2.5)
+            if h_res.status_code == 200 and h_res.text:
+                comp_dicts = parse_company_list(h_res.text)
+                if comp_dicts:
+                    comps = [{"name": c["name"], "path": c.get("path", "C:\\TallyPrime\\Data"), "guid": c.get("guid", "")} for c in comp_dicts if c.get("name")]
+                    return (comps, True, p) if return_port else (comps, True)
+                # If Tally responded 200 but no company is open:
+                return ([], True, p) if return_port else ([], True)
+        except Exception as exc:
+            logger.debug(f"Direct probe failed on port {p}: {exc}")
+
+    # 2. Try local extractor service if running (development mode)
+    try:
+        host = getattr(settings, "host", "127.0.0.1")
+        res = httpx.get(f"http://{host}:8002/extract/companies", timeout=1.0)
+        if res.status_code == 200 and res.json().get("companies"):
+            comps = [
+                {"name": c.get("name"), "path": c.get("path", "C:\\TallyPrime\\Data"), "guid": c.get("guid", "")}
+                for c in res.json()["companies"]
+            ]
+            return (comps, True, configured_port) if return_port else (comps, True)
     except Exception:
         pass
-    return [], False
+
+    return ([], False, configured_port) if return_port else ([], False)
 
 
 def fetch_all_companies() -> tuple:
@@ -87,7 +111,9 @@ def fetch_all_companies() -> tuple:
                 logger.debug(f"Local company config lookup notice: {exc}")
 
         # 3. Real Tally instance
-        tally_comps, tally_ok = fetch_real_tally_companies(settings)
+        tally_comps, tally_ok, detected_port = fetch_real_tally_companies(settings, return_port=True)
+        if tally_ok and detected_port:
+            t_port = detected_port
 
         # Retrieve real statistics for all discovered companies
         for c in tally_comps:
