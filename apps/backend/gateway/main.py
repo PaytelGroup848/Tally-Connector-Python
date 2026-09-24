@@ -92,6 +92,18 @@ app.include_router(system_router)
 @app.get("/version")
 @app.get("/api/version")
 async def get_public_version():
+    import json
+    v_file = Path("version.json")
+    if v_file.exists():
+        try:
+            with open(v_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    data["success"] = True
+                    return data
+        except Exception:
+            pass
+
     from shared.config import get_settings
     curr_ver = get_settings().app_version
     return {
