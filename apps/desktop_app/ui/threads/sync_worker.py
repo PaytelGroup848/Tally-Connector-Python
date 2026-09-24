@@ -22,6 +22,7 @@ def chunk_list(lst: list, chunk_size: int = 101):
 
 class BackgroundSyncWorker(QThread):
     progress_changed = Signal(int, str)
+    company_synced = Signal(str, dict)
     sync_completed = Signal(str)
     sync_failed = Signal(str)
 
@@ -1095,6 +1096,29 @@ class BackgroundSyncWorker(QThread):
             c_name, c_guid, extracted_ledgers, extracted_stock_items,
             extracted_vouchers, last_alter_id, base_pct, idx, total_companies
         )
+
+        # Immediately persist stats to MongoDB 'companies' collection so UI and DB read it instantly
+        stats_dict = {
+            "ledgers": len(extracted_ledgers),
+            "vouchers": len(extracted_vouchers),
+            "items": len(extracted_stock_items)
+        }
+        try:
+            col = get_collection("companies")
+            col.update_one(
+                {"$or": [{"company_name": c_name}, {"name": c_name}, {"tallyCompanyName": c_name}]},
+                {"$set": {
+                    "status": "SYNCED",
+                    "last_sync_at": now_iso,
+                    "stats": stats_dict
+                }},
+                upsert=True
+            )
+        except Exception as e_s:
+            logger.debug(f"Could not persist company stats to MongoDB: {e_s}")
+
+        # Instantly notify Desktop UI to update company card chips in 0ms
+        self.company_synced.emit(c_name, stats_dict)
 
         return True, ""
 

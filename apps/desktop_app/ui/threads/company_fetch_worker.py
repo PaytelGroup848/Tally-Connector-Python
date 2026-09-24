@@ -90,7 +90,13 @@ def fetch_all_companies() -> tuple:
         from shared.auth.cloud_auth_service import cloud_auth_service
         from shared.config import get_settings
         settings = get_settings()
-        t_port = settings.tally_port
+        from shared.connection_config import load_connection_config
+        cfg = load_connection_config()
+        configured_port = int(cfg.get("tally_port") or getattr(settings, "tally_port", 9000) or 9000)
+        t_port = configured_port
+        t_host = str(cfg.get("tally_host") or getattr(settings, "tally_host", "127.0.0.1") or "127.0.0.1").strip()
+        if t_host.lower() == "localhost":
+            t_host = "127.0.0.1"
 
         org_id = cloud_auth_service.get_organization_id()
         device_id = cloud_auth_service.device_id
@@ -126,9 +132,14 @@ def fetch_all_companies() -> tuple:
         if tally_ok and detected_port:
             t_port = detected_port
 
-        # Retrieve real statistics for all discovered companies
+        # Retrieve statistics for all discovered companies: Check DB first (<1ms), fallback to fast Tally query
         for c in tally_comps:
-            c["stats"] = fetch_tally_company_statistics(c.get("name", ""), host=settings.tally_host, port=t_port)
+            c_name = c.get("name", "")
+            db_s = fetch_db_company_statistics(c_name)
+            if db_s and any(db_s.values()):
+                c["stats"] = db_s
+            else:
+                c["stats"] = fetch_tally_company_statistics(c_name, host=t_host, port=t_port, timeout=1.0)
 
         for c in registered_companies:
             c_name = c.get("name") or c.get("company_name") or c.get("tallyCompanyName") or ""
@@ -136,7 +147,11 @@ def fetch_all_companies() -> tuple:
             if tally_match and "stats" in tally_match:
                 c["stats"] = tally_match["stats"]
             else:
-                c["stats"] = fetch_tally_company_statistics(c_name, host=settings.tally_host, port=t_port)
+                db_s = fetch_db_company_statistics(c_name)
+                if db_s and any(db_s.values()):
+                    c["stats"] = db_s
+                else:
+                    c["stats"] = fetch_tally_company_statistics(c_name, host=t_host, port=t_port, timeout=1.0)
 
     except Exception as exc:
         logger.debug(f"Error fetching companies: {exc}")
@@ -151,13 +166,28 @@ MASTER_NAMES = {
 }
 
 
-def fetch_tally_company_statistics(company_name: str, host: str = "127.0.0.1", port: int = 9000, timeout: float = 3.0) -> dict:
+def fetch_tally_company_statistics(company_name: str, host: str = "127.0.0.1", port: Optional[int] = None, timeout: float = 1.0) -> dict:
     """
     Directly queries Tally Prime's built-in Statistics report for truthful counts
     of total Ledgers, Stock Items, and Vouchers in milliseconds.
     """
     if not company_name:
         return {"ledgers": 0, "vouchers": 0, "items": 0}
+
+    if port is None or port == 9000:
+        try:
+            from shared.connection_config import load_connection_config
+            cfg = load_connection_config()
+            cfg_p = cfg.get("tally_port")
+            if cfg_p:
+                port = int(cfg_p)
+            cfg_h = cfg.get("tally_host")
+            if cfg_h and host == "127.0.0.1":
+                host = str(cfg_h).strip()
+        except Exception:
+            pass
+    if port is None:
+        port = 9000
 
     clean_comp = (
         company_name.strip()

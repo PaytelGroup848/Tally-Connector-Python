@@ -651,6 +651,17 @@ class CloudAuthService:
         if not target_cid:
             target_cid = company_guid or company_name
 
+        if target_cid and len(str(target_cid)) >= 8:
+            try:
+                col = get_collection("companies")
+                col.update_one(
+                    {"$or": [{"company_name": company_name}, {"name": company_name}, {"tallyCompanyName": company_name}]},
+                    {"$set": {"cloud_company_id": str(target_cid)}},
+                    upsert=True
+                )
+            except Exception:
+                pass
+
         s_type = "INITIAL" if sync_type.upper() in ("INITIAL", "FULL") else "INCREMENTAL"
 
         url = f"{self.base_url}/sync/start"

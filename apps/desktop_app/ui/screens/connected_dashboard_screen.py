@@ -49,7 +49,7 @@ class ConnectedDashboardScreen(QWidget):
         self.init_ui()
         self.auto_timer = QTimer(self)
         self.auto_timer.timeout.connect(self.load_live_companies)
-        self.auto_timer.start(20000)
+        self.auto_timer.start(10000)
 
         # Periodic background auto-sync timer (respects Sync Interval Frequency setting)
         self.periodic_sync_timer = QTimer(self)
@@ -233,6 +233,7 @@ class ConnectedDashboardScreen(QWidget):
 
     def load_live_companies(self):
         if hasattr(self, "_active_workers") and any(w.isRunning() for w in self._active_workers):
+            QTimer.singleShot(300, self.load_live_companies)
             return
         if getattr(self, "_is_fetching_companies", False):
             return
@@ -546,6 +547,50 @@ class ConnectedDashboardScreen(QWidget):
 
         return card
 
+    def find_company_card(self, comp_name: str) -> Optional[QFrame]:
+        clean_name = comp_name.strip().lower()
+        for i in range(self.cards_layout.count()):
+            item = self.cards_layout.itemAt(i)
+            if item and item.widget():
+                w = item.widget()
+                if getattr(w, "company_name", "").strip().lower() == clean_name:
+                    return w
+        return None
+
+    def on_company_synced_instant(self, comp_name: str, stats: dict):
+        """Immediately updates card chips and status in 0ms without waiting for Tally or polling timer."""
+        try:
+            target_card = self.find_company_card(comp_name)
+            l_cnt = stats.get("ledgers", 0)
+            v_cnt = stats.get("vouchers", 0)
+            i_cnt = stats.get("items", 0)
+            if target_card:
+                if hasattr(target_card, "status_chip") and target_card.status_chip:
+                    target_card.status_chip.setText("🟢 Synced")
+                    target_card.status_chip.setStyleSheet("""
+                        QLabel {
+                            background-color: #ECFDF5;
+                            color: #059669;
+                            font-size: 10px;
+                            font-weight: 700;
+                            padding: 2px 7px;
+                            border-radius: 5px;
+                            border: 1px solid #A7F3D0;
+                        }
+                    """)
+                if hasattr(target_card, "chip_ledgers") and target_card.chip_ledgers:
+                    target_card.chip_ledgers.setText(f"{l_cnt:,} Ledgers")
+                if hasattr(target_card, "chip_vouchers") and target_card.chip_vouchers:
+                    target_card.chip_vouchers.setText(f"{v_cnt:,} Vouchers")
+                if hasattr(target_card, "chip_items") and target_card.chip_items:
+                    target_card.chip_items.setText(f"{i_cnt:,} Items")
+            else:
+                QTimer.singleShot(100, self.load_live_companies)
+
+            self.header.update_last_sync("Just now")
+        except Exception as exc:
+            logger.debug(f"Error in on_company_synced_instant: {exc}")
+
     def start_qthread_sync(self, comp_name: str, source: str, card: Optional[QFrame] = None):
         self._active_workers = [w for w in self._active_workers if w.isRunning()]
 
@@ -571,6 +616,7 @@ class ConnectedDashboardScreen(QWidget):
         self._active_workers.append(worker)
 
         worker.progress_changed.connect(lambda val, txt: self.safe_update_progress(p_bar, s_lbl, val, txt))
+        worker.company_synced.connect(self.on_company_synced_instant)
         worker.sync_completed.connect(lambda msg, c=card: self.safe_sync_completed(s_lbl, msg, c))
         worker.sync_failed.connect(lambda err: self.safe_sync_failed(s_lbl, err))
         worker.finished.connect(lambda: self._on_worker_finished(worker))
@@ -583,6 +629,8 @@ class ConnectedDashboardScreen(QWidget):
                 self._active_workers.remove(worker)
         except Exception:
             pass
+        # Automatically trigger quick company list refresh so new companies / insights are synced
+        QTimer.singleShot(100, self.load_live_companies)
 
     def safe_update_progress(self, p_bar: QProgressBar, s_lbl: QLabel, val: int, txt: str):
         try:
@@ -613,34 +661,13 @@ class ConnectedDashboardScreen(QWidget):
                             border: 1px solid #A7F3D0;
                         }
                     """)
-                comp_name = getattr(card, "company_name", "")
-                if comp_name:
-                    import threading
-                    def _refresh_card():
-                        try:
-                            from apps.desktop_app.ui.threads.company_fetch_worker import fetch_tally_company_statistics
-                            from shared.config import get_settings
-                            st = fetch_tally_company_statistics(comp_name, port=get_settings().tally_port)
-                            if st:
-                                def _apply():
-                                    try:
-                                        if hasattr(card, "chip_ledgers") and card.chip_ledgers:
-                                            card.chip_ledgers.setText(f"{st.get('ledgers', 0):,} Ledgers")
-                                        if hasattr(card, "chip_vouchers") and card.chip_vouchers:
-                                            card.chip_vouchers.setText(f"{st.get('vouchers', 0):,} Vouchers")
-                                        if hasattr(card, "chip_items") and card.chip_items:
-                                            card.chip_items.setText(f"{st.get('items', 0):,} Items")
-                                    except RuntimeError:
-                                        pass
-                                from PySide6.QtCore import QTimer
-                                QTimer.singleShot(0, _apply)
-                        except Exception:
-                            pass
-                    threading.Thread(target=_refresh_card, daemon=True).start()
 
             from apps.desktop_app.ui.widgets.toast import ToastNotification
             toast = ToastNotification("Data sync completed successfully!", "success", self)
             toast.show()
+
+            # Instantly refresh companies and stats in 100ms
+            QTimer.singleShot(100, self.load_live_companies)
         except RuntimeError:
             pass
 

@@ -177,6 +177,16 @@ class ConnectorMainWindow(QMainWindow):
                         item_name = item.get("tallyCompanyName") or item.get("name") or ""
                         if item_name.lower().strip() == c_name.lower().strip():
                             company_id = item.get("id") or item.get("_id")
+                            if company_id:
+                                try:
+                                    col = get_collection("companies")
+                                    col.update_one(
+                                        {"$or": [{"name": c_name}, {"company_name": c_name}, {"tallyCompanyName": c_name}]},
+                                        {"$set": {"cloud_company_id": str(company_id)}},
+                                        upsert=True
+                                    )
+                                except Exception:
+                                    pass
                             break
             except Exception as exc:
                 logger.warning(f"Error querying cloud companies endpoint for '{c_name}': {exc}")
@@ -188,6 +198,7 @@ class ConnectorMainWindow(QMainWindow):
             route = f"{web_base}/dashboard"
 
         # Construct query parameters for auto-authentication & company pre-selection
+        import time
         params = {}
         token = cloud_auth_service.access_token or ""
         if token:
@@ -198,6 +209,7 @@ class ConnectorMainWindow(QMainWindow):
             params["company"] = company_id
         if c_name:
             params["companyName"] = c_name
+        params["_t"] = str(int(time.time()))
 
         email = (
             cloud_auth_service.current_user.get("email")
