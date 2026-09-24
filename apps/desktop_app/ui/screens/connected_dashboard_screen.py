@@ -18,6 +18,23 @@ from apps.desktop_app.ui.widgets.toast import ToastNotification
 
 logger = logging.getLogger("app.desktop.connected_dashboard")
 
+def parse_interval_to_ms(interval_str: str) -> int:
+    clean = str(interval_str or "").strip().lower()
+    if "real-time" in clean or "realtime" in clean:
+        return 30 * 1000  # 30 seconds
+    elif "1 min" in clean:
+        return 60 * 1000  # 1 minute
+    elif "15 min" in clean:
+        return 15 * 60 * 1000  # 15 minutes
+    elif "5 min" in clean:
+        return 5 * 60 * 1000  # 5 minutes
+    elif "1 hour" in clean or "60 min" in clean:
+        return 60 * 60 * 1000  # 1 hour
+    elif "manual" in clean:
+        return 0  # Manual (disabled)
+    return 5 * 60 * 1000  # default 5 minutes
+
+
 class ConnectedDashboardScreen(QWidget):
     nav_requested, web_view_clicked = Signal(str), Signal(str)
     companies_fetched = Signal(list, list, bool, int)
@@ -34,10 +51,44 @@ class ConnectedDashboardScreen(QWidget):
         self.auto_timer.timeout.connect(self.load_live_companies)
         self.auto_timer.start(20000)
 
+        # Periodic background auto-sync timer (respects Sync Interval Frequency setting)
+        self.periodic_sync_timer = QTimer(self)
+        self.periodic_sync_timer.timeout.connect(self._on_periodic_sync_triggered)
+        self.refresh_sync_interval()
+
         self.command_worker = RemoteCommandWorker(poll_interval_seconds=15, parent=self)
         self.command_worker.command_received.connect(self.on_command_received)
         self.command_worker.command_processed.connect(self.on_command_processed)
         self.command_worker.start()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh_sync_interval()
+
+    def refresh_sync_interval(self):
+        """Reads current sync_interval_minutes from connection config and updates the periodic timer."""
+        try:
+            from shared.connection_config import load_connection_config
+            cfg = load_connection_config()
+            interval_str = cfg.get("sync_interval_minutes", "5 mins")
+            ms = parse_interval_to_ms(interval_str)
+            self.periodic_sync_timer.stop()
+            if ms > 0:
+                self.periodic_sync_timer.start(ms)
+                logger.info(f"Periodic auto-sync active: running every {interval_str} ({ms}ms)")
+            else:
+                logger.info("Periodic auto-sync disabled (Manual mode).")
+        except Exception as exc:
+            logger.debug(f"Error configuring periodic sync timer: {exc}")
+
+    def _on_periodic_sync_triggered(self):
+        """Triggered automatically by periodic timer to sync data in background."""
+        if hasattr(self, "_active_workers") and any(w.isRunning() for w in self._active_workers):
+            logger.debug("Skipping periodic auto-sync: another sync worker is already running.")
+            return
+
+        logger.info("Periodic auto-sync triggered: syncing open companies in background...")
+        self.start_qthread_sync("", "TALLY")
 
     def on_command_received(self, cmd_id: str, cmd_type: str):
         ToastNotification.show_toast(self, f"Cloud Command Received: {cmd_type}", duration_ms=2500)

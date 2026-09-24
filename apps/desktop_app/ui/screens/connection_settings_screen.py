@@ -361,7 +361,7 @@ class ConnectionSettingsScreen(QWidget):
                 "host": host,
                 "port": port,
                 "auto_connect": auto_conn,
-                "sync_interval_minutes": 2,
+                "sync_interval_minutes": interval,
             }
             httpx.post(f"{gateway}/api/system/settings/connection", json=payload, timeout=1.0)
         except Exception:
