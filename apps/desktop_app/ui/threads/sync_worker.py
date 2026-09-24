@@ -37,11 +37,24 @@ class BackgroundSyncWorker(QThread):
 
     def _discover_tally_ports(self) -> int:
         from shared.config import get_settings
-        configured_port = get_settings().tally_port
-        candidate_ports = [configured_port, 9000, 9001, 9002, 9003, 9004]
+        from shared.connection_config import load_connection_config
+        cfg = load_connection_config()
+        configured_port = int(cfg.get("tally_port") or get_settings().tally_port or 9000)
+        auto_connect = bool(cfg.get("auto_connect", True))
+        t_host = str(cfg.get("tally_host") or "127.0.0.1").strip()
+        if t_host.lower() == "localhost":
+            t_host = "127.0.0.1"
+
+        if not auto_connect or configured_port != 9000:
+            candidate_ports = [configured_port]
+        else:
+            candidate_ports = [configured_port, 9000, 9001, 9002, 9003, 9004]
+            seen = set()
+            candidate_ports = [p for p in candidate_ports if not (p in seen or seen.add(p))]
+
         for port in candidate_ports:
             try:
-                ok, code, _, _ = self.tally_client.send_xml_request("127.0.0.1", port, build_company_list_xml(), timeout=2.0)
+                ok, code, _, _ = self.tally_client.send_xml_request(t_host, port, build_company_list_xml(), timeout=2.0)
                 if ok and code == 200:
                     return port
             except Exception:

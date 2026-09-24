@@ -56,18 +56,34 @@ class OTAUpdater:
         logger.info(f"Checking for updates. Current version: v{curr_ver}")
 
         try:
-            from shared.auth.cloud_auth_service import cloud_auth_service
-            ok, msg, res = cloud_auth_service.get_connector_version()
-
-            if not ok or not isinstance(res, dict):
-                # Fallback to direct client query
+            res = {}
+            # 1. Try public unauthenticated endpoints first (instant response, no login token required)
+            public_endpoints = [
+                "http://191.44.87.205:8000/api/version",
+                "https://raw.githubusercontent.com/PaytelGroup848/Tally-Connector-Python/main/version.json",
+            ]
+            for ep in public_endpoints:
                 try:
-                    res = self.cloud_client._request("GET", "/version")
+                    r = requests.get(ep, timeout=2.5)
+                    if r.status_code == 200:
+                        data = r.json()
+                        if isinstance(data, dict) and (data.get("latestVersion") or data.get("version") or data.get("latest_version")):
+                            res = data
+                            break
                 except Exception:
-                    pass
+                    continue
 
-            if not isinstance(res, dict):
-                res = {}
+            # 2. Fallback to Cloud Auth Service
+            if not res:
+                from shared.auth.cloud_auth_service import cloud_auth_service
+                ok, msg, c_res = cloud_auth_service.get_connector_version()
+                if ok and isinstance(c_res, dict):
+                    res = c_res
+                else:
+                    try:
+                        res = self.cloud_client._request("GET", "/version")
+                    except Exception:
+                        pass
 
             latest_version = (
                 res.get("latestVersion")

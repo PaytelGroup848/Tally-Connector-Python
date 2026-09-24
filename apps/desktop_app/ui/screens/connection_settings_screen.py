@@ -90,8 +90,11 @@ class ConnectionSettingsScreen(QWidget):
         t_lbl = QLabel("Connected")
         t_lbl.setStyleSheet("font-size: 12px; font-weight: 800; color: #1E293B; border: none; background: transparent;")
 
+        from shared.connection_config import load_connection_config
+        saved_cfg = load_connection_config()
+
         self.auto_chk = QCheckBox("AUTO")
-        self.auto_chk.setChecked(True)
+        self.auto_chk.setChecked(bool(saved_cfg.get("auto_connect", True)))
         self.auto_chk.setStyleSheet("""
             QCheckBox {
                 color: #059669;
@@ -132,7 +135,7 @@ class ConnectionSettingsScreen(QWidget):
         lbl_h = QLabel("Host Name")
         lbl_h.setStyleSheet("font-size: 11px; font-weight: 700; color: #475569; border: none; background: transparent;")
         v_host.addWidget(lbl_h)
-        self.host_input = QLineEdit("localhost")
+        self.host_input = QLineEdit(str(saved_cfg.get("tally_host", "127.0.0.1")))
         self.host_input.setFixedHeight(38)
         self.host_input.setStyleSheet("""
             QLineEdit {
@@ -155,7 +158,7 @@ class ConnectionSettingsScreen(QWidget):
         lbl_p = QLabel("Port Number")
         lbl_p.setStyleSheet("font-size: 11px; font-weight: 700; color: #475569; border: none; background: transparent;")
         v_port.addWidget(lbl_p)
-        self.port_input = QLineEdit("9000")
+        self.port_input = QLineEdit(str(saved_cfg.get("tally_port", 9000)))
         self.port_input.setFixedHeight(38)
         self.port_input.setStyleSheet("""
             QLineEdit {
@@ -312,23 +315,57 @@ class ConnectionSettingsScreen(QWidget):
         self.footer = CtrlBooksFooter()
         layout.addWidget(self.footer)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            from shared.connection_config import load_connection_config
+            cfg = load_connection_config()
+            self.auto_chk.setChecked(bool(cfg.get("auto_connect", True)))
+            self.host_input.setText(str(cfg.get("tally_host", "127.0.0.1")))
+            self.port_input.setText(str(cfg.get("tally_port", 9000)))
+            self.interval_combo.setCurrentText(str(cfg.get("sync_interval_minutes", "5 mins")))
+        except Exception:
+            pass
+
     def save_settings(self):
+        from shared.connection_config import save_connection_config, test_tally_port
+        host = self.host_input.text().strip() or "127.0.0.1"
+        port_str = self.port_input.text().strip() or "9000"
+        try:
+            port = int(port_str)
+        except ValueError:
+            self.save_btn.setText("Invalid Port!")
+            return
+
+        auto_conn = self.auto_chk.isChecked()
+        interval = self.interval_combo.currentText()
+
+        # 1. Save locally to disk and memory
+        save_connection_config(host=host, port=port, sync_interval_minutes=interval, auto_connect=auto_conn)
+
+        # 2. Test port immediately
+        is_online, comps, msg = test_tally_port(host=host, port=port, timeout=1.5)
+        if is_online:
+            self.save_btn.setText(f"Saved ✓ (Port {port} Online)")
+            self.save_btn.setStyleSheet("background-color: #059669; color: white; font-weight: 800; border-radius: 19px; border: none; font-size: 13px;")
+        else:
+            self.save_btn.setText(f"Saved (Port {port} Offline)")
+            self.save_btn.setStyleSheet("background-color: #D97706; color: white; font-weight: 800; border-radius: 19px; border: none; font-size: 13px;")
+
+        # 3. Optional gateway notification
         try:
             import httpx
-            payload = {
-                "host": self.host_input.text().strip(),
-                "port": int(self.port_input.text().strip() or "9000"),
-                "auto_connect": self.auto_chk.isChecked(),
-                "sync_interval_minutes": self.interval_combo.currentText(),
-            }
             from shared.config import get_settings
             gateway = get_settings().gateway_url.rstrip("/")
-            httpx.post(f"{gateway}/api/system/settings/connection", json=payload, timeout=2.0)
+            payload = {
+                "host": host,
+                "port": port,
+                "auto_connect": auto_conn,
+                "sync_interval_minutes": 2,
+            }
+            httpx.post(f"{gateway}/api/system/settings/connection", json=payload, timeout=1.0)
         except Exception:
-
             pass
-        self.save_btn.setText("Settings Saved ✓")
-        self.save_btn.setStyleSheet("background-color: #059669; color: white; font-weight: 800; border-radius: 19px; border: none; font-size: 13px;")
 
     def check_for_updates(self):
         self.btn_check_updates.setEnabled(False)

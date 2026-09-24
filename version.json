@@ -1,0 +1,11 @@
+{
+  "version": "1.0.2",
+  "latestVersion": "1.0.2",
+  "latest_version": "1.0.2",
+  "minVersion": "1.0.0",
+  "releaseNotes": "Shared Cloud Server multi-Tally support & manual ODBC port configuration.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.2.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.2.exe",
+  "mandatory": false
+}
+

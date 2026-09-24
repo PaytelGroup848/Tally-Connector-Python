@@ -4,7 +4,7 @@ import os
 import socket
 import subprocess
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QScrollArea
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QScrollArea, QLineEdit
 )
 from PySide6.QtCore import Signal, Qt, QThread
 from apps.desktop_app.ui.widgets.lk_header import CtrlBooksHeader
@@ -199,6 +199,59 @@ class ConnectionProbeScreen(QWidget):
         t_info_row.addWidget(chev_down)
         t_card_layout.addLayout(t_info_row)
 
+        # Port Configuration Row inside Tally Card (Option A for Cloud multi-tally servers)
+        port_row = QHBoxLayout()
+        port_row.setSpacing(8)
+
+        lbl_port = QLabel("ODBC Port:")
+        lbl_port.setStyleSheet("font-size: 11px; font-weight: 700; color: #334155; border: none; background: transparent;")
+
+        from shared.connection_config import get_configured_port
+        self.port_input = QLineEdit(str(get_configured_port()))
+        self.port_input.setFixedWidth(75)
+        self.port_input.setFixedHeight(30)
+        self.port_input.setStyleSheet("""
+            QLineEdit {
+                border: 1.5px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 0 8px;
+                font-size: 12px;
+                font-weight: 700;
+                background-color: #FFFFFF;
+                color: #0F172A;
+            }
+            QLineEdit:focus {
+                border-color: #10B981;
+            }
+        """)
+
+        self.btn_test_port = QPushButton("⚡ Test Port")
+        self.btn_test_port.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_test_port.setFixedHeight(30)
+        self.btn_test_port.setStyleSheet("""
+            QPushButton {
+                background-color: #F1F5F9;
+                color: #0F172A;
+                font-weight: 700;
+                font-size: 11px;
+                padding: 0 10px;
+                border-radius: 6px;
+                border: 1px solid #CBD5E1;
+            }
+            QPushButton:hover {
+                background-color: #E2E8F0;
+                border-color: #94A3B8;
+            }
+        """)
+        self.btn_test_port.clicked.connect(self.on_manual_test_port)
+        self.port_input.returnPressed.connect(self.on_manual_test_port)
+
+        port_row.addWidget(lbl_port)
+        port_row.addWidget(self.port_input)
+        port_row.addWidget(self.btn_test_port)
+        port_row.addStretch()
+        t_card_layout.addLayout(port_row)
+
         t_btn_row = QHBoxLayout()
         t_btn_row.setSpacing(8)
         self.btn_sync_tally = QPushButton("🔄  Connect & Sync Data")
@@ -306,6 +359,18 @@ class ConnectionProbeScreen(QWidget):
 
         self.check_connection()
 
+    def on_manual_test_port(self):
+        text = self.port_input.text().strip()
+        try:
+            port = int(text)
+        except ValueError:
+            self.tally_status_lbl.setText("Invalid Port")
+            return
+
+        from shared.connection_config import save_connection_config
+        save_connection_config(port=port)
+        self.check_connection()
+
     def check_connection(self):
         self.run_auto_detect()
 
@@ -313,9 +378,20 @@ class ConnectionProbeScreen(QWidget):
         if getattr(self, "_is_detecting", False):
             return
 
+        from shared.connection_config import load_connection_config, test_tally_port
+        cfg = load_connection_config()
+        configured_port = int(cfg.get("tally_port", 9000))
+        t_host = str(cfg.get("tally_host", "127.0.0.1")).strip() or "127.0.0.1"
+        auto_connect = bool(cfg.get("auto_connect", True))
+
+        if hasattr(self, "port_input"):
+            p_text = self.port_input.text().strip()
+            if p_text.isdigit():
+                configured_port = int(p_text)
+
         self._is_detecting = True
         self.btn_auto_detect.setEnabled(False)
-        self.tally_status_lbl.setText("🟡 Scanning 9000...")
+        self.tally_status_lbl.setText(f"🟡 Testing Port {configured_port}...")
         self.tally_status_lbl.setStyleSheet("""
             QLabel {
                 background-color: #FFFBEB;
@@ -332,29 +408,24 @@ class ConnectionProbeScreen(QWidget):
         def _bg_scan():
             result = {
                 "tally_ok": False,
-                "tally_port": 9000,
+                "tally_port": configured_port,
                 "tally_companies": [],
             }
             try:
-                tally_ports = [9000, 9001, 9002, 9003, 9004]
-                for p in tally_ports:
-                    try:
-                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        s.settimeout(0.5)
-                        res = s.connect_ex(("127.0.0.1", p))
-                        s.close()
+                if not auto_connect or configured_port != 9000:
+                    ports_to_try = [configured_port]
+                else:
+                    ports_to_try = [configured_port, 9000, 9001, 9002, 9003, 9004]
+                    seen = set()
+                    ports_to_try = [p for p in ports_to_try if not (p in seen or seen.add(p))]
 
-                        if res == 0:
-                            result["tally_ok"] = True
-                            result["tally_port"] = p
-                            xml_req = build_company_list_xml()
-                            r = httpx.post(f"http://127.0.0.1:{p}/", content=xml_req, headers={"Content-Type": "text/xml"}, timeout=1.5)
-                            if r.status_code == 200:
-                                comp_dicts = parse_company_list(r.text)
-                                result["tally_companies"] = [c["name"] for c in comp_dicts if "name" in c]
-                            break
-                    except Exception:
-                        continue
+                for p in ports_to_try:
+                    ok, comps, msg = test_tally_port(host=t_host, port=p, timeout=1.5)
+                    if ok:
+                        result["tally_ok"] = True
+                        result["tally_port"] = p
+                        result["tally_companies"] = comps
+                        break
             finally:
                 self._is_detecting = False
             self.auto_detected.emit(result)
@@ -368,6 +439,8 @@ class ConnectionProbeScreen(QWidget):
             self.tally_connected = True
             comps = res.get("tally_companies", [])
             port = res.get("tally_port", 9000)
+            if hasattr(self, "port_input") and not self.port_input.hasFocus():
+                self.port_input.setText(str(port))
             if comps:
                 self.tally_status_lbl.setText(f"🟢 Port {port} ({len(comps)} Co.)")
             else:
@@ -393,7 +466,8 @@ class ConnectionProbeScreen(QWidget):
             self.header.update_connection_status(True, "Tally Prime", res.get("tally_port", 9000))
         else:
             self.tally_connected = False
-            self.tally_status_lbl.setText("🔴 Disconnected")
+            port = res.get("tally_port", 9000)
+            self.tally_status_lbl.setText(f"🔴 Port {port} Offline")
             self.tally_status_lbl.setStyleSheet("""
                 QLabel {
                     background-color: #FEF2F2;
@@ -415,6 +489,11 @@ class ConnectionProbeScreen(QWidget):
             self.header.update_connection_status(False)
 
     def on_source_connect_clicked(self, source_type: str):
+        if hasattr(self, "port_input"):
+            text = self.port_input.text().strip()
+            if text.isdigit():
+                from shared.connection_config import save_connection_config
+                save_connection_config(port=int(text))
         self.connection_established_for_source.emit(source_type)
         self.connection_established.emit()
 

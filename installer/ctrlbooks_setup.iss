@@ -9,7 +9,7 @@
 ; =====================================================================
 
 #define MyAppName "CtrlBooks"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "CtrlBooks"
 #define MyAppURL "https://ctrlbooks.com"
 #define MyAppExeName "ctrlbooks.exe"
@@ -27,7 +27,7 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 LicenseFile=terms_and_conditions.txt
 OutputDir=..\dist
-OutputBaseFilename=CtrlBooks_Setup_v1.0.1
+OutputBaseFilename=CtrlBooks_Setup_v{#MyAppVersion}
 SetupIconFile=..\apps\desktop_app\assets\app_icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64

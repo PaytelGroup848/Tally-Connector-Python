@@ -51,3 +51,20 @@ async def update_connection_settings(payload: ConnectionSettingsPayload):
     global current_settings
     current_settings = payload
     return {"success": True, "settings": current_settings}
+
+@router.get("/version")
+async def get_version_info():
+    settings = get_settings()
+    curr_ver = settings.app_version
+    return {
+        "success": True,
+        "version": curr_ver,
+        "latestVersion": curr_ver,
+        "latest_version": curr_ver,
+        "minVersion": "1.0.0",
+        "releaseNotes": "Shared Cloud Server multi-Tally support & manual ODBC port configuration.",
+        "downloadUrl": f"http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v{curr_ver}.exe",
+        "download_url": f"http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v{curr_ver}.exe",
+        "mandatory": False,
+    }
+

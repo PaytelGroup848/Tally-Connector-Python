@@ -20,6 +20,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.gzip import GZipMiddleware
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 import httpx
 from typing import Optional
@@ -87,6 +88,30 @@ app.include_router(mapping_router)
 app.include_router(extraction_router)
 app.include_router(website_api_router)
 app.include_router(system_router)
+
+@app.get("/version")
+@app.get("/api/version")
+async def get_public_version():
+    from shared.config import get_settings
+    curr_ver = get_settings().app_version
+    return {
+        "success": True,
+        "version": curr_ver,
+        "latestVersion": curr_ver,
+        "latest_version": curr_ver,
+        "minVersion": "1.0.0",
+        "releaseNotes": "Shared Cloud Server multi-Tally support & manual ODBC port configuration.",
+        "downloadUrl": f"http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v{curr_ver}.exe",
+        "download_url": f"http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v{curr_ver}.exe",
+        "mandatory": False,
+    }
+
+from fastapi.staticfiles import StaticFiles
+_dl_dir = Path("dist")
+if not _dl_dir.exists():
+    _dl_dir = Path("downloads")
+_dl_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/downloads", StaticFiles(directory=str(_dl_dir)), name="downloads")
 
 URLS = {
     "connection": "http://127.0.0.1:8001",

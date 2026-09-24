@@ -33,7 +33,7 @@ def find_iscc() -> str:
 
 def main():
     print("=========================================================")
-    print(" Building Client Setup Installer: CtrlBooks_Setup_v1.0.1.exe")
+    print(" Building Client Setup Installer: CtrlBooks_Setup_v1.0.2.exe")
     print("=========================================================")
 
     if not ISS_FILE.exists():
@@ -53,7 +53,7 @@ def main():
     res = subprocess.run(cmd, cwd=str(ROOT))
 
     if res.returncode == 0:
-        dist_setup = ROOT / "dist" / "CtrlBooks_Setup_v1.0.1.exe"
+        dist_setup = ROOT / "dist" / "CtrlBooks_Setup_v1.0.2.exe"
         print("\n=========================================================")
         print(f" INSTALLER BUILD SUCCESSFUL! Setup generated at:\n {dist_setup}")
         print("=========================================================")
