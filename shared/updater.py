@@ -244,15 +244,23 @@ del "%~f0"
             logger.error(f"Failed to launch batch update script: {exc}")
             return False
 
-    def install_and_restart(self, downloaded_path: str) -> bool:
+    def install_and_restart(self, downloaded_path: str, expected_sha256: Optional[str] = None) -> bool:
         """
         Executes downloaded update file and prepares app update.
         If file is a setup installer (.exe), launches it directly.
         Otherwise falls back to batch file binary replacement.
+        Validates SHA256 integrity before execution if expected_sha256 is supplied.
         """
         if not downloaded_path or not os.path.exists(downloaded_path):
             logger.error(f"Cannot install update: file not found at {downloaded_path}")
             return False
+
+        if expected_sha256 and expected_sha256.strip():
+            clean_expected = expected_sha256.strip().lower()
+            computed_hash = compute_file_sha256(downloaded_path)
+            if computed_hash != clean_expected:
+                logger.error(f"Execution aborted! Checksum mismatch before install: {computed_hash} != {clean_expected}")
+                return False
 
         clean_path = os.path.abspath(downloaded_path).replace("/", "\\")
         file_lower = clean_path.lower()

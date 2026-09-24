@@ -165,18 +165,11 @@ class ActivityHistoryRepository:
         if target_email:
             and_clauses.append({"$or": [{"user_email": target_email}, {"email": target_email}]})
 
-        # Allow dropping scoped user entries AND local untagged legacy entries
-        legacy_clause = {
-            "$and": [
-                {"$or": [{"organization_id": None}, {"organization_id": ""}, {"organization_id": {"$exists": False}}]},
-                {"$or": [{"user_email": None}, {"user_email": ""}, {"user_email": {"$exists": False}}]}
-            ]
-        }
-        if and_clauses:
-            user_clause = {"$and": and_clauses} if len(and_clauses) > 1 else and_clauses[0]
-            delete_query = {"$or": [user_clause, legacy_clause]}
-        else:
-            delete_query = legacy_clause
+        if not and_clauses:
+            logger.warning("clear_activities called without organization or user email; skipping cloud deletion.")
+            return
+
+        delete_query = {"$and": and_clauses} if len(and_clauses) > 1 else and_clauses[0]
 
         try:
             from shared.db.mongo_client import get_collection

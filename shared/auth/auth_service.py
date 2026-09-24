@@ -97,8 +97,6 @@ class AuthService:
             role_obj = user.user_roles[0].role
             if role_obj:
                 role_name = role_obj.name
-        elif "admin" in clean_email:
-            role_name = "Admin"
 
         self._log_audit(db, user.id, "LOGIN_SUCCESS", f"User '{clean_email}' signed in via OTP successfully", request_id)
 
@@ -171,8 +169,6 @@ class AuthService:
             role_obj = user.user_roles[0].role
             if role_obj:
                 role_name = role_obj.name
-        elif "admin" in clean_username.lower():
-            role_name = "Admin"
 
         self._log_audit(db, user.id, "LOGIN_SUCCESS", f"User '{user.username}' signed in successfully", request_id)
 
@@ -210,8 +206,6 @@ class AuthService:
             role_obj = user.user_roles[0].role
             if role_obj:
                 role_name = role_obj.name
-        elif "admin" in user.username.lower():
-            role_name = "Admin"
 
         return {
             "id": user.id,

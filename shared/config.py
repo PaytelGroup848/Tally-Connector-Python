@@ -73,15 +73,10 @@ class Settings(BaseModel):
 
     @property
     def effective_mongo_url(self) -> str:
-        """Returns valid MongoDB connection URI, falling back to CTRLBOOKS_DB_URL or default Atlas cluster."""
+        """Returns valid MongoDB connection URI, strictly from config or environment variables."""
         if self.mongo_db_url and self.mongo_db_url.strip():
             return self.mongo_db_url.strip()
-        default_mongo = (
-            "mongodb://datacloude8_db_user:6ru82Z0uNhMhoz5u@ac-twlm6pz-shard-00-00.xcqrnjz.mongodb.net:27017,"
-            "ac-twlm6pz-shard-00-01.xcqrnjz.mongodb.net:27017,"
-            "ac-twlm6pz-shard-00-02.xcqrnjz.mongodb.net:27017/?ssl=true&replicaSet=atlas-h0mo8s-shard-0&authSource=admin&appName=CloudedataConnect"
-        )
-        return default_mongo
+        return os.getenv("CTRLBOOKS_DB_URL", os.getenv("MONGODB_URI", os.getenv("MONGO_URL", ""))).strip()
 
     @property
     def effective_database_url(self) -> str:

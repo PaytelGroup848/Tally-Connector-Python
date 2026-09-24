@@ -105,7 +105,14 @@ class ConnectorMainWindow(QMainWindow):
             if hasattr(sc.header, "close_clicked"):
                 sc.header.close_clicked.connect(self.close)
 
-        self.stack.setCurrentWidget(self.sc_login)
+        # Check for active 24-hour session from Windows Credential Manager
+        from shared.auth.cloud_auth_service import cloud_auth_service
+        cloud_auth_service.load_session()
+        if cloud_auth_service.is_authenticated:
+            self.stack.setCurrentWidget(self.sc_probe)
+            QTimer.singleShot(400, self.sc_probe.check_connection)
+        else:
+            self.stack.setCurrentWidget(self.sc_login)
 
     def on_login_successful(self, mobile: str):
         self.stack.setCurrentWidget(self.sc_probe)
@@ -130,6 +137,8 @@ class ConnectorMainWindow(QMainWindow):
             self.sc_activity.load_activities()
             self.stack.setCurrentWidget(self.sc_activity)
         elif target == "logout":
+            from shared.auth.cloud_auth_service import cloud_auth_service
+            cloud_auth_service.logout()
             self.stack.setCurrentWidget(self.sc_login)
 
     def open_web_view(self, company_name: str):

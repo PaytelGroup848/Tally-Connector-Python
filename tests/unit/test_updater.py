@@ -14,8 +14,9 @@ class TestOTAUpdater(unittest.TestCase):
         self.assertTrue(parse_version_tuple("2.0.0") > parse_version_tuple("1.9.9"))
         self.assertFalse(parse_version_tuple("1.0.0") > parse_version_tuple("1.0.0"))
 
+    @patch("requests.get", side_effect=Exception("Network Offline"))
     @patch("shared.auth.cloud_auth_service.cloud_auth_service.get_connector_version")
-    def test_check_for_updates_newer_available(self, mock_get_version):
+    def test_check_for_updates_newer_available(self, mock_get_version, mock_req):
         mock_get_version.return_value = (
             True,
             "Success",
@@ -36,8 +37,9 @@ class TestOTAUpdater(unittest.TestCase):
         self.assertIn("v1.0.1.exe", res["download_url"])
         self.assertFalse(res["mandatory"])
 
+    @patch("requests.get", side_effect=Exception("Network Offline"))
     @patch("shared.auth.cloud_auth_service.cloud_auth_service.get_connector_version")
-    def test_check_for_updates_already_latest(self, mock_get_version):
+    def test_check_for_updates_already_latest(self, mock_get_version, mock_req):
         mock_get_version.return_value = (
             True,
             "Success",
@@ -54,8 +56,9 @@ class TestOTAUpdater(unittest.TestCase):
         self.assertFalse(res["update_available"])
         self.assertEqual(res["latest_version"], "1.0.0")
 
+    @patch("requests.get", side_effect=Exception("Network Offline"))
     @patch("shared.auth.cloud_auth_service.cloud_auth_service.get_connector_version")
-    def test_check_for_updates_fallback_download_url(self, mock_get_version):
+    def test_check_for_updates_fallback_download_url(self, mock_get_version, mock_req):
         mock_get_version.return_value = (
             True,
             "Success",

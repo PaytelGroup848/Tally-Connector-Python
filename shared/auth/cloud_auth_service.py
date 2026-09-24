@@ -144,7 +144,21 @@ class CloudAuthService:
             pass
 
     def load_session(self) -> None:
-       
+        """Loads authenticated session, prioritizing Windows Credential Manager with 24-hr TTL enforcement."""
+        # 1. Primary: Native Windows Credential Manager (Encrypted at rest by Windows DPAPI)
+        try:
+            from shared.auth.win_credential_store import load_persisted_session
+            win_session = load_persisted_session()
+            if win_session and win_session.get("access_token"):
+                self.access_token = win_session.get("access_token")
+                self.refresh_token_val = win_session.get("refresh_token")
+                self.current_user = win_session.get("user") or {}
+                logger.info(f"Restored active 24-hour session from Windows Credential Manager for user '{win_session.get('username')}'")
+                return
+        except Exception as exc:
+            logger.warning(f"Error checking Windows Credential Manager: {exc}")
+
+        # 2. Fallback: Local auth_session.json (if present and valid)
         target_file = AUTH_SESSION_FILE
         if not target_file.exists() and Path("data/auth_session.json").exists():
             target_file = Path("data/auth_session.json")
@@ -157,16 +171,31 @@ class CloudAuthService:
                     self.refresh_token_val = data.get("refreshToken") or data.get("refresh_token")
                     self.current_user = data.get("user") or {}
             except Exception as exc:
-                logger.warning(f"Error loading auth session: {exc}")
+                logger.warning(f"Error loading auth session file: {exc}")
 
     def save_session(self, access_token: str, refresh_token: Optional[str] = None, user: Optional[Dict[str, Any]] = None) -> None:
-        """Persists access token and user info to disk and memory."""
+        """Persists access token and user info to Windows Credential Manager (24h TTL) and disk fallback."""
         self.access_token = access_token
         if refresh_token:
             self.refresh_token_val = refresh_token
         if user:
             self.current_user = user
 
+        # 1. Primary: Save to Windows Credential Manager with 24-hour expiration
+        try:
+            from shared.auth.win_credential_store import save_persisted_session
+            uname = self.get_email() or (user.get("email") if user else None) or (user.get("username") if user else None) or "default_user"
+            save_persisted_session(
+                username=uname,
+                access_token=self.access_token,
+                refresh_token=self.refresh_token_val,
+                user_dict=self.current_user,
+                ttl_seconds=86400  # 1 Day (24 hours)
+            )
+        except Exception as exc:
+            logger.warning(f"Could not persist session to Windows Credential Manager: {exc}")
+
+        # 2. Local fallback storage
         payload = {
             "accessToken": self.access_token,
             "refreshToken": self.refresh_token_val,
@@ -420,6 +449,14 @@ class CloudAuthService:
         self.access_token = None
         self.refresh_token_val = None
         self.current_user = {}
+
+        # Clear from Windows Credential Manager
+        try:
+            from shared.auth.win_credential_store import clear_persisted_session
+            clear_persisted_session()
+        except Exception:
+            pass
+
         if AUTH_SESSION_FILE.exists():
             try:
                 AUTH_SESSION_FILE.unlink()

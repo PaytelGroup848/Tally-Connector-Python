@@ -5,7 +5,7 @@ from shared.connection_config import (
     save_connection_config,
     get_configured_port,
     get_configured_host,
-    test_tally_port,
+    test_tally_port as check_tally_port,
 )
 
 
@@ -35,7 +35,7 @@ class TestConnectionConfig(unittest.TestCase):
         mock_sock.connect_ex.return_value = 111  # Connection refused
         mock_socket_cls.return_value = mock_sock
 
-        is_online, comps, msg = test_tally_port(port=9099)
+        is_online, comps, msg = check_tally_port(port=9099)
         self.assertFalse(is_online)
         self.assertEqual(comps, [])
         self.assertIn("not responding", msg)

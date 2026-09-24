@@ -27,7 +27,13 @@ def base64url_decode(data_str: str) -> bytes:
 
 def get_token_secret() -> bytes:
     settings = get_settings()
-    secret = settings.jwt_secret or "lr-connector-secure-default-secret-key-change-in-prod"
+    secret = settings.jwt_secret
+    if not secret:
+        from shared.config import Environment
+        if settings.app_environment == Environment.PRODUCTION:
+            raise AuthenticationError("JWT_SECRET must be configured in environment for production mode.")
+        logger.warning("SECURITY WARNING: JWT_SECRET not configured in environment. Using temporary fallback.")
+        secret = "lr-connector-secure-default-secret-key-change-in-prod"
     return secret.encode("utf-8")
 
 def create_access_token(payload_data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:

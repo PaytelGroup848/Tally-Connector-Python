@@ -13,6 +13,22 @@ class DummyCollection:
     def insert_one(self, doc):
         self.docs.append(dict(doc))
 
+    def _match_doc(self, d, f):
+        if not f:
+            return True
+        if "$and" in f:
+            return all(self._match_doc(d, c) for c in f["$and"])
+        if "$or" in f:
+            return any(self._match_doc(d, c) for c in f["$or"])
+        for k, v in f.items():
+            if isinstance(v, dict) and "$exists" in v:
+                exists = k in d and d[k] is not None
+                if exists != v["$exists"]:
+                    return False
+            elif d.get(k) != v:
+                return False
+        return True
+
     def find(self, filter_dict, projection=None):
         class Cursor:
             def __init__(self, data):
@@ -24,64 +40,11 @@ class DummyCollection:
             def limit(self, n):
                 return self._data[:n]
 
-        matched = []
-        for d in self.docs:
-            if "$and" in filter_dict:
-                all_match = True
-                for clause in filter_dict["$and"]:
-                    clause_match = False
-                    for or_sub in clause.get("$or", []):
-                        for k, v in or_sub.items():
-                            if d.get(k) == v:
-                                clause_match = True
-                    if not clause_match:
-                        all_match = False
-                        break
-                if all_match:
-                    matched.append(d)
-            elif "$or" in filter_dict:
-                or_match = False
-                for or_sub in filter_dict["$or"]:
-                    for k, v in or_sub.items():
-                        if d.get(k) == v:
-                            or_match = True
-                if or_match:
-                    matched.append(d)
-            elif not filter_dict:
-                matched.append(d)
-            else:
-                match = True
-                for k, v in filter_dict.items():
-                    if d.get(k) != v:
-                        match = False
-                if match:
-                    matched.append(d)
+        matched = [d for d in self.docs if self._match_doc(d, filter_dict)]
         return Cursor(matched)
 
     def delete_many(self, filter_dict):
-        before = len(self.docs)
-        if "$and" in filter_dict:
-            def matches(d):
-                for clause in filter_dict["$and"]:
-                    clause_match = False
-                    for or_sub in clause.get("$or", []):
-                        for k, v in or_sub.items():
-                            if d.get(k) == v:
-                                clause_match = True
-                    if not clause_match:
-                        return False
-                return True
-            self.docs = [d for d in self.docs if not matches(d)]
-        elif "$or" in filter_dict:
-            def matches(d):
-                for or_sub in filter_dict["$or"]:
-                    for k, v in or_sub.items():
-                        if d.get(k) == v:
-                            return True
-                return False
-            self.docs = [d for d in self.docs if not matches(d)]
-        elif not filter_dict:
-            self.docs = []
+        self.docs = [d for d in self.docs if not self._match_doc(d, filter_dict)]
 
 
 @pytest.fixture
