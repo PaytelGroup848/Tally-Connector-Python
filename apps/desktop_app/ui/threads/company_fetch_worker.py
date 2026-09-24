@@ -261,6 +261,11 @@ def fetch_db_company_statistics(company_name: str) -> dict:
             {"tallyCompanyName": clean_name},
             {"name": clean_name}
         ]}
+        # Fast O(1) check in companies document where sync worker saved stats
+        comp_doc = get_collection("companies").find_one(c_filter, {"stats": 1})
+        if comp_doc and isinstance(comp_doc.get("stats"), dict) and any(comp_doc["stats"].values()):
+            return comp_doc["stats"]
+
         l_count = get_collection("ledgers").count_documents(c_filter)
         v_count = get_collection("vouchers").count_documents(c_filter)
         i_count = get_collection("stock_items").count_documents(c_filter)
