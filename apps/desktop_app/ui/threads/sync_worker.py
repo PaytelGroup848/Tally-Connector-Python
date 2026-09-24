@@ -3,13 +3,28 @@ import uuid
 from typing import List, Dict, Any, Tuple, Optional
 from datetime import datetime, timezone
 from PySide6.QtCore import QThread, Signal
-from pymongo import UpdateOne, UpdateMany
-from bson import ObjectId
+try:
+    from pymongo import UpdateOne, UpdateMany
+except Exception:
+    UpdateOne = None
+    UpdateMany = None
+
+try:
+    from bson import ObjectId
+except Exception:
+    ObjectId = None
 
 from shared.repositories.company_repository import get_all_company_configs, upsert_company_config
 from shared.auth.cloud_auth_service import cloud_auth_service
-from shared.db.mongo_client import get_collection
 from shared.logging_config import get_logger
+
+def get_collection(name: str):
+    try:
+        from shared.db.mongo_client import get_collection as _gc
+        return _gc(name)
+    except Exception as exc:
+        logger.debug(f"MongoDB collection '{name}' access notice: {exc}")
+        return None
 from apps.backend.adapters.tally.tally_client import TallyClient
 from apps.backend.adapters.tally.request_builder import build_company_list_xml, build_collection_xml
 from apps.backend.adapters.tally.response_parser import parse_company_list, parse_metadata_response

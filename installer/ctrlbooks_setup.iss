@@ -47,6 +47,10 @@ Name: "autostart"; Description: "Automatically launch CtrlBooks on Windows start
 Name: "{app}\logs"; Permissions: users-modify
 Name: "{app}\data"; Permissions: users-modify
 
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal\bson"
+Type: files; Name: "{app}\_internal\_cbson*.*"
+
 [Files]
 Source: "..\dist\ctrlbooks\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

@@ -20,10 +20,17 @@ from apps.desktop_app.ui.widgets.lk_header import CtrlBooksHeader
 from apps.desktop_app.ui.widgets.lk_footer import CtrlBooksFooter
 from apps.desktop_app.ui.widgets.toast import ToastNotification
 from shared.auth.cloud_auth_service import cloud_auth_service
-from shared.db.mongo_client import get_collection
 from shared.logging_config import get_logger
 
 logger = get_logger("app.ui.profile")
+
+def _safe_get_collection(name: str):
+    try:
+        from shared.db.mongo_client import get_collection
+        return get_collection(name)
+    except Exception as exc:
+        logger.debug(f"MongoDB collection '{name}' access notice: {exc}")
+        return None
 
 import os
 
@@ -522,16 +529,17 @@ class ProfileScreen(QWidget):
 
         db_profile = {}
         try:
-            col = get_collection("user_profile")
-            doc = None
-            if user_email:
-                doc = col.find_one({"$or": [{"profile_id": user_email}, {"email": user_email}]})
-            if not doc:
-                doc = col.find_one({"profile_id": "current_user"})
-            if doc:
-                db_profile = doc
-                if not raw_cloud_data:
-                    raw_cloud_data = doc.get("raw") or doc
+            col = _safe_get_collection("user_profile")
+            if col is not None:
+                doc = None
+                if user_email:
+                    doc = col.find_one({"$or": [{"profile_id": user_email}, {"email": user_email}]})
+                if not doc:
+                    doc = col.find_one({"profile_id": "current_user"})
+                if doc:
+                    db_profile = doc
+                    if not raw_cloud_data:
+                        raw_cloud_data = doc.get("raw") or doc
         except Exception as exc:
             logger.debug(f"MongoDB profile load notice: {exc}")
 
@@ -695,11 +703,12 @@ class ProfileScreen(QWidget):
         }
 
         try:
-            col = get_collection("user_profile")
-            col.update_one({"profile_id": profile_key}, {"$set": profile_doc}, upsert=True)
-            if profile_key != "current_user":
-                col.update_one({"profile_id": "current_user"}, {"$set": profile_doc}, upsert=True)
-            logger.info(f"User profile for '{name}' saved successfully in MongoDB Atlas.")
+            col = _safe_get_collection("user_profile")
+            if col is not None:
+                col.update_one({"profile_id": profile_key}, {"$set": profile_doc}, upsert=True)
+                if profile_key != "current_user":
+                    col.update_one({"profile_id": "current_user"}, {"$set": profile_doc}, upsert=True)
+                logger.info(f"User profile for '{name}' saved successfully in MongoDB Atlas.")
         except Exception as exc:
             logger.error(f"MongoDB profile save error: {exc}")
 

@@ -111,12 +111,15 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['_cbson'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
 )
+
+# Strip out _cbson C-extension binaries to ensure pure Python BSON stability
+a.binaries = [x for x in a.binaries if '_cbson' not in x[0].lower() and 'cbson' not in str(x).lower()]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

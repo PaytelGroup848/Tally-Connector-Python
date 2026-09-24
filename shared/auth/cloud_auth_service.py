@@ -6,10 +6,18 @@ from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime, timezone
 
 from shared.config import get_settings
-from shared.db.mongo_client import get_collection
 from shared.logging_config import get_logger
 
 logger = get_logger("app.auth.cloud")
+
+def _safe_get_collection(name: str):
+    """Lazily and safely retrieves MongoDB collection without failing at import time."""
+    try:
+        from shared.db.mongo_client import get_collection
+        return get_collection(name)
+    except Exception as exc:
+        logger.debug(f"MongoDB collection '{name}' access notice: {exc}")
+        return None
 
 def _get_writable_data_file(filename: str) -> Path:
     """Returns a writable Path for app data storage across all environments."""
@@ -278,7 +286,9 @@ class CloudAuthService:
 
     def sync_user_to_mongodb(self, user_data: Dict[str, Any]) -> None:
         try:
-            col = get_collection("user_profile")
+            col = _safe_get_collection("user_profile")
+            if col is None:
+                return
 
             connector_data = user_data.get("connector") or {}
             plan_data = user_data.get("plan") or {}
@@ -531,8 +541,9 @@ class CloudAuthService:
                 if isinstance(comp_obj, dict):
                     comp_id_val = comp_obj.get("id") or comp_obj.get("_id")
                 try:
-                    col = get_collection("companies")
-                    org_id = self.get_organization_id()
+                    col = _safe_get_collection("companies")
+                    if col is not None:
+                        org_id = self.get_organization_id()
                     user_email = (
                         self.current_user.get("email")
                         or getattr(self, "email", "")
@@ -607,23 +618,24 @@ class CloudAuthService:
                 if isinstance(companies_list, list):
 
                     try:
-                        col = get_collection("companies")
-                        for c in companies_list:
-                            c_name = c.get("tallyCompanyName") or c.get("companyName") or c.get("name")
-                            if c_name:
-                                col.update_one(
-                                    {"company_name": c_name},
-                                    {"$set": {
-                                        "company_name": c_name,
-                                        "company_guid": c.get("tallyCompanyGuid") or c.get("companyGuid"),
-                                        "cloud_company_id": c.get("id") or c.get("_id"),
-                                        "cloud_linked": True,
-                                        "is_sync_enabled": c.get("isSyncEnabled", True),
-                                        "status": c.get("status", "CONNECTED"),
-                                        "updated_at": datetime.now(timezone.utc).isoformat()
-                                    }},
-                                    upsert=True
-                                )
+                        col = _safe_get_collection("companies")
+                        if col is not None:
+                            for c in companies_list:
+                                c_name = c.get("tallyCompanyName") or c.get("companyName") or c.get("name")
+                                if c_name:
+                                    col.update_one(
+                                        {"company_name": c_name},
+                                        {"$set": {
+                                            "company_name": c_name,
+                                            "company_guid": c.get("tallyCompanyGuid") or c.get("companyGuid"),
+                                            "cloud_company_id": c.get("id") or c.get("_id"),
+                                            "cloud_linked": True,
+                                            "is_sync_enabled": c.get("isSyncEnabled", True),
+                                            "status": c.get("status", "CONNECTED"),
+                                            "updated_at": datetime.now(timezone.utc).isoformat()
+                                        }},
+                                        upsert=True
+                                    )
                     except Exception as e:
                         logger.error(f"Error syncing cloud companies to MongoDB: {e}")
 
@@ -690,12 +702,13 @@ class CloudAuthService:
 
         if target_cid and len(str(target_cid)) >= 8:
             try:
-                col = get_collection("companies")
-                col.update_one(
-                    {"$or": [{"company_name": company_name}, {"name": company_name}, {"tallyCompanyName": company_name}]},
-                    {"$set": {"cloud_company_id": str(target_cid)}},
-                    upsert=True
-                )
+                col = _safe_get_collection("companies")
+                if col is not None:
+                    col.update_one(
+                        {"$or": [{"company_name": company_name}, {"name": company_name}, {"tallyCompanyName": company_name}]},
+                        {"$set": {"cloud_company_id": str(target_cid)}},
+                        upsert=True
+                    )
             except Exception:
                 pass
 

@@ -19,6 +19,9 @@ if not (ROOT / "shared").exists():
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Disable brittle compiled C-extension _cbson to guarantee pure Python BSON stability across Windows updates
+sys.modules['bson._cbson'] = None
+
 from apps.desktop_app.ui.main_window import ConnectorMainWindow
 
 import signal
