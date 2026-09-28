@@ -3,28 +3,12 @@ import uuid
 from typing import List, Dict, Any, Tuple, Optional
 from datetime import datetime, timezone
 from PySide6.QtCore import QThread, Signal
-try:
-    from pymongo import UpdateOne, UpdateMany
-except Exception:
-    UpdateOne = None
-    UpdateMany = None
-
-try:
-    from bson import ObjectId
-except Exception:
-    ObjectId = None
-
+from pymongo import UpdateOne, UpdateMany
+from bson import ObjectId
 from shared.repositories.company_repository import get_all_company_configs, upsert_company_config
 from shared.auth.cloud_auth_service import cloud_auth_service
 from shared.logging_config import get_logger
-
-def get_collection(name: str):
-    try:
-        from shared.db.mongo_client import get_collection as _gc
-        return _gc(name)
-    except Exception as exc:
-        logger.debug(f"MongoDB collection '{name}' access notice: {exc}")
-        return None
+from shared.db.mongo_client import get_collection
 from apps.backend.adapters.tally.tally_client import TallyClient
 from apps.backend.adapters.tally.request_builder import build_company_list_xml, build_collection_xml
 from apps.backend.adapters.tally.response_parser import parse_company_list, parse_metadata_response
@@ -261,6 +245,41 @@ class BackgroundSyncWorker(QThread):
                         sg_col.bulk_write(chunk, ordered=False)
         except Exception as exc:
             logger.warning(f"Stock groups extraction notice: {exc}")
+
+    def _sync_voucher_types(self, c_name: str, port: int, now_iso: str, org_oid, c_oid):
+        try:
+            vt_xml = build_collection_xml(
+                "VoucherType",
+                ["NAME", "PARENT", "NUMBERINGMETHOD", "ISDEEMEDPOSITIVE", "AFFECTSSTOCK", "ISACTIVE", "GUID", "ALTERID"],
+                company_name=c_name
+            )
+            ok_vt, code_vt, text_vt, _ = self.tally_client.send_xml_request("127.0.0.1", port, vt_xml, timeout=30.0)
+            if ok_vt and code_vt == 200:
+                vt_items = parse_metadata_response(text_vt, tag_name="VoucherType")
+                vt_col = get_collection("voucher_types")
+                vt_ops = []
+                for vt in vt_items:
+                    vt_doc = {
+                        "source": "TALLY",
+                        "company_name": c_name,
+                        "tallyExternalId": vt.get("tallyExternalId") or vt.get("name"),
+                        "name": vt.get("name"),
+                        "parent": vt.get("parent"),
+                        "guid": vt.get("guid"),
+                        "alter_id": int(vt.get("alterid", 0) or 0),
+                        "raw": vt.get("raw") or vt,
+                        "updated_at": now_iso
+                    }
+                    if org_oid:
+                        vt_doc["organizationId"] = org_oid
+                    if c_oid:
+                        vt_doc["companyId"] = c_oid
+                    vt_ops.append(UpdateOne({"name": vt.get("name"), "company_name": c_name}, {"$set": vt_doc}, upsert=True))
+                if vt_ops:
+                    for chunk in chunk_list(vt_ops, 500):
+                        vt_col.bulk_write(chunk, ordered=False)
+        except Exception as exc:
+            logger.warning(f"Voucher types extraction error for '{c_name}': {exc}")
 
     def _sync_ledgers(self, c_name: str, port: int, now_iso: str, now_dt: datetime, org_oid, c_oid) -> Tuple[List[Dict[str, Any]], int]:
         extracted_ledgers: List[Dict[str, Any]] = []
@@ -951,8 +970,16 @@ class BackgroundSyncWorker(QThread):
                         c_updates = []
                         s_updates = []
                         for p_name, v_id in party_latest_voucher.items():
-                            c_updates.append(UpdateMany({"name": p_name}, {"$set": {"voucherId": v_id, "raw.voucherId": v_id, "updatedAt": now_dt}}))
-                            s_updates.append(UpdateMany({"name": p_name}, {"$set": {"voucherId": v_id, "raw.voucherId": v_id, "updatedAt": now_dt}}))
+                            party_filter: Dict[str, Any] = {"name": p_name}
+                            if c_oid:
+                                party_filter["companyId"] = c_oid
+                            elif c_name:
+                                party_filter["company_name"] = c_name
+                            if org_oid:
+                                party_filter["organizationId"] = org_oid
+
+                            c_updates.append(UpdateMany(party_filter, {"$set": {"voucherId": v_id, "raw.voucherId": v_id, "updatedAt": now_dt}}))
+                            s_updates.append(UpdateMany(party_filter, {"$set": {"voucherId": v_id, "raw.voucherId": v_id, "updatedAt": now_dt}}))
                         if c_updates:
                             for chunk in chunk_list(c_updates, 500):
                                 cust_col.bulk_write(chunk, ordered=False)
@@ -1086,6 +1113,9 @@ class BackgroundSyncWorker(QThread):
         self._sync_units(c_name, tally_port, now_iso, org_oid, c_oid)
 
         self._sync_stock_groups(c_name, tally_port, now_iso, org_oid, c_oid)
+
+        self.progress_changed.emit(base_pct + 22, f"[{idx}/{total_companies}] Extracting Voucher Types...")
+        self._sync_voucher_types(c_name, tally_port, now_iso, org_oid, c_oid)
 
         if self._is_cancelled:
             return False, "Cancelled"

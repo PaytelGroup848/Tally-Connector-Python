@@ -6,7 +6,7 @@ via native Windows Credential Manager API (advapi32.dll).
 
 Features:
 - Stores session tokens and user data securely inside Windows Credential Manager.
-- Enforces 24-hour (1 day) session Time-To-Live (TTL).
+- Enforces 15-day session Time-To-Live (TTL).
 - Automatically clears expired credentials.
 - Works natively with zero external Python dependencies using ctypes.
 """
@@ -21,7 +21,7 @@ from shared.logging_config import get_logger
 logger = get_logger("app.auth.win_cred")
 
 CRED_TARGET_NAME = "CtrlBooks:UserSession"
-SESSION_LIFETIME_SECONDS = 86400  # 1 day / 24 hours
+SESSION_LIFETIME_SECONDS = 15 * 86400  # 15 days (1,296,000 seconds)
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +89,7 @@ def win_cred_write(target_name: str, username: str, secret: str) -> bool:
         cred.Flags = 0
         cred.Type = CRED_TYPE_GENERIC
         cred.TargetName = target_name
-        cred.Comment = "CtrlBooks Encrypted Session Token (24h TTL)"
+        cred.Comment = "CtrlBooks Encrypted Session Token (15-day TTL)"
         cred.CredentialBlobSize = len(secret_bytes)
         cred.CredentialBlob = ctypes.cast(blob, ctypes.POINTER(ctypes.c_byte))
         cred.Persist = CRED_PERSIST_LOCAL_MACHINE
@@ -150,7 +150,7 @@ def win_cred_delete(target_name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# High-Level 24-Hour Session Management API
+# High-Level 15-Day Session Management API
 # ---------------------------------------------------------------------------
 
 def save_persisted_session(
@@ -159,18 +159,23 @@ def save_persisted_session(
     refresh_token: Optional[str] = None,
     user_dict: Optional[Dict[str, Any]] = None,
     ttl_seconds: int = SESSION_LIFETIME_SECONDS,
+    device_id: Optional[str] = None,
 ) -> bool:
     """
-    Saves authenticated user session to Windows Credential Manager with a 24-hour expiration.
+    Saves authenticated user session to Windows Credential Manager with a 15-day expiration.
     """
     now = int(time.time())
     expires_at = now + ttl_seconds
+
+    # Extract device_id from user_dict if not explicitly passed
+    resolved_device_id = device_id or (user_dict.get("deviceId") if user_dict else None) or ""
 
     payload = {
         "username": username,
         "access_token": access_token,
         "refresh_token": refresh_token or "",
         "user": user_dict or {},
+        "device_id": resolved_device_id,
         "logged_in_at": now,
         "expires_at": expires_at,
     }
@@ -178,14 +183,15 @@ def save_persisted_session(
     raw_json = json.dumps(payload, ensure_ascii=False)
     ok = win_cred_write(CRED_TARGET_NAME, username, raw_json)
     if ok:
-        logger.info(f"Saved session for '{username}' to Windows Credential Manager (Valid for 24 hours until {expires_at})")
+        valid_days = round(ttl_seconds / 86400.0, 1)
+        logger.info(f"Saved session for '{username}' to Windows Credential Manager (Valid for {valid_days} days until {expires_at})")
     return ok
 
 
 def load_persisted_session() -> Optional[Dict[str, Any]]:
     """
     Retrieves the persisted session from Windows Credential Manager.
-    If the session has exceeded 24 hours (expired), it is purged automatically and returns None.
+    If the session has exceeded 15 days (expired), it is purged automatically and returns None.
     """
     res = win_cred_read(CRED_TARGET_NAME)
     if not res:
@@ -197,14 +203,15 @@ def load_persisted_session() -> Optional[Dict[str, Any]]:
         expires_at = data.get("expires_at", 0)
         now = int(time.time())
 
-        # Enforce 24-Hour (1 day) Expiry Check
+        # Enforce 15-Day Expiry Check
         if now >= expires_at:
             logger.info(f"Session in Windows Credential Manager has expired (now={now} >= expires_at={expires_at}). Purging session...")
             clear_persisted_session()
             return None
 
+        remaining_days = round((expires_at - now) / 86400.0, 1)
         remaining_hours = round((expires_at - now) / 3600.0, 1)
-        logger.info(f"Loaded valid session for '{username}' from Windows Credential Manager ({remaining_hours} hours remaining)")
+        logger.info(f"Loaded valid session for '{username}' from Windows Credential Manager ({remaining_days} days / {remaining_hours} hours remaining)")
         return data
     except Exception as exc:
         logger.warning(f"Failed to decode session payload from Windows Credential Manager: {exc}")

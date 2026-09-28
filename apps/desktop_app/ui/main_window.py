@@ -313,9 +313,19 @@ class ConnectorMainWindow(QMainWindow):
 
     def trigger_sync_now(self):
         self.tray_icon.show_toast("Syncing", "Manual background sync started...")
+        if hasattr(self, "sc_dash") and self.sc_dash:
+            self.sc_dash.start_qthread_sync("", "TALLY")
 
     def on_toggle_pause_sync(self):
-        pass
+        if hasattr(self, "sc_dash") and self.sc_dash:
+            timer = getattr(self.sc_dash, "periodic_sync_timer", None)
+            if timer:
+                if self.tray_icon.is_paused:
+                    timer.stop()
+                    logger.info("System Tray: Background periodic sync paused.")
+                else:
+                    self.sc_dash.refresh_sync_interval()
+                    logger.info("System Tray: Background periodic sync resumed.")
 
     def closeEvent(self, event):
         if not self.is_force_exit:
@@ -329,4 +339,16 @@ class ConnectorMainWindow(QMainWindow):
 
     def force_exit_app(self):
         self.is_force_exit = True
+        try:
+            if hasattr(self, "sc_dash") and self.sc_dash:
+                self.sc_dash.cleanup()
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "periodic_update_timer") and self.periodic_update_timer:
+                self.periodic_update_timer.stop()
+        except Exception:
+            pass
         QApplication.quit()
+        import os
+        os._exit(0)

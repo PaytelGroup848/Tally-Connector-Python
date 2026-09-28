@@ -91,7 +91,7 @@ app.include_router(system_router)
 
 @app.get("/version")
 @app.get("/api/version")
-async def get_public_version():
+async def get_public_version(request: Request = None):
     import json
     v_file = Path("version.json")
     if v_file.exists():
@@ -105,7 +105,10 @@ async def get_public_version():
             pass
 
     from shared.config import get_settings
-    curr_ver = get_settings().app_version
+    settings = get_settings()
+    curr_ver = settings.app_version
+    base_url = str(request.base_url).rstrip("/") if request else settings.cloud_api_url.rstrip("/")
+    dl_url = f"{base_url}/downloads/CtrlBooks_Setup_v{curr_ver}.exe"
     return {
         "success": True,
         "version": curr_ver,
@@ -113,8 +116,8 @@ async def get_public_version():
         "latest_version": curr_ver,
         "minVersion": "1.0.0",
         "releaseNotes": "Shared Cloud Server multi-Tally support & manual ODBC port configuration.",
-        "downloadUrl": f"http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v{curr_ver}.exe",
-        "download_url": f"http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v{curr_ver}.exe",
+        "downloadUrl": dl_url,
+        "download_url": dl_url,
         "mandatory": False,
     }
 

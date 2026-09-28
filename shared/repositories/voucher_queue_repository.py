@@ -50,9 +50,24 @@ class VoucherQueueRepository:
 
     def _write_local_queue(self, items: List[Dict[str, Any]]):
         try:
+            # Auto-purge older completed items to prevent unbounded file growth
+            pruned_items = []
+            completed_count = 0
+            # Reverse iterate to keep the 100 most recent completed items
+            for item in reversed(items):
+                status = str(item.get("status", "")).upper()
+                if status in ("COMPLETED", "PROCESSED"):
+                    if completed_count < 100:
+                        pruned_items.append(item)
+                        completed_count += 1
+                else:
+                    # Always retain all pending / failed items needing retry or user attention
+                    pruned_items.append(item)
+            pruned_items.reverse()
+
             QUEUE_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(QUEUE_CACHE_FILE, "w", encoding="utf-8") as f:
-                json.dump(items, f, indent=2, default=str)
+                json.dump(pruned_items, f, indent=2, default=str)
         except Exception as exc:
             logger.debug(f"Error writing local pending queue file: {exc}")
 

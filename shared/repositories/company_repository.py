@@ -31,6 +31,7 @@ def get_all_company_configs(
             except Exception:
                 pass
 
+        filters: List[Dict[str, Any]] = []
         if organization_id:
             try:
                 from bson import ObjectId

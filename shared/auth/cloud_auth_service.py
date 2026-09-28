@@ -161,7 +161,11 @@ class CloudAuthService:
                 self.access_token = win_session.get("access_token")
                 self.refresh_token_val = win_session.get("refresh_token")
                 self.current_user = win_session.get("user") or {}
-                logger.info(f"Restored active 24-hour session from Windows Credential Manager for user '{win_session.get('username')}'")
+                if win_session.get("device_id"):
+                    self.device_id = win_session.get("device_id")
+                elif not self.device_id and self.current_user.get("deviceId"):
+                    self.device_id = self.current_user.get("deviceId")
+                logger.info(f"Restored active 15-day session from Windows Credential Manager for user '{win_session.get('username')}'")
                 return
         except Exception as exc:
             logger.warning(f"Error checking Windows Credential Manager: {exc}")
@@ -178,27 +182,32 @@ class CloudAuthService:
                     self.access_token = data.get("accessToken") or data.get("access_token")
                     self.refresh_token_val = data.get("refreshToken") or data.get("refresh_token")
                     self.current_user = data.get("user") or {}
+                    if data.get("deviceId"):
+                        self.device_id = data.get("deviceId")
+                    elif not self.device_id and self.current_user.get("deviceId"):
+                        self.device_id = self.current_user.get("deviceId")
             except Exception as exc:
                 logger.warning(f"Error loading auth session file: {exc}")
 
     def save_session(self, access_token: str, refresh_token: Optional[str] = None, user: Optional[Dict[str, Any]] = None) -> None:
-        """Persists access token and user info to Windows Credential Manager (24h TTL) and disk fallback."""
+        """Persists access token and user info to Windows Credential Manager (15-day TTL) and disk fallback."""
         self.access_token = access_token
         if refresh_token:
             self.refresh_token_val = refresh_token
         if user:
             self.current_user = user
 
-        # 1. Primary: Save to Windows Credential Manager with 24-hour expiration
+        # 1. Primary: Save to Windows Credential Manager with 15-day expiration
         try:
-            from shared.auth.win_credential_store import save_persisted_session
+            from shared.auth.win_credential_store import save_persisted_session, SESSION_LIFETIME_SECONDS
             uname = self.get_email() or (user.get("email") if user else None) or (user.get("username") if user else None) or "default_user"
             save_persisted_session(
                 username=uname,
                 access_token=self.access_token,
                 refresh_token=self.refresh_token_val,
                 user_dict=self.current_user,
-                ttl_seconds=86400  # 1 Day (24 hours)
+                ttl_seconds=SESSION_LIFETIME_SECONDS,  # 15 Days
+                device_id=self.device_id,
             )
         except Exception as exc:
             logger.warning(f"Could not persist session to Windows Credential Manager: {exc}")
@@ -224,14 +233,24 @@ class CloudAuthService:
 
     def get_organization_id(self) -> Optional[str]:
         """Extracts organizationId from current_user, connector, or session."""
-        if not self.current_user or not isinstance(self.current_user, dict):
-            return None
-        org_id = (
-            self.current_user.get("organizationId")
-            or self.current_user.get("organization_id")
-            or self.current_user.get("connector", {}).get("organizationId")
-            or self.current_user.get("connector", {}).get("organization_id")
-        )
+        org_id = None
+        if self.current_user and isinstance(self.current_user, dict):
+            org_id = (
+                self.current_user.get("organizationId")
+                or self.current_user.get("organization_id")
+                or self.current_user.get("connector", {}).get("organizationId")
+                or self.current_user.get("connector", {}).get("organization_id")
+            )
+        if not org_id and self.access_token:
+            try:
+                import base64
+                parts = self.access_token.split(".")
+                if len(parts) >= 2:
+                    padding = "=" * (4 - len(parts[1]) % 4)
+                    claims = json.loads(base64.urlsafe_b64decode(parts[1] + padding).decode("utf-8"))
+                    org_id = claims.get("organizationId") or claims.get("organization_id")
+            except Exception:
+                pass
         return str(org_id) if org_id else None
 
     @property
@@ -248,6 +267,18 @@ class CloudAuthService:
             )
             if email:
                 return str(email).strip().lower()
+        if self.access_token:
+            try:
+                import base64
+                parts = self.access_token.split(".")
+                if len(parts) >= 2:
+                    padding = "=" * (4 - len(parts[1]) % 4)
+                    claims = json.loads(base64.urlsafe_b64decode(parts[1] + padding).decode("utf-8"))
+                    em = claims.get("email") or claims.get("userEmail")
+                    if em:
+                        return str(em).strip().lower()
+            except Exception:
+                pass
         try:
             p_file = Path("data/profile.json")
             if not p_file.exists():
@@ -386,7 +417,7 @@ class CloudAuthService:
             "otp": clean_otp,
             "deviceId": device_id,
             "deviceName": device_name,
-            "connectorVersion": "1.0.0",
+            "connectorVersion": get_settings().app_version,
         }
         logger.info(f"Calling Cloud Auth verify-otp for {clean_email} (deviceId: {device_id}, deviceName: {device_name})")
 
@@ -1175,7 +1206,7 @@ class CloudAuthService:
         payload: Dict[str, Any] = {
             "tallyConnected": bool(tally_connected),
             "status": "ONLINE",
-            "connectorVersion": "1.0.1",
+            "connectorVersion": get_settings().app_version,
         }
 
         try:

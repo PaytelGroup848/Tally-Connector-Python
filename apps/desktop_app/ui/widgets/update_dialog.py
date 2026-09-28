@@ -300,11 +300,12 @@ class UpdateAvailableDialog(QDialog):
             self.lbl_status.setText("Download complete! Launching setup installer...")
             self.lbl_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #059669; border: none;")
 
-            # Launch installer and exit current application
+            # Launch installer and exit current application immediately
             launched = updater_service.install_and_restart(dest_path)
             if launched:
                 logger.info(f"Update installer launched ({dest_path}). Exiting current process for update.")
                 QApplication.quit()
+                os._exit(0)
             else:
                 self.lbl_status.setText(f"Installer downloaded at: {dest_path}")
         else:

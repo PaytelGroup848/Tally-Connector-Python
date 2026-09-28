@@ -433,8 +433,10 @@ class ConnectionSettingsScreen(QWidget):
 
             launched = updater_service.install_and_restart(dest_path)
             if launched:
+                import os
                 from PySide6.QtWidgets import QApplication
                 QApplication.quit()
+                os._exit(0)
         else:
             self.progress_bar.setVisible(False)
             self.lbl_update_status.setText(f"Update failed: {err_msg}")

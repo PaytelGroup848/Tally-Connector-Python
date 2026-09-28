@@ -1,6 +1,6 @@
 
 
-from typing import Optional
+from typing import Optional, Dict, Any, List, Tuple
 import xml.etree.ElementTree as ET
 import logging
 from PySide6.QtWidgets import (
@@ -33,6 +33,14 @@ def parse_interval_to_ms(interval_str: str) -> int:
     elif "manual" in clean:
         return 0  # Manual (disabled)
     return 5 * 60 * 1000  # default 5 minutes
+
+
+class CompanyCardFrame(QFrame):
+    status_chip: Optional[QLabel] = None
+    chip_ledgers: Optional[QLabel] = None
+    chip_vouchers: Optional[QLabel] = None
+    chip_items: Optional[QLabel] = None
+    company_name: str = ""
 
 
 class ConnectedDashboardScreen(QWidget):
@@ -346,8 +354,8 @@ class ConnectedDashboardScreen(QWidget):
             self.command_worker.stop()
             self.command_worker.wait(200)
 
-    def create_company_card(self, name: str, path: str, is_synced: bool, source: str = "TALLY", stats: Optional[Dict[str, int]] = None) -> QFrame:
-        card = QFrame()
+    def create_company_card(self, name: str, path: str, is_synced: bool, source: str = "TALLY", stats: Optional[Dict[str, int]] = None) -> CompanyCardFrame:
+        card = CompanyCardFrame()
         card.setStyleSheet("""
             QFrame#CompanyCard {
                 background-color: #FFFFFF;
@@ -547,13 +555,13 @@ class ConnectedDashboardScreen(QWidget):
 
         return card
 
-    def find_company_card(self, comp_name: str) -> Optional[QFrame]:
+    def find_company_card(self, comp_name: str) -> Optional[CompanyCardFrame]:
         clean_name = comp_name.strip().lower()
         for i in range(self.cards_layout.count()):
             item = self.cards_layout.itemAt(i)
             if item and item.widget():
                 w = item.widget()
-                if getattr(w, "company_name", "").strip().lower() == clean_name:
+                if isinstance(w, CompanyCardFrame) and w.company_name.strip().lower() == clean_name:
                     return w
         return None
 
@@ -565,7 +573,7 @@ class ConnectedDashboardScreen(QWidget):
             v_cnt = stats.get("vouchers", 0)
             i_cnt = stats.get("items", 0)
             if target_card:
-                if hasattr(target_card, "status_chip") and target_card.status_chip:
+                if target_card.status_chip:
                     target_card.status_chip.setText("🟢 Synced")
                     target_card.status_chip.setStyleSheet("""
                         QLabel {
@@ -578,11 +586,11 @@ class ConnectedDashboardScreen(QWidget):
                             border: 1px solid #A7F3D0;
                         }
                     """)
-                if hasattr(target_card, "chip_ledgers") and target_card.chip_ledgers:
+                if target_card.chip_ledgers:
                     target_card.chip_ledgers.setText(f"{l_cnt:,} Ledgers")
-                if hasattr(target_card, "chip_vouchers") and target_card.chip_vouchers:
+                if target_card.chip_vouchers:
                     target_card.chip_vouchers.setText(f"{v_cnt:,} Vouchers")
-                if hasattr(target_card, "chip_items") and target_card.chip_items:
+                if target_card.chip_items:
                     target_card.chip_items.setText(f"{i_cnt:,} Items")
             else:
                 QTimer.singleShot(100, self.load_live_companies)
@@ -591,7 +599,7 @@ class ConnectedDashboardScreen(QWidget):
         except Exception as exc:
             logger.debug(f"Error in on_company_synced_instant: {exc}")
 
-    def start_qthread_sync(self, comp_name: str, source: str, card: Optional[QFrame] = None):
+    def start_qthread_sync(self, comp_name: str, source: str, card: Optional[CompanyCardFrame] = None):
         self._active_workers = [w for w in self._active_workers if w.isRunning()]
 
         if any(w.isRunning() and (getattr(w, "target_company", "") == comp_name or not comp_name) for w in self._active_workers):
@@ -641,14 +649,14 @@ class ConnectedDashboardScreen(QWidget):
         except RuntimeError:
             pass
 
-    def safe_sync_completed(self, s_lbl: QLabel, msg: str, card: Optional[QFrame] = None):
+    def safe_sync_completed(self, s_lbl: QLabel, msg: str, card: Optional[CompanyCardFrame] = None):
         try:
             if s_lbl:
                 s_lbl.setText("🟢 " + msg)
                 s_lbl.setStyleSheet("font-size: 11px; color: #00C853; font-weight: bold;")
             self.header.update_last_sync("Just now")
             if card is not None:
-                if hasattr(card, "status_chip") and card.status_chip:
+                if card.status_chip:
                     card.status_chip.setText("🟢 Synced")
                     card.status_chip.setStyleSheet("""
                         QLabel {
@@ -682,7 +690,7 @@ class ConnectedDashboardScreen(QWidget):
         except RuntimeError:
             pass
 
-    def show_company_menu(self, button, name: str, source: str, card: Optional[QFrame] = None):
+    def show_company_menu(self, button, name: str, source: str, card: Optional[CompanyCardFrame] = None):
         menu = QMenu(self)
         menu.setStyleSheet("""
             QMenu {
@@ -735,7 +743,7 @@ class ConnectedDashboardScreen(QWidget):
         toast = ToastNotification(f"Synced configuration for '{name}'", "success", self)
         toast.show()
 
-    def handle_remove_company(self, name: str, card: Optional[QFrame] = None):
+    def handle_remove_company(self, name: str, card: Optional[CompanyCardFrame] = None):
         dialog = ConfirmDialog(
             title="Remove Company",
             message=f"Are you sure you want to remove company '{name}' from the sync dashboard?",

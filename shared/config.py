@@ -86,6 +86,11 @@ class Settings(BaseModel):
         clean_path = self.db_path.replace("\\", "/")
         return f"sqlite:///{clean_path}"
 
+    @property
+    def cloud_api_url(self) -> str:
+        """Returns the cloud API URL, prioritizing environment variable CLOUD_API_URL or cloud_api_base_url."""
+        return os.getenv("CLOUD_API_URL", self.cloud_api_base_url)
+
     @classmethod
     def load_from_env(cls, env_path: Optional[Path] = None) -> "Settings":
         """Loads configuration from environment variables and optional .env file."""

@@ -1,5 +1,6 @@
 
 
+from collections import OrderedDict
 from typing import Dict, Any, Optional
 from shared.exceptions import ValidationError
 from shared.logging_config import get_logger
@@ -13,7 +14,8 @@ class ImporterService:
         tally_importer: Optional[TallyImporter] = None,
     ):
         self.tally_importer: TallyImporter = tally_importer if tally_importer is not None else TallyImporter()
-        self._idempotency_cache: Dict[str, Dict[str, Any]] = {}
+        self._idempotency_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._max_cache_size: int = 1000
 
     def validate_import_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -54,10 +56,17 @@ class ImporterService:
         if isinstance(party_raw, dict):
             party_raw = party_raw.get("name") or party_raw.get("ledgerName") or party_raw.get("customerName")
         if not party_raw:
-            raise ValidationError("Missing required party ledger/name in payload.")
-        party = str(party_raw).strip()
-        if not party or party.lower() in ("none", "null", "undefined"):
-            raise ValidationError("Missing required party ledger/name in payload.")
+            if voucher_type.lower() in ("stock journal", "physical stock"):
+                party = "Inventory / Stock"
+            else:
+                raise ValidationError("Missing required party ledger/name in payload.")
+        else:
+            party = str(party_raw).strip()
+            if not party or party.lower() in ("none", "null", "undefined"):
+                if voucher_type.lower() in ("stock journal", "physical stock"):
+                    party = "Inventory / Stock"
+                else:
+                    raise ValidationError("Missing required party ledger/name in payload.")
 
         try:
             raw_amt = payload.get("amount")
@@ -101,6 +110,7 @@ class ImporterService:
             idemp_key = f"{comp_name_raw.lower()}:{v_type_raw.lower()}:{str(v_num_raw).strip().lower()}"
             if idemp_key in self._idempotency_cache:
                 logger.info(f"Idempotent hit: Voucher '{v_num_raw}' for company '{comp_name_raw}' already posted. Returning cached confirmation.")
+                self._idempotency_cache.move_to_end(idemp_key)
                 return self._idempotency_cache[idemp_key]
 
         host = (payload.get("host") or payload.get("tally_host") or "127.0.0.1").strip()
@@ -136,7 +146,11 @@ class ImporterService:
         if result.get("success"):
             logger.info(f"Voucher successfully imported into {target}: Voucher #{result.get('voucher_number')}")
             if idemp_key:
+                if idemp_key in self._idempotency_cache:
+                    self._idempotency_cache.move_to_end(idemp_key)
                 self._idempotency_cache[idemp_key] = response
+                if len(self._idempotency_cache) > self._max_cache_size:
+                    self._idempotency_cache.popitem(last=False)
                 try:
                     from shared.db.mongo_client import get_collection
                     from datetime import datetime, timezone

@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 import psutil
 import sys
 import httpx
@@ -53,9 +53,11 @@ async def update_connection_settings(payload: ConnectionSettingsPayload):
     return {"success": True, "settings": current_settings}
 
 @router.get("/version")
-async def get_version_info():
+async def get_version_info(request: Request = None):
     settings = get_settings()
     curr_ver = settings.app_version
+    base_url = str(request.base_url).rstrip("/") if request else settings.cloud_api_url.rstrip("/")
+    dl_url = f"{base_url}/downloads/CtrlBooks_Setup_v{curr_ver}.exe"
     return {
         "success": True,
         "version": curr_ver,
@@ -63,8 +65,8 @@ async def get_version_info():
         "latest_version": curr_ver,
         "minVersion": "1.0.0",
         "releaseNotes": "Shared Cloud Server multi-Tally support & manual ODBC port configuration.",
-        "downloadUrl": f"http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v{curr_ver}.exe",
-        "download_url": f"http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v{curr_ver}.exe",
+        "downloadUrl": dl_url,
+        "download_url": dl_url,
         "mandatory": False,
     }
 

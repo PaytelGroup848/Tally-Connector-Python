@@ -57,11 +57,15 @@ class OTAUpdater:
 
         try:
             res = {}
-            # 1. Try public unauthenticated endpoints first (instant response, no login token required)
-            public_endpoints = [
+            raw_url = getattr(self.settings, "cloud_api_url", None) or getattr(self.settings, "cloud_api_base_url", "")
+            cloud_base = str(raw_url).rstrip("/")
+            public_endpoints = []
+            if cloud_base:
+                public_endpoints.extend([f"{cloud_base}/api/version", f"{cloud_base}/version"])
+            public_endpoints.extend([
                 "http://191.44.87.205:8000/api/version",
                 "https://raw.githubusercontent.com/PaytelGroup848/Tally-Connector-Python/main/version.json",
-            ]
+            ])
             for ep in public_endpoints:
                 try:
                     r = requests.get(ep, timeout=2.5)

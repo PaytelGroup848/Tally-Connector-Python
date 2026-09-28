@@ -42,7 +42,6 @@ a = Analysis(
         'cryptography',
         'certifi',
         'pymongo',
-        'pymongo.srv',
         'bson',
         'dns',
         'dns.resolver',

@@ -16,6 +16,8 @@ class RemoteCommandWorker(QThread):
 
     def __init__(self, poll_interval_seconds: int = 15, parent=None):
         super().__init__(parent)
+        from shared.config import get_settings
+        self.settings = get_settings()
         self.poll_interval = poll_interval_seconds
         self._is_running = True
         self.importer_service = ImporterService()
@@ -242,8 +244,7 @@ class RemoteCommandWorker(QThread):
                 ):
                     norm_payload = dict(payload)
                     norm_payload["target"] = "TALLY"
-                    norm_payload["companyId"] = cmd.get("companyId") or cmd.get("company_id") or payload.get("companyId")
-                    norm_payload["companyId"] = comp_id
+                    norm_payload["companyId"] = comp_id or cmd.get("companyId") or cmd.get("company_id") or payload.get("companyId")
                     if cmd_type in ("CREATE_RECEIPT", "PAYMENT_RECEIVED"):
                         default_vtype = "Receipt"
                     elif cmd_type in ("CREATE_PAYMENT", "PAYMENT_MADE"):
@@ -554,9 +555,9 @@ class RemoteCommandWorker(QThread):
                     "status": "SUCCESS" if success else "FAILED",
                     "voucher_number": result_data.get("tallyVoucherNumber"),
                     "error": error_msg if not success else None,
-                    "organization_id": curr_org or cmd.get("organizationId") or cmd.get("organization_id") or getattr(self.settings, "organization_id", "") or "",
-                    "user_email": (curr_email or cmd.get("email") or getattr(self.settings, "user_email", "") or "").strip().lower(),
-                    "device_id": curr_dev or cmd.get("deviceId") or getattr(self.settings, "device_id", "") or "",
+                    "organization_id": curr_org or cmd.get("organizationId") or cmd.get("organization_id") or getattr(self.settings, "organization_id", "") or cloud_auth_service.organization_id or "",
+                    "user_email": (curr_email or cmd.get("email") or getattr(self.settings, "user_email", "") or cloud_auth_service.email or "").strip().lower(),
+                    "device_id": curr_dev or cmd.get("deviceId") or getattr(self.settings, "device_id", "") or cloud_auth_service.device_id or "",
                 })
             except Exception as act_err:
                 logger.warning(f"Failed to record activity log: {act_err}")
@@ -674,9 +675,9 @@ class RemoteCommandWorker(QThread):
                             "voucher_date": payload.get("date") or payload.get("voucherDate"),
                             "status": "SUCCESS",
                             "voucher_number": v_num,
-                            "organization_id": curr_org or getattr(self.settings, "organization_id", "") or "",
-                            "user_email": (curr_email or getattr(self.settings, "user_email", "") or "").strip().lower(),
-                            "device_id": curr_dev or getattr(self.settings, "device_id", "") or "",
+                            "organization_id": curr_org or getattr(self.settings, "organization_id", "") or cloud_auth_service.organization_id or "",
+                            "user_email": (curr_email or getattr(self.settings, "user_email", "") or cloud_auth_service.email or "").strip().lower(),
+                            "device_id": curr_dev or getattr(self.settings, "device_id", "") or cloud_auth_service.device_id or "",
                         })
                     except Exception as act_err:
                         logger.warning(f"Drain success activity log failed: {act_err}")
@@ -712,9 +713,9 @@ class RemoteCommandWorker(QThread):
                             "voucher_date": payload.get("date") or payload.get("voucherDate"),
                             "status": "FAILED",
                             "error": res.get("reason"),
-                            "organization_id": curr_org or getattr(self.settings, "organization_id", "") or "",
-                            "user_email": (curr_email or getattr(self.settings, "user_email", "") or "").strip().lower(),
-                            "device_id": curr_dev or getattr(self.settings, "device_id", "") or "",
+                            "organization_id": curr_org or getattr(self.settings, "organization_id", "") or cloud_auth_service.organization_id or "",
+                            "user_email": (curr_email or getattr(self.settings, "user_email", "") or cloud_auth_service.email or "").strip().lower(),
+                            "device_id": curr_dev or getattr(self.settings, "device_id", "") or cloud_auth_service.device_id or "",
                         })
                     except Exception as act_err:
                         logger.warning(f"Drain failure activity log failed: {act_err}")

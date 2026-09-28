@@ -2,7 +2,7 @@
 
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, date
 from typing import Dict, Any, Tuple, Optional, List, Set, Union
 from shared.logging_config import get_logger
 from apps.backend.adapters.tally.tally_client import TallyClient
@@ -23,23 +23,57 @@ __all__ = [
     "TallyImporter",
 ]
 
-def format_tally_date(date_str: str) -> str:
-    """Converts YYYY-MM-DD or DD-MM-YYYY or similar date strings to Tally YYYYMMDD format."""
+def format_tally_date(date_str: Any) -> str:
+    """
+    Converts ISO 8601 timestamps, dates, or date strings into Tally YYYYMMDD format.
+    Handles:
+      - datetime / date objects
+      - ISO 8601 strings: "2026-09-25T10:30:00Z", "2026-09-25T10:30:00.000Z"
+      - Standard dates: "2026-09-25", "25-09-2026", "25/09/2026", "2026/09/25"
+      - Already formatted 8-digit strings: "20260925"
+    """
     if not date_str:
         return datetime.now().strftime("%Y%m%d")
 
-    clean_str = date_str.strip()
+    if isinstance(date_str, datetime):
+        return date_str.strftime("%Y%m%d")
+    if isinstance(date_str, date):
+        return date_str.strftime("%Y%m%d")
+
+    clean_str = str(date_str).strip()
+    if not clean_str or clean_str.lower() in ("none", "null", "undefined"):
+        return datetime.now().strftime("%Y%m%d")
+
+    # Already valid 8-digit YYYYMMDD
     if len(clean_str) == 8 and clean_str.isdigit():
         return clean_str
 
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d"):
+    # Extract date part if ISO string with 'T' or space separator
+    date_part = clean_str
+    if "T" in date_part:
+        date_part = date_part.split("T")[0].strip()
+    elif " " in date_part:
+        date_part = date_part.split(" ")[0].strip()
+
+    # Try common date formats on extracted date_part
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d", "%d.%m.%Y", "%Y.%m.%d"):
         try:
-            dt = datetime.strptime(clean_str, fmt)
+            dt = datetime.strptime(date_part, fmt)
             return dt.strftime("%Y%m%d")
         except ValueError:
             continue
 
-    return clean_str.replace("-", "").replace("/", "").replace(" ", "")
+    # Fallback: extract first 8 digits or clean punctuation
+    digits = re.sub(r"\D", "", clean_str)
+    if len(digits) >= 8:
+        # If begins with reasonable year (19xx or 20xx)
+        if digits[:4].isdigit() and 1900 <= int(digits[:4]) <= 2100:
+            return digits[:8]
+        # Or if DDMMYYYY
+        if len(digits) == 8 and 1900 <= int(digits[4:]) <= 2100:
+            return f"{digits[4:]}{digits[2:4]}{digits[:2]}"
+
+    return datetime.now().strftime("%Y%m%d")
 
 def escape_xml(value: Optional[str]) -> str:
     """Escapes special characters for XML safely."""
@@ -94,6 +128,9 @@ def build_ledger_import_xml(ledger_data: Dict[str, Any]) -> str:
                         <TAXTYPE>GST</TAXTYPE>
                         <GSTDUTYHEAD>{head_val}</GSTDUTYHEAD>"""
 
+    is_party = any(k in parent.lower() for k in ("debtors", "creditors")) or bool(ledger_data.get("is_billwise"))
+    billwise_val = "Yes" if is_party else "No"
+
     xml_envelope = f"""<ENVELOPE>
     <HEADER>
         <TALLYREQUEST>Import Data</TALLYREQUEST>
@@ -112,7 +149,7 @@ def build_ledger_import_xml(ledger_data: Dict[str, Any]) -> str:
                         <NAME>{ledger_name}</NAME>
                         <PARENT>{parent}</PARENT>
                         <OPENINGBALANCE>{opening_bal:.2f}</OPENINGBALANCE>
-                        <ISBILLWISEON>Yes</ISBILLWISEON>
+                        <ISBILLWISEON>{billwise_val}</ISBILLWISEON>
                         {state_tag}
                         {gstin_tag}
                         {mobile_tag}
@@ -523,6 +560,187 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
 
     company_tag = f"<SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>" if company_name else ""
 
+    v_type_lower = voucher_type.lower()
+    is_stock_journal = "stock journal" in v_type_lower
+    is_physical_stock = "physical stock" in v_type_lower
+
+    if is_physical_stock:
+        ps_items = _extract_items_list(voucher_data)
+        ps_entries_xml = []
+        for item in ps_items:
+            i_name = _extract_item_name(item)
+            if not i_name:
+                continue
+            i_qty = _parse_float(
+                item.get("quantity") if item.get("quantity") is not None
+                else item.get("qty", item.get("actualQty", item.get("billedQty", 1.0))),
+                1.0,
+            )
+            if i_qty <= 0:
+                i_qty = 1.0
+            master_unit = _lookup_item_master_unit(company_name, i_name)
+            i_unit = master_unit or _clean_str(item.get("units") or item.get("unit") or item.get("uom")) or "Pcs"
+            qty_str = f"{int(i_qty)} {i_unit}" if float(i_qty).is_integer() else f"{i_qty:.3f}".rstrip("0").rstrip(".") + f" {i_unit}"
+            godown = _clean_str(item.get("godown") or item.get("godown_name") or voucher_data.get("godown") or voucher_data.get("godown_name")) or "Main Location"
+            batch = _clean_str(item.get("batch") or item.get("batch_name") or item.get("batch_no")) or "Primary Batch"
+
+            ps_entries_xml.append(f"""                <INVENTORYENTRIES.LIST>
+                    <STOCKITEMNAME>{escape_xml(i_name)}</STOCKITEMNAME>
+                    <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+                    <ACTUALQTY>{escape_xml(qty_str)}</ACTUALQTY>
+                    <BILLEDQTY>{escape_xml(qty_str)}</BILLEDQTY>
+                    <BATCHALLOCATIONS.LIST>
+                        <GODOWNNAME>{escape_xml(godown)}</GODOWNNAME>
+                        <BATCHNAME>{escape_xml(batch)}</BATCHNAME>
+                        <ACTUALQTY>{escape_xml(qty_str)}</ACTUALQTY>
+                        <BILLEDQTY>{escape_xml(qty_str)}</BILLEDQTY>
+                    </BATCHALLOCATIONS.LIST>
+                </INVENTORYENTRIES.LIST>""")
+
+        inventory_block = ("\n" + "\n".join(ps_entries_xml)) if ps_entries_xml else ""
+        return f"""<ENVELOPE>
+    <HEADER>
+        <TALLYREQUEST>Import Data</TALLYREQUEST>
+    </HEADER>
+    <BODY>
+        <IMPORTDATA>
+            <REQUESTDESC>
+                <REPORTNAME>Vouchers</REPORTNAME>
+                <STATICVARIABLES>
+                    {company_tag}
+                </STATICVARIABLES>
+            </REQUESTDESC>
+            <REQUESTDATA>
+                <TALLYMESSAGE xmlns:UDF="TallyUDF">
+                    <VOUCHER ACTION="Create" VCHTYPE="{voucher_type}">
+                        <DATE>{tally_date}</DATE>
+                        <EFFECTIVEDATE>{tally_date}</EFFECTIVEDATE>
+                        <VOUCHERTYPENAME>{voucher_type}</VOUCHERTYPENAME>
+                        <VOUCHERNUMBER>{voucher_number}</VOUCHERNUMBER>
+                        <REFERENCE>{reference}</REFERENCE>
+                        <NARRATION>{narration}</NARRATION>{inventory_block}
+                    </VOUCHER>
+                </TALLYMESSAGE>
+            </REQUESTDATA>
+        </IMPORTDATA>
+    </BODY>
+</ENVELOPE>"""
+
+    if is_stock_journal:
+        out_items_raw = list(voucher_data.get("source_items") or voucher_data.get("consumption_items") or voucher_data.get("items_out") or [])
+        in_items_raw = list(voucher_data.get("destination_items") or voucher_data.get("production_items") or voucher_data.get("items_in") or [])
+        gen_items = _extract_items_list(voucher_data)
+
+        if not out_items_raw and not in_items_raw:
+            for it in gen_items:
+                itype = str(it.get("type", "")).lower()
+                if itype in ("source", "consumption", "out", "outward", "issue"):
+                    out_items_raw.append(it)
+                elif itype in ("destination", "production", "in", "inward", "receipt"):
+                    in_items_raw.append(it)
+
+            if not out_items_raw and not in_items_raw:
+                out_items_raw = list(gen_items)
+                in_items_raw = list(gen_items)
+
+        src_godown_default = _clean_str(voucher_data.get("source_godown") or voucher_data.get("from_godown") or voucher_data.get("godown")) or "Main Location"
+        dest_godown_default = _clean_str(voucher_data.get("destination_godown") or voucher_data.get("to_godown") or voucher_data.get("dest_godown") or voucher_data.get("godown")) or "Main Location"
+
+        sj_entries_xml = []
+
+        for item in out_items_raw:
+            i_name = _extract_item_name(item)
+            if not i_name:
+                continue
+            i_qty = _parse_float(item.get("quantity") if item.get("quantity") is not None else item.get("qty", 1.0), 1.0)
+            if i_qty <= 0:
+                i_qty = 1.0
+            master_unit = _lookup_item_master_unit(company_name, i_name)
+            i_unit = master_unit or _clean_str(item.get("units") or item.get("unit") or item.get("uom")) or "Pcs"
+            qty_str = f"{int(i_qty)} {i_unit}" if float(i_qty).is_integer() else f"{i_qty:.3f}".rstrip("0").rstrip(".") + f" {i_unit}"
+            i_rate = _parse_float(item.get("rate") if item.get("rate") is not None else item.get("price", 0.0), 0.0)
+            amt = abs(round(_parse_float(item.get("amount") or item.get("total"), i_qty * i_rate), 2))
+            rate_str = f"{i_rate:.2f}/{i_unit}" if i_unit else f"{i_rate:.2f}"
+            g_name = _clean_str(item.get("source_godown") or item.get("godown") or src_godown_default) or "Main Location"
+            b_name = _clean_str(item.get("batch") or item.get("batch_name") or item.get("batch_no")) or "Primary Batch"
+
+            sj_entries_xml.append(f"""                <INVENTORYENTRIESOUT.LIST>
+                    <STOCKITEMNAME>{escape_xml(i_name)}</STOCKITEMNAME>
+                    <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+                    <RATE>{escape_xml(rate_str)}</RATE>
+                    <AMOUNT>{amt:.2f}</AMOUNT>
+                    <ACTUALQTY>-{escape_xml(qty_str)}</ACTUALQTY>
+                    <BILLEDQTY>-{escape_xml(qty_str)}</BILLEDQTY>
+                    <BATCHALLOCATIONS.LIST>
+                        <GODOWNNAME>{escape_xml(g_name)}</GODOWNNAME>
+                        <BATCHNAME>{escape_xml(b_name)}</BATCHNAME>
+                        <AMOUNT>{amt:.2f}</AMOUNT>
+                        <ACTUALQTY>-{escape_xml(qty_str)}</ACTUALQTY>
+                        <BILLEDQTY>-{escape_xml(qty_str)}</BILLEDQTY>
+                    </BATCHALLOCATIONS.LIST>
+                </INVENTORYENTRIESOUT.LIST>""")
+
+        for item in in_items_raw:
+            i_name = _extract_item_name(item)
+            if not i_name:
+                continue
+            i_qty = _parse_float(item.get("quantity") if item.get("quantity") is not None else item.get("qty", 1.0), 1.0)
+            if i_qty <= 0:
+                i_qty = 1.0
+            master_unit = _lookup_item_master_unit(company_name, i_name)
+            i_unit = master_unit or _clean_str(item.get("units") or item.get("unit") or item.get("uom")) or "Pcs"
+            qty_str = f"{int(i_qty)} {i_unit}" if float(i_qty).is_integer() else f"{i_qty:.3f}".rstrip("0").rstrip(".") + f" {i_unit}"
+            i_rate = _parse_float(item.get("rate") if item.get("rate") is not None else item.get("price", 0.0), 0.0)
+            amt = abs(round(_parse_float(item.get("amount") or item.get("total"), i_qty * i_rate), 2))
+            rate_str = f"{i_rate:.2f}/{i_unit}" if i_unit else f"{i_rate:.2f}"
+            g_name = _clean_str(item.get("destination_godown") or item.get("godown") or dest_godown_default) or "Main Location"
+            b_name = _clean_str(item.get("batch") or item.get("batch_name") or item.get("batch_no")) or "Primary Batch"
+
+            sj_entries_xml.append(f"""                <INVENTORYENTRIESIN.LIST>
+                    <STOCKITEMNAME>{escape_xml(i_name)}</STOCKITEMNAME>
+                    <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+                    <RATE>{escape_xml(rate_str)}</RATE>
+                    <AMOUNT>-{amt:.2f}</AMOUNT>
+                    <ACTUALQTY>{escape_xml(qty_str)}</ACTUALQTY>
+                    <BILLEDQTY>{escape_xml(qty_str)}</BILLEDQTY>
+                    <BATCHALLOCATIONS.LIST>
+                        <GODOWNNAME>{escape_xml(g_name)}</GODOWNNAME>
+                        <BATCHNAME>{escape_xml(b_name)}</BATCHNAME>
+                        <AMOUNT>-{amt:.2f}</AMOUNT>
+                        <ACTUALQTY>{escape_xml(qty_str)}</ACTUALQTY>
+                        <BILLEDQTY>{escape_xml(qty_str)}</BILLEDQTY>
+                    </BATCHALLOCATIONS.LIST>
+                </INVENTORYENTRIESIN.LIST>""")
+
+        inventory_block = ("\n" + "\n".join(sj_entries_xml)) if sj_entries_xml else ""
+        return f"""<ENVELOPE>
+    <HEADER>
+        <TALLYREQUEST>Import Data</TALLYREQUEST>
+    </HEADER>
+    <BODY>
+        <IMPORTDATA>
+            <REQUESTDESC>
+                <REPORTNAME>Vouchers</REPORTNAME>
+                <STATICVARIABLES>
+                    {company_tag}
+                </STATICVARIABLES>
+            </REQUESTDESC>
+            <REQUESTDATA>
+                <TALLYMESSAGE xmlns:UDF="TallyUDF">
+                    <VOUCHER ACTION="Create" VCHTYPE="{voucher_type}">
+                        <DATE>{tally_date}</DATE>
+                        <EFFECTIVEDATE>{tally_date}</EFFECTIVEDATE>
+                        <VOUCHERTYPENAME>{voucher_type}</VOUCHERTYPENAME>
+                        <VOUCHERNUMBER>{voucher_number}</VOUCHERNUMBER>
+                        <REFERENCE>{reference}</REFERENCE>
+                        <NARRATION>{narration}</NARRATION>{inventory_block}
+                    </VOUCHER>
+                </TALLYMESSAGE>
+            </REQUESTDATA>
+        </IMPORTDATA>
+    </BODY>
+</ENVELOPE>"""
+
     sales_ledger = escape_xml(
         _clean_str(
             voucher_data.get("sales_ledger")
@@ -535,7 +753,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
     )
 
     items = _extract_items_list(voucher_data)
-    if "journal" in voucher_type.lower():
+    if "journal" in voucher_type.lower() and not is_stock_journal:
         items = []
     inventory_entries_xml = []
     calculated_items_total = 0.0
@@ -1035,6 +1253,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                 <TALLYMESSAGE xmlns:UDF="TallyUDF">
                     <VOUCHER ACTION="Create" VCHTYPE="{voucher_type}">{isinvoice_tag}
                         <DATE>{tally_date}</DATE>
+                        <EFFECTIVEDATE>{tally_date}</EFFECTIVEDATE>
                         <VOUCHERTYPENAME>{voucher_type}</VOUCHERTYPENAME>
                         <VOUCHERNUMBER>{voucher_number}</VOUCHERNUMBER>
                         <REFERENCE>{reference}</REFERENCE>
@@ -1158,11 +1377,9 @@ def diagnose_voucher_rejection(
 
     v_year = None
     if v_date:
-        clean_d = v_date.replace("-", "").replace("/", "").strip()
-        if len(clean_d) >= 4 and clean_d[:4].isdigit():
-            v_year = int(clean_d[:4])
-        elif len(clean_d) == 8 and clean_d[-4:].isdigit():
-            v_year = int(clean_d[-4:])
+        parsed_tally_date = format_tally_date(v_date)
+        if len(parsed_tally_date) == 8 and parsed_tally_date.isdigit():
+            v_year = int(parsed_tally_date[:4])
 
     fy_match = re.search(r"(20\d\d)\s*-\s*(20\d\d)", company_name)
     if fy_match and v_year:
@@ -1595,7 +1812,12 @@ class TallyImporter:
             else:
                 party_parent = "Sundry Creditors"
 
-        if party_ledger and party_ledger.lower() not in ("cash", "bank"):
+        v_type_lower = v_type.lower()
+        is_stock_journal = "stock journal" in v_type_lower
+        is_physical_stock = "physical stock" in v_type_lower
+        is_pure_inventory = is_stock_journal or is_physical_stock
+
+        if not is_pure_inventory and party_ledger and party_ledger.lower() not in ("cash", "bank"):
             await self.ensure_ledger(
                 host=host,
                 port=port,
@@ -1610,7 +1832,13 @@ class TallyImporter:
                 }
             )
 
-        items = _extract_items_list(voucher_data)
+        items = list(_extract_items_list(voucher_data) or [])
+        if is_pure_inventory:
+            for extra_key in ("source_items", "destination_items", "consumption_items", "production_items", "items_out", "items_in"):
+                extra_list = voucher_data.get(extra_key)
+                if extra_list and isinstance(extra_list, list):
+                    items.extend(extra_list)
+
         if items and isinstance(items, list):
             for it in items:
                 i_name = _extract_item_name(it)
@@ -1621,64 +1849,66 @@ class TallyImporter:
                         host=host, port=port, company_name=company_name, item_name=i_name, unit_name=i_unit, hsn_code=i_hsn
                     )
 
-        if "sales" in v_type or "quotation" in v_type or "quote" in v_type:
-            sales_ledger = _clean_str(voucher_data.get("sales_ledger") or voucher_data.get("salesLedger") or "Sales")
-            await self.ensure_ledger(
-                host=host,
-                port=port,
-                company_name=company_name,
-                ledger_name=sales_ledger,
-                parent="Sales Accounts"
-            )
-        elif "purchase" in v_type:
-            purchase_ledger = _clean_str(voucher_data.get("purchase_ledger") or voucher_data.get("purchaseLedger") or "Purchase")
-            await self.ensure_ledger(
-                host=host,
-                port=port,
-                company_name=company_name,
-                ledger_name=purchase_ledger,
-                parent="Purchase Accounts"
-            )
-        elif "receipt" in v_type or "payment" in v_type:
-            bank_ledger = _clean_str(
-                voucher_data.get("bank_ledger")
-                or voucher_data.get("bankLedger")
-                or voucher_data.get("cash_bank_ledger")
-                or voucher_data.get("account")
-                or voucher_data.get("bank_account")
-                or "Cash"
-            )
-            if bank_ledger.lower() not in ("cash",):
-                bank_parent = voucher_data.get("bank_parent") or voucher_data.get("bankParent") or "Bank Accounts"
+        if not is_pure_inventory:
+            if "sales" in v_type or "quotation" in v_type or "quote" in v_type:
+                sales_ledger = _clean_str(voucher_data.get("sales_ledger") or voucher_data.get("salesLedger") or "Sales")
                 await self.ensure_ledger(
                     host=host,
                     port=port,
                     company_name=company_name,
-                    ledger_name=bank_ledger,
-                    parent=bank_parent
+                    ledger_name=sales_ledger,
+                    parent="Sales Accounts"
                 )
+            elif "purchase" in v_type:
+                purchase_ledger = _clean_str(voucher_data.get("purchase_ledger") or voucher_data.get("purchaseLedger") or "Purchase")
+                await self.ensure_ledger(
+                    host=host,
+                    port=port,
+                    company_name=company_name,
+                    ledger_name=purchase_ledger,
+                    parent="Purchase Accounts"
+                )
+            elif "receipt" in v_type or "payment" in v_type:
+                bank_ledger = _clean_str(
+                    voucher_data.get("bank_ledger")
+                    or voucher_data.get("bankLedger")
+                    or voucher_data.get("cash_bank_ledger")
+                    or voucher_data.get("account")
+                    or voucher_data.get("bank_account")
+                    or "Cash"
+                )
+                if bank_ledger.lower() not in ("cash",):
+                    bank_parent = voucher_data.get("bank_parent") or voucher_data.get("bankParent") or "Bank Accounts"
+                    await self.ensure_ledger(
+                        host=host,
+                        port=port,
+                        company_name=company_name,
+                        ledger_name=bank_ledger,
+                        parent=bank_parent
+                    )
 
         xml_payload = build_voucher_import_xml(voucher_data)
 
-        for tax in voucher_data.get("_calculated_tax_entries", []):
-            tax_name = tax.get("name")
-            if tax_name:
+        if not is_pure_inventory:
+            for tax in voucher_data.get("_calculated_tax_entries", []):
+                tax_name = tax.get("name")
+                if tax_name:
+                    await self.ensure_ledger(
+                        host=host,
+                        port=port,
+                        company_name=company_name,
+                        ledger_name=tax_name,
+                        parent="Duties & Taxes"
+                    )
+
+            if voucher_data.get("_has_round_off"):
                 await self.ensure_ledger(
                     host=host,
                     port=port,
                     company_name=company_name,
-                    ledger_name=tax_name,
-                    parent="Duties & Taxes"
+                    ledger_name="Round Off",
+                    parent="Indirect Expenses"
                 )
-
-        if voucher_data.get("_has_round_off"):
-            await self.ensure_ledger(
-                host=host,
-                port=port,
-                company_name=company_name,
-                ledger_name="Round Off",
-                parent="Indirect Expenses"
-            )
 
         ok, status_code, res_text, err_msg = await self.client.send_xml_request_async(
             host=host, port=port, xml_content=xml_payload, serialize_company=company_name

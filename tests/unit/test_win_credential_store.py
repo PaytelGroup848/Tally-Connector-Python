@@ -1,5 +1,5 @@
 """
-Unit tests for Windows Credential Manager Session Storage & 24-Hour Expiry
+Unit tests for Windows Credential Manager Session Storage & 15-Day Expiry
 """
 
 import unittest
@@ -23,8 +23,12 @@ class TestWinCredentialStore(unittest.TestCase):
     def tearDown(self):
         clear_persisted_session()
 
+    def test_00_verify_fifteen_day_constant(self):
+        """Verify SESSION_LIFETIME_SECONDS is strictly 15 days (1,296,000 seconds)."""
+        self.assertEqual(SESSION_LIFETIME_SECONDS, 15 * 86400)
+
     def test_01_save_and_load_valid_session(self):
-        """Verify saving a session stores data and can be retrieved within 24 hours."""
+        """Verify saving a session stores data and can be retrieved within 15 days."""
         user_info = {
             "id": "usr_9988",
             "email": "test_win_cred@ctrlbooks.com",
@@ -36,7 +40,7 @@ class TestWinCredentialStore(unittest.TestCase):
             access_token="mock_access_token_abc_123",
             refresh_token="mock_refresh_token_xyz_789",
             user_dict=user_info,
-            ttl_seconds=86400  # 24 hours
+            ttl_seconds=SESSION_LIFETIME_SECONDS  # 15 days
         )
         self.assertTrue(ok)
 
