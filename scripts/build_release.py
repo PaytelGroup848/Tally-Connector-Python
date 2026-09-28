@@ -49,7 +49,16 @@ def main():
         print(f"\n[!] Inno Setup compilation failed with exit code {res_iss.returncode}.")
         sys.exit(res_iss.returncode)
 
-    setup_exe = ROOT / "dist" / "CtrlBooks_Setup_v1.0.1.exe"
+    import json
+    v_file = ROOT / "version.json"
+    ver = "1.0.3"
+    if v_file.exists():
+        try:
+            ver = json.loads(v_file.read_text()).get("version", ver)
+        except Exception:
+            pass
+
+    setup_exe = ROOT / "dist" / f"CtrlBooks_Setup_v{ver}.exe"
     if not setup_exe.exists():
         print(f"\n[!] Error: Installer setup executable not found at {setup_exe}")
         sys.exit(1)

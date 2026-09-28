@@ -32,8 +32,17 @@ def find_iscc() -> str:
     return ""
 
 def main():
+    import json
+    v_file = ROOT / "version.json"
+    ver = "1.0.3"
+    if v_file.exists():
+        try:
+            ver = json.loads(v_file.read_text()).get("version", ver)
+        except Exception:
+            pass
+
     print("=========================================================")
-    print(" Building Client Setup Installer: CtrlBooks_Setup_v1.0.2.exe")
+    print(f" Building Client Setup Installer: CtrlBooks_Setup_v{ver}.exe")
     print("=========================================================")
 
     if not ISS_FILE.exists():
@@ -53,7 +62,7 @@ def main():
     res = subprocess.run(cmd, cwd=str(ROOT))
 
     if res.returncode == 0:
-        dist_setup = ROOT / "dist" / "CtrlBooks_Setup_v1.0.2.exe"
+        dist_setup = ROOT / "dist" / f"CtrlBooks_Setup_v{ver}.exe"
         print("\n=========================================================")
         print(f" INSTALLER BUILD SUCCESSFUL! Setup generated at:\n {dist_setup}")
         print("=========================================================")
