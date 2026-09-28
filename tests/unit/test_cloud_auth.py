@@ -163,6 +163,39 @@ class TestCloudAuthService(unittest.TestCase):
         is_online_fail = self.auth_svc.is_tally_online("127.0.0.1", 9000)
         self.assertFalse(is_online_fail)
 
+    @patch("httpx.Client.post")
+    def test_send_command_result_success_omits_null_error(self, mock_post):
+        """Verifies that send_command_result omits errorMessage when None/empty to prevent 422 error."""
+        self.auth_svc.access_token = "tok_test_123"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = '{"success": true, "message": "Result recorded", "data": {"command": {"status": "DONE"}}}'
+        mock_resp.json.return_value = {"success": True, "message": "Result recorded", "data": {"command": {"status": "DONE"}}}
+        mock_post.return_value = mock_resp
+
+        ok, msg, data = self.auth_svc.send_command_result("cmd_123", "DONE", {"status": "SUCCESS"}, error_message=None)
+        self.assertTrue(ok)
+        mock_post.assert_called_once()
+        called_payload = mock_post.call_args[1]["json"]
+        self.assertEqual(called_payload["status"], "DONE")
+        self.assertNotIn("errorMessage", called_payload)
+
+    @patch("httpx.Client.post")
+    def test_send_command_result_failed_includes_error(self, mock_post):
+        """Verifies that send_command_result includes errorMessage string when provided."""
+        self.auth_svc.access_token = "tok_test_123"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = '{"success": true, "message": "Result recorded"}'
+        mock_resp.json.return_value = {"success": True, "message": "Result recorded"}
+        mock_post.return_value = mock_resp
+
+        ok, msg, data = self.auth_svc.send_command_result("cmd_123", "FAILED", {"failed": True}, error_message="Tally error")
+        self.assertTrue(ok)
+        called_payload = mock_post.call_args[1]["json"]
+        self.assertEqual(called_payload["status"], "FAILED")
+        self.assertEqual(called_payload["errorMessage"], "Tally error")
+
 
 if __name__ == "__main__":
     unittest.main()

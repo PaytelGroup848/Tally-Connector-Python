@@ -1094,12 +1094,13 @@ class CloudAuthService:
             return False, "Not authenticated. Please login first.", {}
 
         url = f"{self.base_url}/commands/{command_id}/result"
-        headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
         payload: Dict[str, Any] = {
             "status": status.upper(),
             "result": result or {},
-            "errorMessage": error_message
         }
+        if error_message and str(error_message).strip():
+            payload["errorMessage"] = str(error_message).strip()
+        headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
         try:
             client = self._get_client(15.0)
             res = client.post(url, json=payload, headers=headers)

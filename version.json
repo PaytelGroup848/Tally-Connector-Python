@@ -1,11 +1,11 @@
 {
-  "version": "1.0.4",
-  "latestVersion": "1.0.4",
-  "latest_version": "1.0.4",
+  "version": "1.0.5",
+  "latestVersion": "1.0.5",
+  "latest_version": "1.0.5",
   "minVersion": "1.0.0",
-  "releaseNotes": "Fix DayBook multi-company vouchers sync, Stock Item Alter/Update support, and auto-reconciliation of pending commands.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.4.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.4.exe",
+  "releaseNotes": "Fix Cloud API command result return for Parties and Stock Items (DONE status).",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.5.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.5.exe",
   "mandatory": true
 }
 
