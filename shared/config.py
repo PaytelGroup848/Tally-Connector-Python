@@ -117,7 +117,7 @@ class Settings(BaseModel):
 
         return cls(
             app_name=os.getenv("APP_NAME", APP_NAME),
-            app_version=os.getenv("APP_VERSION", APP_VERSION),
+            app_version=APP_VERSION,
             app_environment=env_mode,
             debug=debug_val,
             log_level=log_lvl,
