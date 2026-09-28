@@ -734,7 +734,9 @@ class BackgroundSyncWorker(QThread):
                     "LEDGERENTRIES.BILLALLOCATIONS.BILLCREDITPERIOD",
                     "LEDGERENTRIES.BILLALLOCATIONS.DUEDATEOFTOTALAMOUNT"
                 ],
-                company_name=c_name
+                company_name=c_name,
+                from_date="20000101",
+                to_date="20991231"
             )
             ok_v, code_v, text_v, err_v = self.tally_client.send_xml_request("127.0.0.1", port, v_xml, timeout=300.0)
             if ok_v and code_v == 200:
@@ -745,6 +747,23 @@ class BackgroundSyncWorker(QThread):
                         max_voucher_alter = alt
             else:
                 logger.warning(f"Voucher extraction failed: {err_v}")
+
+            if not extracted_vouchers:
+                logger.info(f"Retrying voucher extraction for '{c_name}' with safe core fields fallback...")
+                fallback_fields = [
+                    "DATE", "EFFECTIVEDATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "REFERENCE", "REFERENCEDATE",
+                    "PARTYLEDGERNAME", "PARTYNAME", "BASICBUYERNAME", "PLACEOFSUPPLY", "AMOUNT", "NARRATION",
+                    "GUID", "ALTERID", "ISOPTIONAL", "ISCANCELLED", "ISPOSTDATED",
+                    "ALLLEDGERENTRIES.LIST", "ALLINVENTORYENTRIES.LIST"
+                ]
+                v_fb_xml = build_collection_xml("Voucher", fallback_fields, company_name=c_name, from_date="20000101", to_date="20991231")
+                ok_fb, code_fb, text_fb, err_fb = self.tally_client.send_xml_request("127.0.0.1", port, v_fb_xml, timeout=180.0)
+                if ok_fb and code_fb == 200:
+                    extracted_vouchers = parse_metadata_response(text_fb, tag_name="Voucher")
+                    for v in extracted_vouchers:
+                        alt = int(v.get("alterid", 0) or 0)
+                        if alt > max_voucher_alter:
+                            max_voucher_alter = alt
         except Exception as exc:
             logger.warning(f"Voucher extraction error for '{c_name}': {exc}")
 

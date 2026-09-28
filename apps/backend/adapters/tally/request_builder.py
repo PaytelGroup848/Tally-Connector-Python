@@ -26,11 +26,14 @@ def build_collection_xml(
     collection_type: str,
     fetch_fields: List[str],
     company_name: Optional[str] = None,
-    from_alter_id: Optional[int] = None
+    from_alter_id: Optional[int] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None
 ) -> str:
     """
     Constructs a valid TDL Envelope for Tally Export request.
     Supports ALTERID incremental delta filtering ($ALTERID > from_alter_id) for vouchers & masters.
+    Supports explicit date range (SVFROMDATE & SVTODATE) for transactional collections (Voucher).
     """
     fetch_tags = "".join([f"<FETCH>{field}</FETCH>" for field in fetch_fields])
 
@@ -38,6 +41,14 @@ def build_collection_xml(
     if company_name and company_name.strip():
         clean_company = company_name.strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         company_var = f"<SVCURRENTCOMPANY>{clean_company}</SVCURRENTCOMPANY>"
+
+    # Ensure full date range for Vouchers so entries from any financial year (e.g. 2024, 2025, 2026, 2027) are extracted
+    date_vars = ""
+    if from_date or to_date or str(collection_type).strip().lower() in ("voucher", "vouchers"):
+        f_date = (from_date or "20000101").replace("-", "").strip()
+        t_date = (to_date or "20991231").replace("-", "").strip()
+        date_vars = f"""<SVFROMDATE>{f_date}</SVFROMDATE>
+                <SVTODATE>{t_date}</SVTODATE>"""
 
     filter_tag = ""
     system_tag = ""
@@ -57,6 +68,7 @@ def build_collection_xml(
             <STATICVARIABLES>
                 <SVEXPORTFORMAT>$$SYSNAME:XML</SVEXPORTFORMAT>
                 {company_var}
+                {date_vars}
             </STATICVARIABLES>
             <TDL>
                 <TDLMESSAGE>
