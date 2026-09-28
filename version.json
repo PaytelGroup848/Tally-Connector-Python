@@ -6,8 +6,7 @@
   "releaseNotes": "Fix DayBook multi-company vouchers sync, Stock Item Alter/Update support, and auto-reconciliation of pending commands.",
   "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.4.exe",
   "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.4.exe",
-  "mandatory": true,
-  "sha256": "c18dcc43e0c8df1d54dc5c40872e4c2dbf3a0ee96c28158bd7cfb9b8de6d84b0"
+  "mandatory": true
 }
 
 
