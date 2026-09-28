@@ -1,11 +1,14 @@
 {
-  "version": "1.0.3",
-  "latestVersion": "1.0.3",
-  "latest_version": "1.0.3",
+  "version": "1.0.4",
+  "latestVersion": "1.0.4",
+  "latest_version": "1.0.4",
   "minVersion": "1.0.0",
-  "releaseNotes": "15 Voucher Types 2-way sync, Master Voucher Types sync, and durable offline queue auto-drain.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.3.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.3.exe",
-  "mandatory": false
+  "releaseNotes": "Fix DayBook multi-company vouchers sync, Stock Item Alter/Update support, and auto-reconciliation of pending commands.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.4.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.4.exe",
+  "mandatory": true,
+  "sha256": "6cd291d078f8316ce31a5a1a0929943d4ec5ac5189c7f40bef94e8d4636be6bd"
 }
+
+
 

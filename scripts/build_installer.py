@@ -34,7 +34,7 @@ def find_iscc() -> str:
 def main():
     import json
     v_file = ROOT / "version.json"
-    ver = "1.0.3"
+    ver = "1.0.4"
     if v_file.exists():
         try:
             ver = json.loads(v_file.read_text()).get("version", ver)
