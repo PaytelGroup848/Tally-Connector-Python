@@ -35,6 +35,9 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64
+CloseApplications=yes
+RestartApplications=no
+CloseApplicationsFilter=ctrlbooks.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

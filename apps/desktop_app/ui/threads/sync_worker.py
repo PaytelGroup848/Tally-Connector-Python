@@ -10,7 +10,7 @@ from shared.auth.cloud_auth_service import cloud_auth_service
 from shared.logging_config import get_logger
 from shared.db.mongo_client import get_collection
 from apps.backend.adapters.tally.tally_client import TallyClient
-from apps.backend.adapters.tally.request_builder import build_company_list_xml, build_collection_xml
+from apps.backend.adapters.tally.request_builder import build_company_list_xml, build_collection_xml, build_daybook_export_xml
 from apps.backend.adapters.tally.response_parser import parse_company_list, parse_metadata_response
 
 logger = get_logger("app.threads.sync_worker")
@@ -760,6 +760,17 @@ class BackgroundSyncWorker(QThread):
                 ok_fb, code_fb, text_fb, err_fb = self.tally_client.send_xml_request("127.0.0.1", port, v_fb_xml, timeout=180.0)
                 if ok_fb and code_fb == 200:
                     extracted_vouchers = parse_metadata_response(text_fb, tag_name="Voucher")
+                    for v in extracted_vouchers:
+                        alt = int(v.get("alterid", 0) or 0)
+                        if alt > max_voucher_alter:
+                            max_voucher_alter = alt
+
+            if not extracted_vouchers:
+                logger.info(f"Retrying voucher extraction for '{c_name}' with Day Book report export fallback...")
+                db_xml = build_daybook_export_xml(company_name=c_name, from_date="20000101", to_date="20991231")
+                ok_db, code_db, text_db, err_db = self.tally_client.send_xml_request("127.0.0.1", port, db_xml, timeout=180.0)
+                if ok_db and code_db == 200:
+                    extracted_vouchers = parse_metadata_response(text_db, tag_name="Voucher")
                     for v in extracted_vouchers:
                         alt = int(v.get("alterid", 0) or 0)
                         if alt > max_voucher_alter:

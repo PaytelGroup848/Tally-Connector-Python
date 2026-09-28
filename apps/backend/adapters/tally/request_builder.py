@@ -42,13 +42,21 @@ def build_collection_xml(
         clean_company = company_name.strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         company_var = f"<SVCURRENTCOMPANY>{clean_company}</SVCURRENTCOMPANY>"
 
+    is_voucher = str(collection_type).strip().lower() in ("voucher", "vouchers")
+
+    # Scope vouchers strictly to target company and allow all vouchers
+    scope_tags = ""
+    if is_voucher and company_name and company_name.strip():
+        scope_tags = """<CHILDOF>##SVCURRENTCOMPANY</CHILDOF>
+                        <BELONGSTO>Yes</BELONGSTO>"""
+
     # Ensure full date range for Vouchers so entries from any financial year (e.g. 2024, 2025, 2026, 2027) are extracted
     date_vars = ""
-    if from_date or to_date or str(collection_type).strip().lower() in ("voucher", "vouchers"):
+    if from_date or to_date or is_voucher:
         f_date = (from_date or "20000101").replace("-", "").strip()
         t_date = (to_date or "20991231").replace("-", "").strip()
-        date_vars = f"""<SVFROMDATE>{f_date}</SVFROMDATE>
-                <SVTODATE>{t_date}</SVTODATE>"""
+        date_vars = f"""<SVFROMDATE TYPE="Date">{f_date}</SVFROMDATE>
+                <SVTODATE TYPE="Date">{t_date}</SVTODATE>"""
 
     filter_tag = ""
     system_tag = ""
@@ -74,6 +82,7 @@ def build_collection_xml(
                 <TDLMESSAGE>
                     <COLLECTION NAME="CustomCollection" ISINITIALISE="Yes">
                         <TYPE>{collection_type}</TYPE>
+                        {scope_tags}
                         {fetch_tags}
                         {filter_tag}
                     </COLLECTION>
@@ -83,3 +92,33 @@ def build_collection_xml(
         </DESC>
     </BODY>
 </ENVELOPE>"""
+
+def build_daybook_export_xml(
+    company_name: Optional[str] = None,
+    from_date: Optional[str] = "20000101",
+    to_date: Optional[str] = "20991231"
+) -> str:
+    """Builds a native Day Book report export request XML to extract all vouchers for any company period."""
+    clean_company = (company_name or "").strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    f_date = (from_date or "20000101").replace("-", "").strip()
+    t_date = (to_date or "20991231").replace("-", "").strip()
+    company_var = f"<SVCURRENTCOMPANY>{clean_company}</SVCURRENTCOMPANY>" if clean_company else ""
+    return f"""<ENVELOPE>
+    <HEADER>
+        <TALLYREQUEST>Export Data</TALLYREQUEST>
+    </HEADER>
+    <BODY>
+        <EXPORTDATA>
+            <REQUESTDESC>
+                <REPORTNAME>Day Book</REPORTNAME>
+                <STATICVARIABLES>
+                    <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                    {company_var}
+                    <SVFROMDATE TYPE="Date">{f_date}</SVFROMDATE>
+                    <SVTODATE TYPE="Date">{t_date}</SVTODATE>
+                </STATICVARIABLES>
+            </REQUESTDESC>
+        </EXPORTDATA>
+    </BODY>
+</ENVELOPE>"""
+
