@@ -78,7 +78,28 @@ class BackgroundSyncWorker(QThread):
                 {"tallyCompanyName": c_name}
             ]
         })
-        c_oid = comp_doc.get("_id") if comp_doc else None
+        c_oid = None
+        if comp_doc:
+            cloud_cid = comp_doc.get("cloud_company_id")
+            if cloud_cid and ObjectId.is_valid(cloud_cid):
+                c_oid = ObjectId(cloud_cid)
+            elif comp_doc.get("_id"):
+                c_oid = comp_doc.get("_id")
+
+        if not c_oid:
+            try:
+                ok_c, c_list = cloud_auth_service.get_cloud_companies()
+                if ok_c and c_list:
+                    for c in c_list:
+                        c_n = c.get("tallyCompanyName") or c.get("companyName") or c.get("name") or ""
+                        if c_n.strip().lower() == c_name.strip().lower():
+                            cid = c.get("id") or c.get("_id")
+                            if cid and ObjectId.is_valid(cid):
+                                c_oid = ObjectId(cid)
+                            break
+            except Exception:
+                pass
+
         org_oid = comp_doc.get("organizationId") if comp_doc else None
 
         if not org_oid:
@@ -365,6 +386,7 @@ class BackgroundSyncWorker(QThread):
                         l_doc["organizationId"] = org_oid
                     if c_oid:
                         l_doc["companyId"] = c_oid
+                        l_doc["cloud_company_id"] = str(c_oid)
                     l_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
                     if org_oid:
                         l_filter["organizationId"] = org_oid
@@ -414,6 +436,7 @@ class BackgroundSyncWorker(QThread):
                             cust_doc["organizationId"] = org_oid
                         if c_oid:
                             cust_doc["companyId"] = c_oid
+                            cust_doc["cloud_company_id"] = str(c_oid)
                         cust_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
                         if org_oid:
                             cust_filter["organizationId"] = org_oid
@@ -473,6 +496,7 @@ class BackgroundSyncWorker(QThread):
                             supp_doc["organizationId"] = org_oid
                         if c_oid:
                             supp_doc["companyId"] = c_oid
+                            supp_doc["cloud_company_id"] = str(c_oid)
                         supp_filter: Dict[str, Any] = {"tallyExternalId": supp_ext_id}
                         if org_oid:
                             supp_filter["organizationId"] = org_oid
@@ -854,6 +878,7 @@ class BackgroundSyncWorker(QThread):
                         v_doc["organizationId"] = org_oid
                     if c_oid:
                         v_doc["companyId"] = c_oid
+                        v_doc["cloud_company_id"] = str(c_oid)
                     v_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
                     if org_oid:
                         v_filter["organizationId"] = org_oid

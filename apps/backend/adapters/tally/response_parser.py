@@ -15,6 +15,8 @@ def parse_tally_xml_response(xml_text: str) -> Tuple[bool, Optional[ET.Element],
     clean_xml = re.sub(r'&#(0?[0-8]|1[124-9]|2[0-9]|3[01]);', '', xml_text)
     clean_xml = re.sub(r'&#\d+;', '', clean_xml)
     clean_xml = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', '', clean_xml)
+    # Sanitize un-namespaced tag prefixes (e.g. <UDF:USERDESCRIPTION> -> <UDF_USERDESCRIPTION>) to prevent ParseError: unbound prefix
+    clean_xml = re.sub(r'<(/?[a-zA-Z0-9_\.]+):([a-zA-Z0-9_\.]+)((?:\s+[^>]*)?)>', r'<\1_\2\3>', clean_xml)
 
     try:
         root = ET.fromstring(clean_xml)

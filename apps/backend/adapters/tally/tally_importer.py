@@ -1345,8 +1345,13 @@ def parse_tally_import_response(xml_text: str, default_voucher_number: Optional[
     if not xml_text or not xml_text.strip():
         return False, None, "Empty response received from Tally Prime server."
 
+    clean_xml = re.sub(r'&#(0?[0-8]|1[124-9]|2[0-9]|3[01]);', '', xml_text)
+    clean_xml = re.sub(r'&#\d+;', '', clean_xml)
+    clean_xml = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', '', clean_xml)
+    clean_xml = re.sub(r'<(/?[a-zA-Z0-9_\.]+):([a-zA-Z0-9_\.]+)((?:\s+[^>]*)?)>', r'<\1_\2\3>', clean_xml)
+
     try:
-        root = ET.fromstring(xml_text)
+        root = ET.fromstring(clean_xml)
     except ET.ParseError as pe:
         return False, None, f"Malformed XML response from Tally Prime: {pe}"
 
