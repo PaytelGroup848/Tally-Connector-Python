@@ -1,14 +1,10 @@
 {
-  "version": "1.0.5",
-  "latestVersion": "1.0.5",
-  "latest_version": "1.0.5",
+  "version": "1.0.6",
+  "latestVersion": "1.0.6",
+  "latest_version": "1.0.6",
   "minVersion": "1.0.0",
-  "releaseNotes": "Fix Cloud API command result return for Parties and Stock Items (DONE status).",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.5.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.5.exe",
+  "releaseNotes": "Fix Tally XML parsing for custom UDFs, resolve dynamic company linking, and stabilize voucher counts.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.6.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.6.exe",
   "mandatory": true
 }
-
-
-
-
