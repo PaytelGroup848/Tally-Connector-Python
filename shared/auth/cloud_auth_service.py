@@ -161,10 +161,11 @@ class CloudAuthService:
                 self.access_token = win_session.get("access_token")
                 self.refresh_token_val = win_session.get("refresh_token")
                 self.current_user = win_session.get("user") or {}
-                if win_session.get("device_id"):
-                    self.device_id = win_session.get("device_id")
+                win_dev = win_session.get("device_id")
+                if win_dev:
+                    self.device_id = str(win_dev)
                 elif not self.device_id and self.current_user.get("deviceId"):
-                    self.device_id = self.current_user.get("deviceId")
+                    self.device_id = str(self.current_user.get("deviceId"))
                 logger.info(f"Restored active 15-day session from Windows Credential Manager for user '{win_session.get('username')}'")
                 return
         except Exception as exc:
@@ -182,10 +183,11 @@ class CloudAuthService:
                     self.access_token = data.get("accessToken") or data.get("access_token")
                     self.refresh_token_val = data.get("refreshToken") or data.get("refresh_token")
                     self.current_user = data.get("user") or {}
-                    if data.get("deviceId"):
-                        self.device_id = data.get("deviceId")
+                    f_dev = data.get("deviceId")
+                    if f_dev:
+                        self.device_id = str(f_dev)
                     elif not self.device_id and self.current_user.get("deviceId"):
-                        self.device_id = self.current_user.get("deviceId")
+                        self.device_id = str(self.current_user.get("deviceId"))
             except Exception as exc:
                 logger.warning(f"Error loading auth session file: {exc}")
 
@@ -312,8 +314,9 @@ class CloudAuthService:
         return self.get_device_id()
 
     @device_id.setter
-    def device_id(self, val: str):
-        self._device_id = val
+    def device_id(self, val: Any) -> None:
+        if val:
+            self._device_id = str(val).strip()
 
     def sync_user_to_mongodb(self, user_data: Dict[str, Any]) -> None:
         try:
@@ -575,36 +578,36 @@ class CloudAuthService:
                     col = _safe_get_collection("companies")
                     if col is not None:
                         org_id = self.get_organization_id()
-                    user_email = (
-                        self.current_user.get("email")
-                        or getattr(self, "email", "")
-                        or ""
-                    ).strip().lower()
+                        user_email = (
+                            self.current_user.get("email")
+                            or getattr(self, "email", "")
+                            or ""
+                        ).strip().lower()
 
-                    set_data = {
-                        "company_name": company_name,
-                        "name": company_name,
-                        "company_guid": company_guid,
-                        "cloud_company_id": comp_id_val,
-                        "deviceId": self.device_id,
-                        "device_id": self.device_id,
-                        "financial_year_from": financial_year or "01-Apr-2025",
-                        "cloud_linked": True,
-                        "is_sync_enabled": True,
-                        "status": "CONNECTED",
-                        "updated_at": datetime.now(timezone.utc).isoformat()
-                    }
-                    if org_id:
-                        set_data["organizationId"] = org_id
-                        set_data["organization_id"] = org_id
-                    if user_email:
-                        set_data["email"] = user_email
+                        set_data = {
+                            "company_name": company_name,
+                            "name": company_name,
+                            "company_guid": company_guid,
+                            "cloud_company_id": comp_id_val,
+                            "deviceId": self.device_id,
+                            "device_id": self.device_id,
+                            "financial_year_from": financial_year or "01-Apr-2025",
+                            "cloud_linked": True,
+                            "is_sync_enabled": True,
+                            "status": "CONNECTED",
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        }
+                        if org_id:
+                            set_data["organizationId"] = org_id
+                            set_data["organization_id"] = org_id
+                        if user_email:
+                            set_data["email"] = user_email
 
-                    col.update_one(
-                        {"company_name": company_name},
-                        {"$set": set_data},
-                        upsert=True
-                    )
+                        col.update_one(
+                            {"company_name": company_name},
+                            {"$set": set_data},
+                            upsert=True
+                        )
                 except Exception as e:
                     logger.error(f"Error persisting linked company to MongoDB: {e}")
 
