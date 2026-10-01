@@ -832,14 +832,31 @@ class CloudAuthService:
                 if val == 0.0 and qty != 0.0 and rate != 0.0:
                     val = round(qty * rate, 2)
 
+                unit_val = str(r.get("unit") or r.get("uom") or r.get("units") or r.get("unit_name") or "").strip()
+                hsn_val = str(r.get("hsnCode") or r.get("hsn_code") or r.get("hsn") or "").strip()
+                batch_val = str(r.get("batch") or r.get("batchName") or r.get("batch_name") or "Primary Batch").strip()
+
                 records_to_send.append({
                     "tallyExternalId": str(t_ext_id),
                     "itemName": str(item_name),
+                    "name": str(item_name),
                     "itemTallyExternalId": str(item_ext_id),
                     "godown": str(godown_val),
+                    "batch": str(batch_val),
                     "quantity": qty,
                     "rate": rate,
-                    "value": val
+                    "value": val,
+                    "unit": unit_val,
+                    "units": unit_val,
+                    "uom": unit_val,
+                    "unit_name": unit_val,
+                    "baseUnits": unit_val,
+                    "base_units": unit_val,
+                    "unit_details": r.get("unit_details") or {},
+                    "hsnCode": hsn_val,
+                    "hsn_code": hsn_val,
+                    "hsn": hsn_val,
+                    "gstApplicable": str(r.get("gstApplicable") or "Applicable"),
                 })
         elif norm_entity == "SUPPLIER":
             for r in items:

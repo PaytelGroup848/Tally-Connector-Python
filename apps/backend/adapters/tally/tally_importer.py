@@ -1750,7 +1750,7 @@ class TallyImporter:
                     logger.info(f"Item '{clean_name}' not found for alter, creating new stock item first...")
                     create_ok = await self.ensure_stock_item(
                         host=host, port=port, company_name=company_name,
-                        stock_item_name=clean_name, unit=clean_unit,
+                        item_name=clean_name, unit_name=clean_unit,
                         hsn_code=str(item_data.get("hsn_code") or item_data.get("hsnCode") or "")
                     )
                     if create_ok:

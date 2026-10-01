@@ -621,9 +621,16 @@ class BackgroundSyncWorker(QThread):
                         "group": s.get("group") or s.get("parent"),
                         "category": s.get("category", ""),
                         "unit": unit_val,
+                        "units": unit_val,
+                        "uom": unit_val,
+                        "unit_name": unit_val,
+                        "baseUnits": unit_val,
+                        "base_units": unit_val,
                         "unit_details": unit_obj,
                         "alternateUnit": s.get("alternateUnit", ""),
                         "hsnCode": hsn_val,
+                        "hsn_code": hsn_val,
+                        "hsn": hsn_val,
                         "gstApplicable": s.get("gstApplicable", "Applicable"),
                         "reorderLevel": s.get("reorderLevel", "0"),
                         "date": str(s.get("date") or "2022-04-01"),
@@ -642,6 +649,7 @@ class BackgroundSyncWorker(QThread):
                         s_doc["organizationId"] = org_oid
                     if c_oid:
                         s_doc["companyId"] = c_oid
+                        s_doc["cloud_company_id"] = str(c_oid)
                     item_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
                     if org_oid:
                         item_filter["organizationId"] = org_oid
@@ -653,10 +661,18 @@ class BackgroundSyncWorker(QThread):
                     stock_record_doc = {
                         "tallyExternalId": ext_id,
                         "itemName": item_name,
+                        "name": item_name,
                         "itemTallyExternalId": item_ext_id,
                         "unit": unit_val,
+                        "units": unit_val,
+                        "uom": unit_val,
+                        "unit_name": unit_val,
+                        "baseUnits": unit_val,
+                        "base_units": unit_val,
                         "unit_details": unit_obj,
                         "hsnCode": hsn_val,
+                        "hsn_code": hsn_val,
+                        "hsn": hsn_val,
                         "godown": godown_name,
                         "batch": batch_val,
                         "quantity": qty,
@@ -670,6 +686,7 @@ class BackgroundSyncWorker(QThread):
                         stock_record_doc["organizationId"] = org_oid
                     if c_oid:
                         stock_record_doc["companyId"] = c_oid
+                        stock_record_doc["cloud_company_id"] = str(c_oid)
                     stocks_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
                     if org_oid:
                         stocks_filter["organizationId"] = org_oid
@@ -684,9 +701,15 @@ class BackgroundSyncWorker(QThread):
                     stockbal_doc = {
                         "tallyExternalId": ext_id,
                         "itemName": item_name,
+                        "name": item_name,
                         "itemTallyExternalId": item_ext_id,
                         "unit": unit_val,
+                        "units": unit_val,
+                        "uom": unit_val,
+                        "unit_name": unit_val,
                         "hsnCode": hsn_val,
+                        "hsn_code": hsn_val,
+                        "hsn": hsn_val,
                         "godown": godown_name,
                         "batch": batch_val,
                         "quantity": qty,
@@ -699,7 +722,12 @@ class BackgroundSyncWorker(QThread):
                             "itemName": item_name,
                             "itemTallyExternalId": item_ext_id,
                             "unit": unit_obj if unit_obj else unit_val,
+                            "units": unit_val,
+                            "uom": unit_val,
+                            "unit_name": unit_val,
                             "hsnCode": hsn_val,
+                            "hsn_code": hsn_val,
+                            "hsn": hsn_val,
                             "godown": godown_name,
                             "batch": batch_val,
                             "quantity": qty,
@@ -716,6 +744,7 @@ class BackgroundSyncWorker(QThread):
                     if c_oid:
                         stockbal_filter["companyId"] = c_oid
                         stockbal_doc["companyId"] = c_oid
+                        stockbal_doc["cloud_company_id"] = str(c_oid)
 
                     stockbal_ops.append(UpdateOne(
                         stockbal_filter,
@@ -1244,10 +1273,10 @@ class BackgroundSyncWorker(QThread):
         """
         try:
             cmd_col = get_collection("commands")
-            q_filter = {
+            q_filter: Dict[str, Any] = {
                 "status": {"$in": ["SENT", "PENDING", "WAITING_FOR_TALLY", "QUEUED"]}
             }
-            or_comps = [
+            or_comps: List[Dict[str, Any]] = [
                 {"company_name": c_name},
                 {"payload.company_name": c_name},
                 {"payload.companyName": c_name},

@@ -557,7 +557,14 @@ class RemoteCommandWorker(QThread):
                                     "openingRate": rate_val,
                                     "openingValue": value_val,
                                     "unit": unit_val,
+                                    "units": unit_val,
+                                    "uom": unit_val,
+                                    "unit_name": unit_val,
+                                    "baseUnits": unit_val,
+                                    "base_units": unit_val,
                                     "hsnCode": hsn_val,
+                                    "hsn_code": hsn_val,
+                                    "hsn": hsn_val,
                                     "godown": godown_val,
                                     "batch": batch_val,
                                     "company_name": resolved_company,
@@ -566,6 +573,7 @@ class RemoteCommandWorker(QThread):
                                 }
                                 if comp_id:
                                     set_doc["companyId"] = comp_id
+                                    set_doc["cloud_company_id"] = str(comp_id)
 
                                 for col_name in ["stock_items", "stocks", "items", "stockbalances"]:
                                     col = get_collection(col_name)
