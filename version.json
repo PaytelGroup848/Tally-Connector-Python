@@ -1,10 +1,10 @@
 {
-  "version": "1.0.7",
-  "latestVersion": "1.0.7",
-  "latest_version": "1.0.7",
+  "version": "1.0.8",
+  "latestVersion": "1.0.8",
+  "latest_version": "1.0.8",
   "minVersion": "1.0.0",
-  "releaseNotes": "Fix stock item HSN code and Unit syncing, resolve Pylance parameter typing.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.7.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.7.exe",
+  "releaseNotes": "Instant Tally GUID return on voucher, party and stock item creation.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.8.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.8.exe",
   "mandatory": true
 }
