@@ -1,9 +1,39 @@
 import os
 import sys
+import glob
 from datetime import datetime
 
 # Ensure project root is in sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if base_dir not in sys.path:
+    sys.path.insert(0, base_dir)
+
+# Auto-detect venv / .venv site-packages on Linux / Windows
+try:
+    import pymongo
+except ImportError:
+    candidate_patterns = [
+        os.path.join(base_dir, "venv", "lib", "python*", "site-packages"),
+        os.path.join(base_dir, ".venv", "lib", "python*", "site-packages"),
+        os.path.join(base_dir, "venv", "Lib", "site-packages"),
+        os.path.join(base_dir, ".venv", "Lib", "site-packages"),
+        "/root/Tally-Connector-Python/venv/lib/python*/site-packages",
+        "/root/Tally-Connector-Python/.venv/lib/python*/site-packages",
+    ]
+    for pattern in candidate_patterns:
+        for p in glob.glob(pattern):
+            if p not in sys.path and os.path.isdir(p):
+                sys.path.insert(0, p)
+    try:
+        import pymongo
+    except ImportError:
+        print("\n[!] ERROR: 'pymongo' library not found in current Python environment.")
+        print("    Please run one of the following commands on your server:")
+        print("      1) pip3 install pymongo")
+        print("         OR")
+        print("      2) source venv/bin/activate  (or source .venv/bin/activate)")
+        print("         python scripts/server_health_check.py\n")
+        sys.exit(1)
 
 from shared.db.mongo_client import get_mongo_db
 
