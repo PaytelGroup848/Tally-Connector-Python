@@ -2,9 +2,14 @@
 
 import time
 import asyncio
+from datetime import datetime, timezone
+from bson import ObjectId
 from PySide6.QtCore import QThread, Signal
 from shared.auth.cloud_auth_service import cloud_auth_service
 from shared.logging_config import get_logger
+from shared.db.mongo_client import get_collection
+from shared.repositories.activity_history_repository import activity_history_repo
+from shared.repositories.voucher_queue_repository import voucher_queue_repo
 from apps.backend.services.importer_service import ImporterService
 
 logger = get_logger("app.threads.command_worker")
@@ -132,7 +137,6 @@ class RemoteCommandWorker(QThread):
                 if not resolved_company and comp_id:
                     try:
                         from shared.db.mongo_client import get_mongo_db
-                        from bson import ObjectId
                         db = get_mongo_db()
                         c_doc = None
                         if ObjectId.is_valid(str(comp_id)):
@@ -623,12 +627,19 @@ class RemoteCommandWorker(QThread):
                 error_msg = str(e)
                 logger.error(f"Failed to execute command #{cmd_id}: {e}")
                 if not error_details:
+                    err_card_amt: float = 0.0
+                    try:
+                        if "amt" in locals() and amt is not None:
+                            err_card_amt = float(amt)
+                    except (ValueError, TypeError):
+                        err_card_amt = 0.0
+
                     error_details = {
                         "voucher_type": cmd_type,
                         "voucher_number": "N/A",
                         "company": resolved_company or "Active Company",
                         "party": "N/A",
-                        "amount": float(amt) if "amt" in locals() else 0.0,
+                        "amount": err_card_amt,
                         "date": "N/A",
                         "reason": f"Execution Error: {e}",
                         "action": "Verify that Tally Prime is running on port 9000 and accessible.",
@@ -638,7 +649,6 @@ class RemoteCommandWorker(QThread):
                     }
 
             try:
-                from shared.repositories.activity_history_repository import activity_history_repo
                 v_type = norm_payload.get("voucher_type", "Sales")
                 if "Master" in str(v_type):
                     label_type = str(v_type)
@@ -701,9 +711,6 @@ class RemoteCommandWorker(QThread):
             )
 
             try:
-                from shared.db.mongo_client import get_collection
-                from bson import ObjectId
-                from datetime import datetime, timezone
                 cmd_col = get_collection("commands")
                 if ObjectId.is_valid(cmd_id):
                     cmd_col.update_one(
@@ -728,8 +735,8 @@ class RemoteCommandWorker(QThread):
         """
         curr_org = getattr(cloud_auth_service, "organization_id", None) or (cloud_auth_service.current_user or {}).get("organizationId")
         curr_email = getattr(cloud_auth_service, "email", None) or (cloud_auth_service.current_user or {}).get("email")
+        curr_dev = getattr(cloud_auth_service, "device_id", None) or getattr(self.settings, "device_id", "")
 
-        from shared.repositories.voucher_queue_repository import voucher_queue_repo
         pending_items = voucher_queue_repo.get_pending_vouchers(organization_id=curr_org, user_email=curr_email)
         if not pending_items:
             return
@@ -754,14 +761,16 @@ class RemoteCommandWorker(QThread):
                 if not is_open:
                     continue
 
-                cmd_id = item.get("cmd_id")
-                payload = item.get("payload") or {}
-                cmd_type = item.get("cmd_type", "CREATE_VOUCHER")
+                cmd_id = str(item.get("cmd_id") or "")
+                if not cmd_id:
+                    continue
+                payload: dict = item.get("payload") or {}
+                cmd_type = str(item.get("cmd_type", "CREATE_VOUCHER"))
                 logger.info(f"Draining pending voucher #{cmd_id} for newly opened company '{target_comp}'...")
 
                 res = loop.run_until_complete(self.importer_service.import_voucher(payload))
                 if res.get("status") == "SUCCESS":
-                    v_num = res.get("voucher_number") or "SUCCESS"
+                    v_num = str(res.get("voucher_number") or "SUCCESS")
                     voucher_queue_repo.mark_voucher_completed(cmd_id, v_num)
                     cloud_auth_service.send_command_result(
                         command_id=cmd_id,
@@ -769,8 +778,11 @@ class RemoteCommandWorker(QThread):
                         result={"status": "SUCCESS", "tallyVoucherNumber": v_num},
                         error_message=None
                     )
+                    d_amt: float = 0.0
                     try:
-                        d_amt = float(payload.get("amount")) if payload.get("amount") is not None else 0.0
+                        raw_d_amt = payload.get("amount")
+                        if raw_d_amt is not None:
+                            d_amt = float(raw_d_amt)
                     except (ValueError, TypeError):
                         d_amt = 0.0
                     try:
@@ -798,17 +810,20 @@ class RemoteCommandWorker(QThread):
                         {}
                     )
                 elif res.get("should_queue"):
-                    voucher_queue_repo.mark_voucher_attempt(cmd_id, res.get("reason", "Company not ready"))
+                    voucher_queue_repo.mark_voucher_attempt(cmd_id, str(res.get("reason", "Company not ready")))
                 else:
-                    voucher_queue_repo.mark_voucher_failed(cmd_id, res.get("reason", "Tally rejected"))
+                    voucher_queue_repo.mark_voucher_failed(cmd_id, str(res.get("reason", "Tally rejected")))
                     cloud_auth_service.send_command_result(
                         command_id=cmd_id,
                         status="FAILED",
                         result={"failed": True, "reason": res.get("reason")},
                         error_message=res.get("error")
                     )
+                    d_err_amt: float = 0.0
                     try:
-                        d_err_amt = float(payload.get("amount")) if payload.get("amount") is not None else 0.0
+                        raw_err_amt = payload.get("amount")
+                        if raw_err_amt is not None:
+                            d_err_amt = float(raw_err_amt)
                     except (ValueError, TypeError):
                         d_err_amt = 0.0
                     try:
