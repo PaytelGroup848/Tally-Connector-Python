@@ -1,48 +1,43 @@
 import os
 import sys
-import glob
+import re
 from datetime import datetime
 
-# Ensure project root is in sys.path
-base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if base_dir not in sys.path:
-    sys.path.insert(0, base_dir)
+# 1. READ MONGODB URL DIRECTLY FROM .env (NO pydantic / dotenv REQUIRED)
+def get_db_url():
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env_file = os.path.join(base_dir, ".env")
+    if os.path.exists(env_file):
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("CTRLBOOKS_DB_URL="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+                elif line.startswith("MONGODB_URI="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return os.environ.get("CTRLBOOKS_DB_URL") or os.environ.get("MONGODB_URI") or "mongodb://datacloude8_db_user:6ru82Z0uNhMhoz5u@ac-twlm6pz-shard-00-00.xcqrnjz.mongodb.net:27017,ac-twlm6pz-shard-00-01.xcqrnjz.mongodb.net:27017,ac-twlm6pz-shard-00-02.xcqrnjz.mongodb.net:27017/?ssl=true&replicaSet=atlas-h0mo8s-shard-0&authSource=admin&appName=CloudedataConnect"
 
-# Auto-detect venv / .venv site-packages on Linux / Windows
 try:
-    import pymongo
+    from pymongo import MongoClient
 except ImportError:
-    candidate_patterns = [
-        os.path.join(base_dir, "venv", "lib", "python*", "site-packages"),
-        os.path.join(base_dir, ".venv", "lib", "python*", "site-packages"),
-        os.path.join(base_dir, "venv", "Lib", "site-packages"),
-        os.path.join(base_dir, ".venv", "Lib", "site-packages"),
-        "/root/Tally-Connector-Python/venv/lib/python*/site-packages",
-        "/root/Tally-Connector-Python/.venv/lib/python*/site-packages",
-    ]
-    for pattern in candidate_patterns:
-        for p in glob.glob(pattern):
-            if p not in sys.path and os.path.isdir(p):
-                sys.path.insert(0, p)
-    try:
-        import pymongo
-    except ImportError:
-        print("\n[!] ERROR: 'pymongo' library not found in current Python environment.")
-        print("    Please run one of the following commands on your server:")
-        print("      1) pip3 install pymongo")
-        print("         OR")
-        print("      2) source venv/bin/activate  (or source .venv/bin/activate)")
-        print("         python scripts/server_health_check.py\n")
-        sys.exit(1)
-
-from shared.db.mongo_client import get_mongo_db
+    print("\n[!] ERROR: 'pymongo' library is not installed.")
+    print("    Please run:")
+    print("    pip3 install pymongo --break-system-packages\n")
+    sys.exit(1)
 
 def run_health_check():
-    db = get_mongo_db()
-    
+    db_url = get_db_url()
     print("\n" + "=" * 70)
     print("      CTRLBOOKS SERVER & CUSTOMER HEALTH DIAGNOSTIC DASHBOARD")
     print("=" * 70)
+    print("Connecting to MongoDB Atlas...")
+
+    try:
+        client = MongoClient(db_url, serverSelectionTimeoutMS=10000)
+        db = client["test"]
+    except Exception as exc:
+        print(f"[!] Database connection failed: {exc}")
+        sys.exit(1)
 
     # 1. TOTAL REGISTERED USERS & ORGANIZATIONS
     total_users = db.users.count_documents({})
