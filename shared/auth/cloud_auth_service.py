@@ -1114,10 +1114,24 @@ class CloudAuthService:
             return False, "Not authenticated. Please login first.", {}
 
         url = f"{self.base_url}/commands/{command_id}/result"
+        res_data = dict(result or {})
+        t_ext = (
+            res_data.get("tallyExternalId")
+            or res_data.get("guid")
+            or res_data.get("tally_guid")
+            or res_data.get("externalId")
+            or res_data.get("id")
+        )
+        if t_ext and "tallyExternalId" not in res_data:
+            res_data["tallyExternalId"] = str(t_ext)
+
         payload: Dict[str, Any] = {
             "status": status.upper(),
-            "result": result or {},
+            "result": res_data,
+            "resultPayload": res_data,
         }
+        if t_ext:
+            payload["tallyExternalId"] = str(t_ext)
         if error_message and str(error_message).strip():
             payload["errorMessage"] = str(error_message).strip()
         headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}

@@ -351,8 +351,11 @@ class RemoteCommandWorker(QThread):
                                     pass
                             if res.get("company_name"):
                                 norm_payload["company_name"] = res.get("company_name")
+                            v_ext = res.get("tallyExternalId") or res.get("guid") or res.get("voucher_number") or "IMPORTED"
                             result_data = {
                                 "tallyVoucherNumber": res.get("voucher_number") or res.get("guid") or "IMPORTED",
+                                "tallyExternalId": v_ext,
+                                "guid": v_ext,
                                 "status": "SUCCESS"
                             }
                         elif res.get("should_queue"):
@@ -455,12 +458,27 @@ class RemoteCommandWorker(QThread):
                         res = loop.run_until_complete(self.importer_service.create_ledger(norm_payload))
                         if res.get("status") == "SUCCESS" or res.get("already_exists") or (res.get("error") and "already exists" in str(res.get("error")).lower()):
                             success = True
+                            ext_id = res.get("tallyExternalId") or res.get("guid") or f"TALLY-{norm_payload.get('name')}"
                             result_data = {
                                 "ledgerName": norm_payload.get("name"),
                                 "partyName": norm_payload.get("name"),
+                                "tallyExternalId": ext_id,
+                                "guid": ext_id,
                                 "status": "SUCCESS",
                                 "already_exists": bool(res.get("already_exists"))
                             }
+                            try:
+                                p_name = norm_payload.get("name")
+                                is_supp = "SUPPLIER" in p_type or "VENDOR" in p_type or "CREDITOR" in p_type
+                                col_names = ["suppliers", "ledgers"] if is_supp else ["customers", "ledgers"]
+                                for c_name in col_names:
+                                    c_col = get_collection(c_name)
+                                    q = {"name": p_name}
+                                    if comp_id:
+                                        q["companyId"] = comp_id
+                                    c_col.update_many(q, {"$set": {"tallyExternalId": ext_id, "updatedAt": datetime.now(timezone.utc)}})
+                            except Exception as m_err:
+                                logger.debug(f"Direct MongoDB party update notice: {m_err}")
                         else:
                             success = False
                             error_msg = res.get("error") or res.get("message") or "Failed to create party/ledger in Tally."
@@ -497,10 +515,23 @@ class RemoteCommandWorker(QThread):
                         res = loop.run_until_complete(self.importer_service.create_stock_item(norm_payload))
                         if res.get("status") == "SUCCESS":
                             success = True
+                            ext_id = res.get("tallyExternalId") or res.get("guid") or f"TALLY-{norm_payload.get('name')}"
                             result_data = {
                                 "itemName": norm_payload.get("name"),
+                                "tallyExternalId": ext_id,
+                                "guid": ext_id,
                                 "status": "SUCCESS"
                             }
+                            try:
+                                s_name = norm_payload.get("name")
+                                for c_name in ["stock_items", "items"]:
+                                    c_col = get_collection(c_name)
+                                    q = {"$or": [{"name": s_name}, {"itemName": s_name}]}
+                                    if comp_id:
+                                        q["companyId"] = comp_id
+                                    c_col.update_many(q, {"$set": {"tallyExternalId": ext_id, "itemTallyExternalId": ext_id, "updatedAt": datetime.now(timezone.utc)}})
+                            except Exception as m_err:
+                                logger.debug(f"Direct MongoDB stock item update notice: {m_err}")
                         else:
                             success = False
                             error_msg = res.get("error") or res.get("message") or "Failed to create stock item in Tally."
@@ -718,6 +749,8 @@ class RemoteCommandWorker(QThread):
                         {"$set": {
                             "status": status_str,
                             "result": result_payload,
+                            "resultPayload": result_payload,
+                            "tallyExternalId": result_payload.get("tallyExternalId") if isinstance(result_payload, dict) else None,
                             "errorMessage": error_msg,
                             "completedAt": datetime.now(timezone.utc),
                             "updatedAt": datetime.now(timezone.utc)
@@ -771,11 +804,12 @@ class RemoteCommandWorker(QThread):
                 res = loop.run_until_complete(self.importer_service.import_voucher(payload))
                 if res.get("status") == "SUCCESS":
                     v_num = str(res.get("voucher_number") or "SUCCESS")
+                    v_ext = res.get("tallyExternalId") or res.get("guid") or v_num
                     voucher_queue_repo.mark_voucher_completed(cmd_id, v_num)
                     cloud_auth_service.send_command_result(
                         command_id=cmd_id,
                         status="DONE",
-                        result={"status": "SUCCESS", "tallyVoucherNumber": v_num},
+                        result={"status": "SUCCESS", "tallyVoucherNumber": v_num, "tallyExternalId": v_ext, "guid": v_ext},
                         error_message=None
                     )
                     d_amt: float = 0.0

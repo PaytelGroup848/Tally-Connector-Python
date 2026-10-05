@@ -1865,12 +1865,168 @@ class TallyImporter:
         cached[v_lower] = resolved_parent
         return True, resolved_parent
 
+    async def fetch_ledger_guid(self, host: str, port: int, company_name: str, ledger_name: str) -> Optional[str]:
+        """Queries Tally Prime HTTP interface for a Ledger's GUID / Master ID."""
+        if not ledger_name or not str(ledger_name).strip():
+            return None
+        clean_party = escape_xml(str(ledger_name).strip())
+        clean_comp = escape_xml(str(company_name).strip()) if company_name else ""
+        company_tag = f"<SVCURRENTCOMPANY>{clean_comp}</SVCURRENTCOMPANY>" if clean_comp else ""
+        xml_req = f"""<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>EXPORT</TALLYREQUEST>
+    <TYPE>OBJECT</TYPE>
+    <SUBTYPE>Ledger</SUBTYPE>
+    <ID TYPE="Name">{clean_party}</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SYSNAME:XML</SVEXPORTFORMAT>
+        {company_tag}
+      </STATICVARIABLES>
+      <FETCHLIST>
+        <FETCH>NAME</FETCH>
+        <FETCH>GUID</FETCH>
+        <FETCH>ALTERID</FETCH>
+        <FETCH>MASTERID</FETCH>
+      </FETCHLIST>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+        try:
+            ok, code, text, _ = await self.client.send_xml_request_async(host, port, xml_req, timeout=5.0)
+            if ok and code == 200 and text:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(text)
+                led = root.find(".//LEDGER")
+                if led is not None:
+                    guid_val = led.findtext("GUID")
+                    if guid_val and guid_val.strip():
+                        return guid_val.strip()
+                    master_id = led.findtext("MASTERID") or led.attrib.get("ID")
+                    if master_id and master_id.strip():
+                        return master_id.strip()
+                    alt_id = led.findtext("ALTERID")
+                    if alt_id and alt_id.strip():
+                        return alt_id.strip()
+        except Exception as exc:
+            logger.debug(f"fetch_ledger_guid notice: {exc}")
+        return None
+
+    async def fetch_stock_item_guid(self, host: str, port: int, company_name: str, item_name: str) -> Optional[str]:
+        """Queries Tally Prime HTTP interface for a Stock Item's GUID / Master ID."""
+        if not item_name or not str(item_name).strip():
+            return None
+        clean_item = escape_xml(str(item_name).strip())
+        clean_comp = escape_xml(str(company_name).strip()) if company_name else ""
+        company_tag = f"<SVCURRENTCOMPANY>{clean_comp}</SVCURRENTCOMPANY>" if clean_comp else ""
+        xml_req = f"""<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>EXPORT</TALLYREQUEST>
+    <TYPE>OBJECT</TYPE>
+    <SUBTYPE>StockItem</SUBTYPE>
+    <ID TYPE="Name">{clean_item}</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SYSNAME:XML</SVEXPORTFORMAT>
+        {company_tag}
+      </STATICVARIABLES>
+      <FETCHLIST>
+        <FETCH>NAME</FETCH>
+        <FETCH>GUID</FETCH>
+        <FETCH>ALTERID</FETCH>
+        <FETCH>MASTERID</FETCH>
+      </FETCHLIST>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+        try:
+            ok, code, text, _ = await self.client.send_xml_request_async(host, port, xml_req, timeout=5.0)
+            if ok and code == 200 and text:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(text)
+                it = root.find(".//STOCKITEM")
+                if it is not None:
+                    guid_val = it.findtext("GUID")
+                    if guid_val and guid_val.strip():
+                        return guid_val.strip()
+                    master_id = it.findtext("MASTERID") or it.attrib.get("ID")
+                    if master_id and master_id.strip():
+                        return master_id.strip()
+                    alt_id = it.findtext("ALTERID")
+                    if alt_id and alt_id.strip():
+                        return alt_id.strip()
+        except Exception as exc:
+            logger.debug(f"fetch_stock_item_guid notice: {exc}")
+        return None
+
+    async def fetch_voucher_guid(self, host: str, port: int, company_name: str, voucher_number: str) -> Optional[str]:
+        """Queries Tally Prime HTTP interface for a Voucher's GUID / Master ID by voucher number."""
+        if not voucher_number or not str(voucher_number).strip():
+            return None
+        clean_vnum = escape_xml(str(voucher_number).strip())
+        clean_comp = escape_xml(str(company_name).strip()) if company_name else ""
+        company_tag = f"<SVCURRENTCOMPANY>{clean_comp}</SVCURRENTCOMPANY>" if clean_comp else ""
+        xml_req = f"""<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>EXPORT</TALLYREQUEST>
+    <TYPE>COLLECTION</TYPE>
+    <ID>SingleVoucherCol</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SYSNAME:XML</SVEXPORTFORMAT>
+        {company_tag}
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="SingleVoucherCol" ISINITIALISE="Yes">
+            <TYPE>Voucher</TYPE>
+            <FETCH>VOUCHERNUMBER,GUID,ALTERID,MASTERID</FETCH>
+            <FILTER>VchNumFilter</FILTER>
+          </COLLECTION>
+          <SYSTEM NAME="VchNumFilter">$VOUCHERNUMBER = "{clean_vnum}"</SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+        try:
+            ok, code, text, _ = await self.client.send_xml_request_async(host, port, xml_req, timeout=5.0)
+            if ok and code == 200 and text:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(text)
+                v = root.find(".//VOUCHER")
+                if v is not None:
+                    guid_val = v.findtext("GUID")
+                    if guid_val and guid_val.strip():
+                        return guid_val.strip()
+                    master_id = v.findtext("MASTERID") or v.attrib.get("ID")
+                    if master_id and master_id.strip():
+                        return master_id.strip()
+                    alt_id = v.findtext("ALTERID")
+                    if alt_id and alt_id.strip():
+                        return alt_id.strip()
+        except Exception as exc:
+            logger.debug(f"fetch_voucher_guid notice: {exc}")
+        return None
+
     async def import_ledger(self, host: str, port: int, ledger_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Explicitly creates a Ledger in Tally Prime."""
+        """Explicitly creates a Ledger in Tally Prime and retrieves its tallyExternalId immediately."""
         xml_payload = build_ledger_import_xml(ledger_data)
         ok, status_code, res_text, err_msg = await self.client.send_xml_request_async(
             host=host, port=port, xml_content=xml_payload
         )
+
+        ledger_name = str(ledger_data.get("name") or ledger_data.get("party_ledger") or ledger_data.get("partyName") or ledger_data.get("party_name") or "").strip()
+        comp_name = str(ledger_data.get("company_name") or "")
 
         if not ok or status_code != 200:
             return {
@@ -1882,12 +2038,15 @@ class TallyImporter:
         success, _, parse_err = parse_tally_import_response(res_text, default_voucher_number="LEDGER_CREATED")
         if not success:
             if parse_err and any(k in parse_err.lower() for k in ("already exists", "duplicate", "already present")):
-                logger.info(f"Ledger '{ledger_data.get('name')}' already exists in Tally Prime. Treating as SUCCESS.")
+                logger.info(f"Ledger '{ledger_name}' already exists in Tally Prime. Treating as SUCCESS.")
+                tally_guid = await self.fetch_ledger_guid(host, port, comp_name, ledger_name)
                 return {
                     "success": True,
                     "already_exists": True,
-                    "message": f"Ledger '{ledger_data.get('name')}' already exists in Tally Prime.",
+                    "message": f"Ledger '{ledger_name}' already exists in Tally Prime.",
                     "error": None,
+                    "tallyExternalId": tally_guid or f"TALLY-{ledger_name}",
+                    "guid": tally_guid or f"TALLY-{ledger_name}",
                 }
             return {
                 "success": False,
@@ -1895,10 +2054,13 @@ class TallyImporter:
                 "error": parse_err,
             }
 
+        tally_guid = await self.fetch_ledger_guid(host, port, comp_name, ledger_name)
         return {
             "success": True,
-            "message": f"Ledger '{ledger_data.get('name')}' successfully created in Tally Prime.",
+            "message": f"Ledger '{ledger_name}' successfully created in Tally Prime.",
             "error": None,
+            "tallyExternalId": tally_guid or f"TALLY-{ledger_name}",
+            "guid": tally_guid or f"TALLY-{ledger_name}",
         }
 
     async def import_voucher(self, host: str, port: int, voucher_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -2098,6 +2260,7 @@ class TallyImporter:
                 "diagnostic": diagnostic,
             }
 
+        v_guid = await self.fetch_voucher_guid(host, port, company_name, v_num)
         return {
             "success": True,
             "voucher_number": v_num,
@@ -2105,4 +2268,6 @@ class TallyImporter:
             "company_name": company_name or voucher_data.get("company_name", ""),
             "message": f"Voucher '{v_num}' successfully created in Tally Prime.",
             "error": None,
+            "tallyExternalId": v_guid or v_num,
+            "guid": v_guid or v_num,
         }

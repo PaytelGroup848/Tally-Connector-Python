@@ -134,6 +134,8 @@ class ImporterService:
             "target": target,
             "voucher_type": validated_payload["voucher_type"],
             "voucher_number": result.get("voucher_number"),
+            "tallyExternalId": result.get("tallyExternalId") or result.get("voucher_number"),
+            "guid": result.get("guid") or result.get("voucher_number"),
             "amount": float(result.get("amount", validated_payload.get("amount", 0.0))),
             "company_name": result.get("company_name") or validated_payload.get("company_name", ""),
             "message": result.get("message"),
@@ -195,10 +197,14 @@ class ImporterService:
             host=host, port=port, ledger_data=clean_payload
         )
 
+        ext_id = result.get("tallyExternalId") or result.get("guid") or f"TALLY-{ledger_name}"
         return {
             "status": "SUCCESS" if result.get("success") else "FAILED",
             "target": "TALLY",
             "name": ledger_name,
+            "tallyExternalId": ext_id,
+            "guid": ext_id,
+            "already_exists": result.get("already_exists", False),
             "message": result.get("message"),
             "error": result.get("error")
         }
@@ -222,10 +228,19 @@ class ImporterService:
             hsn_code=hsn_code,
         )
 
+        ext_id = None
+        if ok:
+            ext_id = await self.tally_importer.fetch_stock_item_guid(host, port, company, item_name)
+        if not ext_id:
+            ext_id = f"TALLY-{item_name}"
+
         return {
             "status": "SUCCESS" if ok else "FAILED",
             "target": "TALLY",
             "name": item_name,
+            "itemName": item_name,
+            "tallyExternalId": ext_id,
+            "guid": ext_id,
             "message": f"Stock item '{item_name}' created in Tally" if ok else f"Failed to create stock item '{item_name}'",
             "error": None if ok else f"Failed to ensure stock item '{item_name}'"
         }
