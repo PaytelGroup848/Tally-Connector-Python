@@ -495,6 +495,60 @@ def _extract_company_name(voucher_data: Dict[str, Any]) -> str:
 
     return ""
 
+GST_STATE_CODES: Dict[str, str] = {
+    "01": "Jammu and Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
+    "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan",
+    "09": "Uttar Pradesh", "10": "Bihar", "11": "Sikkim", "12": "Arunachal Pradesh",
+    "13": "Nagaland", "14": "Manipur", "15": "Mizoram", "16": "Tripura",
+    "17": "Meghalaya", "18": "Assam", "19": "West Bengal", "20": "Jharkhand",
+    "21": "Odisha", "22": "Chhattisgarh", "23": "Madhya Pradesh", "24": "Gujarat",
+    "26": "Dadra and Nagar Haveli and Daman and Diu", "27": "Maharashtra", "28": "Andhra Pradesh",
+    "29": "Karnataka", "30": "Goa", "31": "Lakshadweep", "32": "Kerala",
+    "33": "Tamil Nadu", "34": "Puducherry", "35": "Andaman and Nicobar Islands",
+    "36": "Telangana", "37": "Andhra Pradesh", "38": "Ladakh"
+}
+
+_PARTY_MASTER_GSTIN_CACHE: Dict[Tuple[str, str], Tuple[Optional[str], Optional[str], Optional[str]]] = {}
+
+def _lookup_party_master_gstin(company_name: str, party_name: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Looks up the GSTIN, State, and Address for a Party from MongoDB customers, suppliers, or ledgers.
+    """
+    if not party_name:
+        return None, None, None
+    key = (company_name or "", party_name.strip().lower())
+    if key in _PARTY_MASTER_GSTIN_CACHE:
+        return _PARTY_MASTER_GSTIN_CACHE[key]
+    try:
+        from shared.db.mongo_client import get_mongo_db
+        db = get_mongo_db()
+        clean_name = party_name.strip()
+        import re
+        p_rgx = re.compile(f"^{re.escape(clean_name)}$", re.IGNORECASE)
+
+        for col_name in ("customers", "suppliers", "ledgers"):
+            col = db[col_name]
+            doc = None
+            if company_name:
+                comp_rgx = re.compile(f"^{re.escape(company_name.strip())}$", re.IGNORECASE)
+                doc = col.find_one({"company_name": comp_rgx, "name": p_rgx})
+                if not doc:
+                    doc = col.find_one({"company_name": comp_rgx, "name": clean_name})
+            if not doc:
+                doc = col.find_one({"name": p_rgx}) or col.find_one({"name": clean_name})
+            if doc:
+                g = _clean_str(doc.get("gstin") or doc.get("gstNumber") or doc.get("party_gstin") or (doc.get("raw") or {}).get("gstin"))
+                s = _clean_str(doc.get("state") or doc.get("party_state") or (doc.get("raw") or {}).get("state"))
+                a = _clean_str(doc.get("address") or (doc.get("raw") or {}).get("address"))
+                if g or s or a:
+                    res = (g or None, s or None, a or None)
+                    _PARTY_MASTER_GSTIN_CACHE[key] = res
+                    return res
+    except Exception as exc:
+        logger.debug(f"Party master lookup notice: {exc}")
+    _PARTY_MASTER_GSTIN_CACHE[key] = (None, None, None)
+    return None, None, None
+
 _ITEM_MASTER_UNIT_CACHE: Dict[Tuple[str, str], Optional[str]] = {}
 
 def _lookup_item_master_unit(company_name: str, item_name: str) -> Optional[str]:
@@ -505,25 +559,40 @@ def _lookup_item_master_unit(company_name: str, item_name: str) -> Optional[str]
     """
     if not item_name:
         return None
-    key = (company_name or "", item_name)
+    key = (company_name or "", item_name.strip().lower())
     if key in _ITEM_MASTER_UNIT_CACHE:
         return _ITEM_MASTER_UNIT_CACHE[key]
 
     try:
         from shared.db.mongo_client import get_mongo_db
         db = get_mongo_db()
-        q: Dict[str, Any] = {"itemName": item_name}
-        if company_name:
-            q["company_name"] = company_name
-        doc = db.stocks.find_one(q) or db.stockbalances.find_one(q)
-        if not doc and company_name:
-            doc = db.stocks.find_one({"itemName": item_name}) or db.stockbalances.find_one({"itemName": item_name})
+        clean_name = item_name.strip()
+        import re
+        name_rgx = re.compile(f"^{re.escape(clean_name)}$", re.IGNORECASE)
 
-        if doc and doc.get("unit"):
-            u = str(doc.get("unit")).strip()
-            if u:
-                _ITEM_MASTER_UNIT_CACHE[key] = u
-                return u
+        for col_name in ("stock_items", "stocks", "items", "stockbalances"):
+            col = db[col_name]
+            # Try with company first
+            if company_name:
+                comp_rgx = re.compile(f"^{re.escape(company_name.strip())}$", re.IGNORECASE)
+                doc = col.find_one({"company_name": comp_rgx, "$or": [{"itemName": name_rgx}, {"name": name_rgx}]})
+                if not doc:
+                    doc = col.find_one({"company_name": comp_rgx, "$or": [{"itemName": clean_name}, {"name": clean_name}]})
+                if doc:
+                    u = _clean_str(doc.get("unit") or doc.get("baseUnits") or doc.get("base_units") or doc.get("uom") or doc.get("units") or (doc.get("unit_details") or {}).get("symbol") or (doc.get("unit_details") or {}).get("name"))
+                    if u and not u.isdigit():
+                        _ITEM_MASTER_UNIT_CACHE[key] = u
+                        return u
+
+            # Try without company
+            doc = col.find_one({"$or": [{"itemName": name_rgx}, {"name": name_rgx}]})
+            if not doc:
+                doc = col.find_one({"$or": [{"itemName": clean_name}, {"name": clean_name}]})
+            if doc:
+                u = _clean_str(doc.get("unit") or doc.get("baseUnits") or doc.get("base_units") or doc.get("uom") or doc.get("units") or (doc.get("unit_details") or {}).get("symbol") or (doc.get("unit_details") or {}).get("name"))
+                if u and not u.isdigit():
+                    _ITEM_MASTER_UNIT_CACHE[key] = u
+                    return u
     except Exception as exc:
         logger.debug(f"Master unit lookup error for '{item_name}': {exc}")
 
@@ -622,6 +691,37 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
     reference = escape_xml(_clean_str(voucher_data.get("reference", voucher_number)) or voucher_number)
     narration = escape_xml(_clean_str(voucher_data.get("narration")) or "Imported from Cloud/Web 2-Way Sync")
     party_ledger = escape_xml(_extract_party_ledger(voucher_data))
+
+    raw_party_gstin = _clean_str(
+        voucher_data.get("gstin")
+        or voucher_data.get("gstinUin")
+        or voucher_data.get("gstNumber")
+        or voucher_data.get("party_gstin")
+        or voucher_data.get("partyGstin")
+        or voucher_data.get("consigneeGstinUin")
+        or voucher_data.get("buyerGstin")
+        or voucher_data.get("supplierGstin")
+    )
+    raw_party_state = _clean_str(
+        voucher_data.get("state")
+        or voucher_data.get("party_state")
+        or voucher_data.get("placeOfSupply")
+        or voucher_data.get("place_of_supply")
+        or voucher_data.get("supplierState")
+    )
+    raw_party_address = _clean_str(
+        voucher_data.get("address")
+        or voucher_data.get("party_address")
+        or voucher_data.get("partyAddress")
+        or voucher_data.get("consigneeAddress")
+    )
+
+    auto_gstin, auto_state, auto_addr = _lookup_party_master_gstin(company_name, party_ledger)
+    party_gstin = raw_party_gstin or auto_gstin or ""
+    party_address = raw_party_address or auto_addr or ""
+    party_state = raw_party_state or auto_state or ""
+    if not party_state and party_gstin and len(party_gstin) >= 2 and party_gstin[:2] in GST_STATE_CODES:
+        party_state = GST_STATE_CODES[party_gstin[:2]]
 
     total_amount = _parse_float(
         voucher_data.get("amount")
@@ -847,15 +947,42 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                 i_qty = 1.0
 
             master_unit = _lookup_item_master_unit(company_name, i_name)
+            raw_unit = _clean_str(
+                item.get("units")
+                or item.get("unit")
+                or item.get("uom")
+                or item.get("symbol")
+                or item.get("baseUnits")
+                or item.get("base_units")
+            )
+            # If incoming unit is purely numeric (e.g. "442" database ID), discard it
+            if raw_unit and raw_unit.isdigit():
+                raw_unit = ""
+
+            unit_aliases = {
+                "pcs": "Pcs", "piece": "Pcs", "pieces": "Pcs",
+                "nos": "Nos", "no": "Nos", "number": "Nos", "numbers": "Nos",
+                "box": "Box", "boxes": "Box",
+                "kgs": "Kgs", "kg": "Kgs", "kilogram": "Kgs", "kilograms": "Kgs",
+                "gms": "Gms", "gm": "Gms", "gram": "Gms", "grams": "Gms",
+                "mtr": "Mtr", "meter": "Mtr", "meters": "Mtr", "mtrs": "Mtr",
+                "ltr": "Ltr", "liter": "Ltr", "litre": "Ltr", "liters": "Ltr",
+                "pkt": "Pkt", "packet": "Pkt", "packets": "Pkt",
+                "bag": "Bag", "bags": "Bag",
+                "set": "Set", "sets": "Set",
+                "btl": "Btl", "bottle": "Btl", "bottles": "Btl",
+                "can": "Can", "cans": "Can",
+                "tin": "Tin", "tins": "Tin",
+                "crt": "Crt", "carton": "Crt", "cartons": "Crt",
+                "sqft": "Sqft", "sqm": "Sqm", "ton": "Ton", "tons": "Ton", "mt": "MT"
+            }
+
             if master_unit:
                 i_unit = master_unit
+            elif raw_unit:
+                i_unit = unit_aliases.get(raw_unit.lower(), raw_unit)
             else:
-                i_unit = _clean_str(
-                    item.get("units")
-                    or item.get("unit")
-                    or item.get("uom")
-                    or item.get("symbol")
-                ) or "Pcs"
+                i_unit = "Pcs"
 
             i_rate = _parse_float(
                 item.get("rate")
@@ -1066,11 +1193,12 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
         party_deemed_pos = "No" if is_purchase_or_cn else "Yes"
         party_amt = abs(total_amount) if is_purchase_or_cn else -abs(total_amount)
         tax_deemed_pos = "Yes" if is_purchase_or_cn else "No"
+        party_gstin_tag = f"\n                    <PARTYGSTIN>{party_gstin}</PARTYGSTIN>" if party_gstin else ""
 
         ledger_entries_xml.append(f"""                <LEDGERENTRIES.LIST>
                     <LEDGERNAME>{party_ledger}</LEDGERNAME>
                     <ISDEEMEDPOSITIVE>{party_deemed_pos}</ISDEEMEDPOSITIVE>
-                    <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
+                    <ISPARTYLEDGER>Yes</ISPARTYLEDGER>{party_gstin_tag}
                     <AMOUNT>{party_amt:.2f}</AMOUNT>
                 </LEDGERENTRIES.LIST>""")
         for tax in tax_entries:
@@ -1081,10 +1209,11 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                     <AMOUNT>{t_amt:.2f}</AMOUNT>
                 </LEDGERENTRIES.LIST>""")
     else:
+        party_gstin_tag = f"\n                    <PARTYGSTIN>{party_gstin}</PARTYGSTIN>" if party_gstin else ""
         if "sale" in voucher_type.lower():
             ledger_entries_xml.append(f"""                <ALLLEDGERENTRIES.LIST>
                     <LEDGERNAME>{party_ledger}</LEDGERNAME>
-                    <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+                    <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>{party_gstin_tag}
                     <AMOUNT>-{abs(total_amount):.2f}</AMOUNT>
                 </ALLLEDGERENTRIES.LIST>""")
             ledger_entries_xml.append(f"""                <ALLLEDGERENTRIES.LIST>
@@ -1308,6 +1437,27 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
     ledgers_block = "\n".join(ledger_entries_xml)
     inventory_block = ("\n" + "\n".join(inventory_entries_xml)) if inventory_entries_xml else ""
     isinvoice_tag = "\n                        <ISINVOICE>Yes</ISINVOICE>" if has_valid_items else ""
+    buyer_tags = []
+    if party_ledger and party_ledger.lower() != "cash":
+        buyer_tags.append(f"<BASICBUYERNAME>{party_ledger}</BASICBUYERNAME>")
+        buyer_tags.append(f"<PARTYNAME>{party_ledger}</PARTYNAME>")
+    if party_gstin:
+        buyer_tags.append(f"<PARTYGSTIN>{party_gstin}</PARTYGSTIN>")
+    if party_state:
+        buyer_tags.append(f"<PLACEOFSUPPLY>{escape_xml(party_state)}</PLACEOFSUPPLY>")
+        buyer_tags.append(f"<STATENAME>{escape_xml(party_state)}</STATENAME>")
+    buyer_tags.append("<COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>")
+    if party_address:
+        lines = [ln.strip() for ln in party_address.replace("\r", "").split("\n") if ln.strip()]
+        if not lines:
+            lines = [ln.strip() for ln in party_address.split(",") if ln.strip()]
+        if not lines:
+            lines = [party_address.strip()]
+        b_lines = "".join(f"\n                            <BASICBUYERADDRESS>{escape_xml(l)}</BASICBUYERADDRESS>" for l in lines[:4])
+        buyer_tags.append(f"<BASICBUYERADDRESS.LIST>{b_lines}\n                        </BASICBUYERADDRESS.LIST>")
+        a_lines = "".join(f"\n                            <ADDRESS>{escape_xml(l)}</ADDRESS>" for l in lines[:4])
+        buyer_tags.append(f"<ADDRESS.LIST>{a_lines}\n                        </ADDRESS.LIST>")
+    buyer_details_xml = ("\n                        " + "\n                        ".join(buyer_tags)) if buyer_tags else ""
 
     xml_envelope = f"""<ENVELOPE>
     <HEADER>
@@ -1330,7 +1480,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                         <VOUCHERNUMBER>{voucher_number}</VOUCHERNUMBER>
                         <REFERENCE>{reference}</REFERENCE>
                         <NARRATION>{narration}</NARRATION>
-                        <PARTYLEDGERNAME>{party_ledger}</PARTYLEDGERNAME>
+                        <PARTYLEDGERNAME>{party_ledger}</PARTYLEDGERNAME>{buyer_details_xml}
 {ledgers_block}{inventory_block}
                     </VOUCHER>
                 </TALLYMESSAGE>

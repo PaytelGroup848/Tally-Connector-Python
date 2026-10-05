@@ -327,13 +327,36 @@ class RemoteCommandWorker(QThread):
                         or norm_payload.get("orderDueDate")
                         or norm_payload.get("deliveryDate")
                     )
-                    norm_payload["company_name"] = norm_payload.get("companyName") or norm_payload.get("company_name")
+                    norm_payload["company_name"] = norm_payload.get("companyName") or norm_payload.get("company_name") or resolved_company
                     norm_payload["company_name"] = resolved_company
                     norm_payload["date"] = norm_payload.get("date") or norm_payload.get("voucherDate")
-                    norm_payload["amount"] = norm_payload.get("amount", 0.0)
+                    norm_payload["gstin"] = (
+                        norm_payload.get("gstin")
+                        or norm_payload.get("gstinUin")
+                        or norm_payload.get("gstNumber")
+                        or norm_payload.get("party_gstin")
+                        or norm_payload.get("partyGstin")
+                        or norm_payload.get("consigneeGstinUin")
+                        or norm_payload.get("buyerGstin")
+                    )
+                    norm_payload["state"] = (
+                        norm_payload.get("state")
+                        or norm_payload.get("party_state")
+                        or norm_payload.get("placeOfSupply")
+                        or norm_payload.get("place_of_supply")
+                        or norm_payload.get("supplierState")
+                    )
+                    norm_payload["address"] = (
+                        norm_payload.get("address")
+                        or norm_payload.get("party_address")
+                        or norm_payload.get("partyAddress")
+                        or norm_payload.get("consigneeAddress")
+                    )
+                    norm_payload["place_of_supply"] = norm_payload.get("placeOfSupply") or norm_payload.get("place_of_supply") or norm_payload["state"]
                     items_preview = norm_payload.get("items") or norm_payload.get("inventory_entries") or norm_payload.get("inventoryEntries") or []
+                    norm_payload["items"] = items_preview
                     norm_payload["amount"] = amt
-                    logger.info(f"Voucher Payload: Company='{norm_payload.get('company_name')}', Type='{norm_payload.get('voucher_type')}', Party='{norm_payload.get('party_ledger')}', ItemsCount={len(items_preview) if isinstance(items_preview, list) else 0}, Date='{norm_payload.get('date')}', Amount={norm_payload.get('amount')}")
+                    logger.info(f"Voucher Payload: Company='{norm_payload.get('company_name')}', Type='{norm_payload.get('voucher_type')}', Party='{norm_payload.get('party_ledger')}', GSTIN='{norm_payload.get('gstin')}', ItemsCount={len(items_preview) if isinstance(items_preview, list) else 0}, Date='{norm_payload.get('date')}', Amount={norm_payload.get('amount')}")
 
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
