@@ -17,32 +17,14 @@ class AutoDetectWorker(QThread):
     detected_signal = Signal(dict)
 
     def run(self):
+        from shared.connection_config import resolve_active_tally_port, test_tally_port
+        active_host, active_port = resolve_active_tally_port()
+        is_ok, comps, _ = test_tally_port(active_host, active_port, timeout=2.0)
         result = {
-            "tally_ok": False,
-            "tally_port": 9000,
-            "tally_companies": [],
+            "tally_ok": is_ok,
+            "tally_port": active_port,
+            "tally_companies": comps if is_ok else [],
         }
-
-        tally_ports = [9000, 9001, 9002, 9003, 9004]
-        for p in tally_ports:
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(1.0)
-                res = s.connect_ex(("127.0.0.1", p))
-                s.close()
-
-                if res == 0:
-                    result["tally_ok"] = True
-                    result["tally_port"] = p
-                    xml_req = build_company_list_xml()
-                    r = httpx.post(f"http://127.0.0.1:{p}/", content=xml_req, headers={"Content-Type": "text/xml"}, timeout=2.5)
-                    if r.status_code == 200:
-                        comp_dicts = parse_company_list(r.text)
-                        result["tally_companies"] = [c["name"] for c in comp_dicts if "name" in c]
-                    break
-            except Exception:
-                continue
-
         self.detected_signal.emit(result)
 
 class ConnectionProbeScreen(QWidget):
@@ -412,20 +394,13 @@ class ConnectionProbeScreen(QWidget):
                 "tally_companies": [],
             }
             try:
-                if not auto_connect or configured_port != 9000:
-                    ports_to_try = [configured_port]
-                else:
-                    ports_to_try = [configured_port, 9000, 9001, 9002, 9003, 9004]
-                    seen = set()
-                    ports_to_try = [p for p in ports_to_try if not (p in seen or seen.add(p))]
-
-                for p in ports_to_try:
-                    ok, comps, msg = test_tally_port(host=t_host, port=p, timeout=1.5)
-                    if ok:
-                        result["tally_ok"] = True
-                        result["tally_port"] = p
-                        result["tally_companies"] = comps
-                        break
+                from shared.connection_config import resolve_active_tally_port
+                active_host, active_port = resolve_active_tally_port(preferred_port=configured_port, preferred_host=t_host)
+                ok, comps, msg = test_tally_port(host=active_host, port=active_port, timeout=2.0)
+                if ok:
+                    result["tally_ok"] = True
+                    result["tally_port"] = active_port
+                    result["tally_companies"] = comps
             finally:
                 self._is_detecting = False
             self.auto_detected.emit(result)

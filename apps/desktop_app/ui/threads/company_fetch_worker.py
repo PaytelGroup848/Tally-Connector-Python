@@ -19,13 +19,15 @@ def fetch_real_tally_companies(settings=None, return_port: bool = False) -> tupl
         t_host = "127.0.0.1"
 
     auto_connect = bool(cfg.get("auto_connect", True))
-    
-    # On shared servers with multiple Tally instances, if a custom port is set or auto_connect is disabled,
-    # strictly query only the configured port to prevent hijacking another user's Tally on port 9000.
-    if not auto_connect or configured_port != 9000:
+    from shared.connection_config import resolve_active_tally_port
+    _, active_resolved_port = resolve_active_tally_port()
+
+    # On shared servers with multiple Tally instances, if auto_connect is disabled,
+    # strictly query only the configured port to prevent hijacking another user's Tally.
+    if not auto_connect:
         candidate_ports = [configured_port]
     else:
-        candidate_ports = [configured_port, 9000, 9001, 9002, 9003, 9004]
+        candidate_ports = [active_resolved_port, configured_port, 9047, 9025, 9000, 9001, 9002, 9003, 9004]
         # Deduplicate while preserving order
         seen = set()
         candidate_ports = [p for p in candidate_ports if not (p in seen or seen.add(p))]

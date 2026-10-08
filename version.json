@@ -1,11 +1,11 @@
 {
-  "version": "1.0.11",
-  "latestVersion": "1.0.11",
-  "latest_version": "1.0.11",
+  "version": "1.0.12",
+  "latestVersion": "1.0.12",
+  "latest_version": "1.0.12",
   "minVersion": "1.0.0",
-  "releaseNotes": "Fix cloud server RAM spike during sync with 50-chunk voucher batching, adaptive backpressure pacing, and safe bulk writes.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.11.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.11.exe",
-  "sha256": "076588340d42924d20d0c42eeaddbaacd9a5b526a95e9bcc5182c8707b069ee9",
+  "releaseNotes": "Eliminate hardcoded port 9000: dynamic active port resolution across all 2-way sync commands (parties, vouchers, stock items) and background workers.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.12.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.12.exe",
+  "sha256": "5f87d48113ce33e44de6de3383f04c721693b03642084a72c1e233bf510b8dc2",
   "mandatory": true
 }

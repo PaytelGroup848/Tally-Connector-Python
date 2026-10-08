@@ -29,16 +29,24 @@ class TestConnectionConfig(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(get_configured_port(), 9000)
 
-    @patch("socket.socket")
-    def test_tally_port_socket_refused(self, mock_socket_cls):
-        mock_sock = MagicMock()
-        mock_sock.connect_ex.return_value = 111  # Connection refused
-        mock_socket_cls.return_value = mock_sock
+    @patch("shared.connection_config.is_socket_open")
+    def test_resolve_active_tally_port_with_open_port(self, mock_socket_open):
+        from shared.connection_config import resolve_active_tally_port
+        mock_socket_open.return_value = True
 
-        is_online, comps, msg = check_tally_port(port=9099)
-        self.assertFalse(is_online)
-        self.assertEqual(comps, [])
-        self.assertIn("not responding", msg)
+        save_connection_config(host="127.0.0.1", port=9047)
+        h, p = resolve_active_tally_port()
+        self.assertEqual(h, "127.0.0.1")
+        self.assertEqual(p, 9047)
+
+    @patch("shared.connection_config.is_socket_open")
+    def test_resolve_active_tally_port_with_preferred(self, mock_socket_open):
+        from shared.connection_config import resolve_active_tally_port
+        mock_socket_open.return_value = True
+
+        h, p = resolve_active_tally_port(preferred_port=9088, preferred_host="127.0.0.1")
+        self.assertEqual(h, "127.0.0.1")
+        self.assertEqual(p, 9088)
 
 
 if __name__ == "__main__":

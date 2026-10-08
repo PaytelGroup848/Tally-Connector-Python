@@ -235,6 +235,11 @@ class RemoteCommandWorker(QThread):
                     if calc_total > 0:
                         amt = round(calc_total, 2)
 
+                from shared.connection_config import resolve_active_tally_port
+                cmd_host = payload.get("host") or payload.get("tally_host") or cmd.get("host") or cmd.get("tally_host")
+                cmd_port = payload.get("port") or payload.get("tally_port") or cmd.get("port") or cmd.get("tally_port")
+                active_host, active_port = resolve_active_tally_port(preferred_port=cmd_port, preferred_host=cmd_host)
+
                 if cmd_type in (
                     "CREATE_VOUCHER",
                     "UPDATE_VOUCHER",
@@ -252,6 +257,10 @@ class RemoteCommandWorker(QThread):
                 ):
                     norm_payload = dict(payload)
                     norm_payload["target"] = "TALLY"
+                    norm_payload["host"] = active_host
+                    norm_payload["port"] = active_port
+                    norm_payload["tally_host"] = active_host
+                    norm_payload["tally_port"] = active_port
                     norm_payload["companyId"] = comp_id or cmd.get("companyId") or cmd.get("company_id") or payload.get("companyId")
                     if cmd_type in ("CREATE_RECEIPT", "PAYMENT_RECEIVED"):
                         default_vtype = "Receipt"
@@ -461,6 +470,10 @@ class RemoteCommandWorker(QThread):
                 elif cmd_type in ("CREATE_LEDGER", "CREATE_PARTY", "CREATE_CUSTOMER", "CREATE_SUPPLIER", "CREATE_VENDOR"):
                     norm_payload = dict(payload)
                     norm_payload["target"] = "TALLY"
+                    norm_payload["host"] = active_host
+                    norm_payload["port"] = active_port
+                    norm_payload["tally_host"] = active_host
+                    norm_payload["tally_port"] = active_port
                     norm_payload["companyId"] = cmd.get("companyId") or cmd.get("company_id") or payload.get("companyId") or comp_id
                     norm_payload["company_name"] = norm_payload.get("companyName") or norm_payload.get("company_name") or resolved_company
 
@@ -546,6 +559,10 @@ class RemoteCommandWorker(QThread):
                 elif cmd_type in ("CREATE_STOCK_ITEM", "CREATE_ITEM"):
                     norm_payload = dict(payload)
                     norm_payload["target"] = "TALLY"
+                    norm_payload["host"] = active_host
+                    norm_payload["port"] = active_port
+                    norm_payload["tally_host"] = active_host
+                    norm_payload["tally_port"] = active_port
                     norm_payload["companyId"] = cmd.get("companyId") or cmd.get("company_id") or payload.get("companyId")
                     norm_payload["company_name"] = norm_payload.get("companyName") or norm_payload.get("company_name")
                     norm_payload["companyId"] = comp_id
@@ -718,7 +735,7 @@ class RemoteCommandWorker(QThread):
                         "amount": err_card_amt,
                         "date": "N/A",
                         "reason": f"Execution Error: {e}",
-                        "action": "Verify that Tally Prime is running on port 9000 and accessible.",
+                        "action": f"Verify that Tally Prime is running on port {active_port if 'active_port' in locals() else 'configured port'} and accessible.",
                         "technical_error": str(e),
                         "cmd_id": cmd_id,
                         "cmd_type": cmd_type
@@ -819,11 +836,14 @@ class RemoteCommandWorker(QThread):
         if not pending_items:
             return
 
+        from shared.connection_config import resolve_active_tally_port
+        drain_host, drain_port = resolve_active_tally_port()
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             is_online, _, open_companies = loop.run_until_complete(
-                self.importer_service.tally_importer.check_tally_company_status("127.0.0.1", 9000, "")
+                self.importer_service.tally_importer.check_tally_company_status(drain_host, drain_port, "")
             )
             if not is_online or not open_companies:
                 return
@@ -843,8 +863,12 @@ class RemoteCommandWorker(QThread):
                 if not cmd_id:
                     continue
                 payload: dict = item.get("payload") or {}
+                payload["host"] = drain_host
+                payload["port"] = drain_port
+                payload["tally_host"] = drain_host
+                payload["tally_port"] = drain_port
                 cmd_type = str(item.get("cmd_type", "CREATE_VOUCHER"))
-                logger.info(f"Draining pending voucher #{cmd_id} for newly opened company '{target_comp}'...")
+                logger.info(f"Draining pending voucher #{cmd_id} for newly opened company '{target_comp}' on {drain_host}:{drain_port}...")
 
                 res = loop.run_until_complete(self.importer_service.import_voucher(payload))
                 if res.get("status") == "SUCCESS":

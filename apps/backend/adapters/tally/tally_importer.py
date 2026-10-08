@@ -2313,8 +2313,8 @@ class TallyImporter:
                 "voucher_number": None,
                 "company_name": company_name,
                 "message": f"Tally Prime is offline at {host}:{port}.",
-                "reason": "Tally Prime is not running or HTTP port 9000 is closed.",
-                "action": "Ensure Tally Prime is running. Voucher will auto-post once connected.",
+                "reason": f"Tally Prime is not running or HTTP port {port} is closed.",
+                "action": f"Ensure Tally Prime is running on port {port}. Voucher will auto-post once connected.",
             }
         if company_name and not is_loaded:
             logger.info(f"Target company '{company_name}' is not open in Tally. Queueing voucher.")

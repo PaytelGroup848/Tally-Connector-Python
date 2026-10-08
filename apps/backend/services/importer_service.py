@@ -1,9 +1,10 @@
 
 
 from collections import OrderedDict
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from shared.exceptions import ValidationError
 from shared.logging_config import get_logger
+from shared.connection_config import resolve_active_tally_port
 from apps.backend.adapters.tally.tally_importer import TallyImporter
 
 logger = get_logger("app.services.importer")
@@ -16,6 +17,12 @@ class ImporterService:
         self.tally_importer: TallyImporter = tally_importer if tally_importer is not None else TallyImporter()
         self._idempotency_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._max_cache_size: int = 1000
+
+    def _resolve_connection_endpoint(self, payload: Dict[str, Any]) -> Tuple[str, int]:
+        """Resolves target Tally host and port dynamically without hardcoded fallback."""
+        raw_port = payload.get("port") or payload.get("tally_port")
+        raw_host = payload.get("host") or payload.get("tally_host")
+        return resolve_active_tally_port(preferred_port=raw_port, preferred_host=raw_host)
 
     def validate_import_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -113,8 +120,7 @@ class ImporterService:
                 self._idempotency_cache.move_to_end(idemp_key)
                 return self._idempotency_cache[idemp_key]
 
-        host = (payload.get("host") or payload.get("tally_host") or "127.0.0.1").strip()
-        port = int(payload.get("port") or payload.get("tally_port") or 9000)
+        host, port = self._resolve_connection_endpoint(payload)
 
         result = await self.tally_importer.import_voucher(
             host=host, port=port, voucher_data=validated_payload
@@ -181,8 +187,7 @@ class ImporterService:
         """Creates a new customer/debtor ledger explicitly in Tally Prime."""
         clean_payload = dict(payload)
         clean_payload["target"] = "TALLY"
-        host = (payload.get("host") or payload.get("tally_host") or "127.0.0.1").strip()
-        port = int(payload.get("port") or payload.get("tally_port") or 9000)
+        host, port = self._resolve_connection_endpoint(clean_payload)
 
         ledger_name = (
             clean_payload.get("name")
@@ -212,8 +217,7 @@ class ImporterService:
     async def create_stock_item(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Creates a new stock item explicitly in Tally Prime with base unit."""
         clean_payload = dict(payload)
-        host = (payload.get("host") or payload.get("tally_host") or "127.0.0.1").strip()
-        port = int(payload.get("port") or payload.get("tally_port") or 9000)
+        host, port = self._resolve_connection_endpoint(clean_payload)
         company = str(clean_payload.get("company_name") or clean_payload.get("company") or "")
         item_name = str(clean_payload.get("name") or clean_payload.get("itemName") or clean_payload.get("item_name") or "")
         unit_name = str(clean_payload.get("unit") or clean_payload.get("units") or clean_payload.get("base_units") or "Pcs")
@@ -248,8 +252,7 @@ class ImporterService:
     async def update_stock_item(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Updates/alters an existing stock item explicitly in Tally Prime."""
         clean_payload = dict(payload)
-        host = (payload.get("host") or payload.get("tally_host") or "127.0.0.1").strip()
-        port = int(payload.get("port") or payload.get("tally_port") or 9000)
+        host, port = self._resolve_connection_endpoint(clean_payload)
         company = str(clean_payload.get("company_name") or clean_payload.get("company") or "")
         item_name = str(clean_payload.get("name") or clean_payload.get("itemName") or clean_payload.get("item_name") or "")
 
@@ -271,8 +274,7 @@ class ImporterService:
     async def create_unit(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Creates a new unit of measurement explicitly in Tally Prime."""
         clean_payload = dict(payload)
-        host = (payload.get("host") or payload.get("tally_host") or "127.0.0.1").strip()
-        port = int(payload.get("port") or payload.get("tally_port") or 9000)
+        host, port = self._resolve_connection_endpoint(clean_payload)
         company = str(clean_payload.get("company_name") or clean_payload.get("company") or "")
         unit_name = str(clean_payload.get("name") or clean_payload.get("symbol") or clean_payload.get("unit_name") or "Pcs")
         decimal_places = int(clean_payload.get("decimal_places") or clean_payload.get("decimalPlaces") or 0)

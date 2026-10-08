@@ -1215,9 +1215,8 @@ class CloudAuthService:
     def is_tally_online(self, host: Optional[str] = None, port: Optional[int] = None) -> bool:
         """Lightweight TCP probe to check if Tally Prime / ERP 9 is responding."""
         import socket
-        settings = get_settings()
-        target_host = host or settings.tally_host or "127.0.0.1"
-        target_port = port or settings.tally_port or 9000
+        from shared.connection_config import resolve_active_tally_port
+        target_host, target_port = resolve_active_tally_port(preferred_port=port, preferred_host=host)
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1.0)
