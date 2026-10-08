@@ -238,13 +238,14 @@ class BackgroundSyncWorker(QThread):
 
     def _sync_stock_groups(self, c_name: str, port: int, now_iso: str, org_oid, c_oid):
         try:
-            sg_xml = build_collection_xml("StockGroup", ["NAME", "PARENT", "GUID", "ALTERID"], company_name=c_name)
+            sg_xml = build_collection_xml("StockGroup", ["NAME", "PARENT", "GUID", "ALTERID", "HSNCODE", "HSNDETAILS.LIST", "TARIFFLIST.LIST", "GSTDETAILS.LIST"], company_name=c_name)
             ok_sg, code_sg, text_sg, _ = self.tally_client.send_xml_request("127.0.0.1", port, sg_xml, timeout=30.0)
             if ok_sg and code_sg == 200:
                 sg_items = parse_metadata_response(text_sg, tag_name="StockGroup")
                 sg_col = get_collection("stock_groups")
                 sg_ops = []
                 for sg in sg_items:
+                    sg_hsn = str(sg.get("hsnCode") or sg.get("hsn_code") or sg.get("hsn") or "").strip()
                     sg_doc = {
                         "source": "TALLY",
                         "company_name": c_name,
@@ -252,6 +253,9 @@ class BackgroundSyncWorker(QThread):
                         "name": sg.get("name"),
                         "parent": sg.get("parent"),
                         "guid": sg.get("guid"),
+                        "hsnCode": sg_hsn,
+                        "hsn_code": sg_hsn,
+                        "hsn": sg_hsn,
                         "alter_id": int(sg.get("alterid", 0) or 0),
                         "raw": sg.get("raw") or sg,
                         "updated_at": now_iso
@@ -260,7 +264,11 @@ class BackgroundSyncWorker(QThread):
                         sg_doc["organizationId"] = org_oid
                     if c_oid:
                         sg_doc["companyId"] = c_oid
-                    sg_ops.append(UpdateOne({"name": sg.get("name"), "company_name": c_name}, {"$set": sg_doc}, upsert=True))
+                        sg_doc["cloud_company_id"] = str(c_oid)
+                    sg_filter = {"name": sg.get("name"), "company_name": c_name}
+                    if c_oid:
+                        sg_filter["companyId"] = c_oid
+                    sg_ops.append(UpdateOne(sg_filter, {"$set": sg_doc}, upsert=True))
                 if sg_ops:
                     for chunk in chunk_list(sg_ops, 500):
                         sg_col.bulk_write(chunk, ordered=False)
@@ -523,7 +531,7 @@ class BackgroundSyncWorker(QThread):
         try:
             s_xml = build_collection_xml(
                 "StockItem",
-                ["NAME", "PARENT", "CATEGORY", "BASEUNITS", "ADDITIONALUNITS", "GSTREPUOM", "CLOSINGBALANCE", "OPENINGBALANCE", "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM", "CLOSINGRATE", "CLOSINGVALUE", "OPENINGRATE", "OPENINGVALUE", "HSNCODE", "GSTAPPLICABLE", "HSNDETAILS.LIST", "GSTDETAILS.LIST", "BATCHNAME", "BATCHALLOCATIONS.LIST", "GODOWNALLOCATIONS.LIST", "GUID", "ALTERID", "REORDERLEVEL"],
+                ["NAME", "PARENT", "CATEGORY", "BASEUNITS", "ADDITIONALUNITS", "GSTREPUOM", "CLOSINGBALANCE", "OPENINGBALANCE", "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM", "CLOSINGRATE", "CLOSINGVALUE", "OPENINGRATE", "OPENINGVALUE", "HSNCODE", "GSTAPPLICABLE", "HSNDETAILS.LIST", "GSTDETAILS.LIST", "TARIFFLIST.LIST", "TARIFFCODE", "GSTCLASSIFICATION", "GSTHSNNAME", "HSNNAME", "BATCHNAME", "BATCHALLOCATIONS.LIST", "GODOWNALLOCATIONS.LIST", "GUID", "ALTERID", "REORDERLEVEL"],
                 company_name=c_name
             )
             ok_s, code_s, text_s, err_s = self.tally_client.send_xml_request("127.0.0.1", port, s_xml, timeout=60.0)
@@ -546,6 +554,7 @@ class BackgroundSyncWorker(QThread):
                 items_col = get_collection("items")
                 units_col = get_collection("units")
 
+                # Build units lookup
                 units_lookup: Dict[str, Dict[str, Any]] = {}
                 try:
                     for u_doc in units_col.find({"company_name": c_name}):
@@ -565,6 +574,35 @@ class BackgroundSyncWorker(QThread):
                 except Exception as u_exc:
                     logger.debug(f"Units lookup notice: {u_exc}")
 
+                # Build stock groups lookup for HSN inheritance
+                stock_groups_lookup: Dict[str, str] = {}
+                group_parent_map: Dict[str, str] = {}
+                try:
+                    sg_col = get_collection("stock_groups")
+                    sg_query: Dict[str, Any] = {"$or": [{"company_name": c_name}]}
+                    if c_oid:
+                        sg_query["$or"].append({"companyId": c_oid})
+                    for sg_doc in sg_col.find(sg_query):
+                        sgn = str(sg_doc.get("name") or "").strip().lower()
+                        sgh = str(sg_doc.get("hsnCode") or sg_doc.get("hsn_code") or sg_doc.get("hsn") or "").strip()
+                        sgp = str(sg_doc.get("parent") or "").strip().lower()
+                        if sgn:
+                            group_parent_map[sgn] = sgp
+                            if sgh:
+                                stock_groups_lookup[sgn] = sgh
+                except Exception as sg_exc:
+                    logger.debug(f"Stock groups lookup notice: {sg_exc}")
+
+                def resolve_group_hsn(grp_name: str) -> str:
+                    curr = (grp_name or "").strip().lower()
+                    visited = set()
+                    while curr and curr not in visited:
+                        visited.add(curr)
+                        if curr in stock_groups_lookup and stock_groups_lookup[curr]:
+                            return stock_groups_lookup[curr]
+                        curr = group_parent_map.get(curr, "")
+                    return ""
+
                 now_utc = datetime.now(timezone.utc)
                 s_ops = []
                 items_ops = []
@@ -578,8 +616,13 @@ class BackgroundSyncWorker(QThread):
                     item_ext_id = str(s.get("guid") or s.get("itemTallyExternalId") or ext_id)
                     godown_name = str(s.get("godown") or "Main Location")
                     batch_val = str(s.get("batch") or s.get("batchName") or s.get("batch_name") or "Primary Batch").strip()
-                    unit_val = str(s.get("unit") or "").strip()
-                    hsn_val = str(s.get("hsnCode") or "").strip()
+                    unit_val = str(s.get("unit") or s.get("units") or s.get("baseUnits") or s.get("base_units") or s.get("uom") or "").strip()
+                    hsn_val = str(s.get("hsnCode") or s.get("hsn_code") or s.get("hsn") or "").strip()
+
+                    # Fallback HSN inheritance from parent Stock Group
+                    parent_grp = str(s.get("parent") or s.get("group") or "").strip()
+                    if not hsn_val and parent_grp:
+                        hsn_val = resolve_group_hsn(parent_grp)
 
                     unit_obj = units_lookup.get(unit_val.lower())
                     if not unit_obj and unit_val:
@@ -589,6 +632,20 @@ class BackgroundSyncWorker(QThread):
                             "guid": "",
                             "alterid": 0
                         }
+
+                    if not unit_val:
+                        unit_val = "Pcs"
+
+                    # Populate extracted_stock_items in-place for cloud sync
+                    s["unit"] = unit_val
+                    s["units"] = unit_val
+                    s["uom"] = unit_val
+                    s["unit_name"] = unit_val
+                    s["baseUnits"] = unit_val
+                    s["base_units"] = unit_val
+                    s["hsnCode"] = hsn_val
+                    s["hsn_code"] = hsn_val
+                    s["hsn"] = hsn_val
 
                     try:
                         qty = float(s.get("quantity", 0.0) or s.get("closingBalance", 0.0) or 0.0)
@@ -707,6 +764,8 @@ class BackgroundSyncWorker(QThread):
                         "units": unit_val,
                         "uom": unit_val,
                         "unit_name": unit_val,
+                        "baseUnits": unit_val,
+                        "base_units": unit_val,
                         "hsnCode": hsn_val,
                         "hsn_code": hsn_val,
                         "hsn": hsn_val,

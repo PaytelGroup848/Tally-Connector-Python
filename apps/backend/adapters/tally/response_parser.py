@@ -591,7 +591,11 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
 
             parent_elem = elem.find("PARENT")
             cat_elem = elem.find("CATEGORY")
-            unit_elem = elem.find("BASEUNITS") or elem.find("UNIT") or elem.find("GSTREPUOM") or elem.find(".//BASEUNITS") or elem.find(".//UNIT")
+            unit_elem = (
+                elem.find("BASEUNITS") or elem.find("UNIT") or elem.find("GSTREPUOM") or
+                elem.find(".//BASEUNITS") or elem.find(".//UNIT") or elem.find(".//GSTREPUOM") or
+                elem.find("UOM") or elem.find(".//UOM") or elem.find("STOCKUNIT") or elem.find(".//STOCKUNIT")
+            )
             alt_unit_elem = elem.find("ADDITIONALUNITS") or elem.find(".//ADDITIONALUNITS")
             bal_elem = elem.find("CLOSINGBALANCE")
             op_bal_elem = elem.find("OPENINGBALANCE")
@@ -604,6 +608,16 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                 elem.findall("HSNCODE") + 
                 elem.findall(".//HSNDETAILS.LIST/HSNCODE") + 
                 elem.findall(".//GSTDETAILS.LIST/HSNCODE") +
+                elem.findall(".//TARIFFLIST.LIST/TARIFFCODE") +
+                elem.findall(".//TARIFFLIST.LIST/HSNCODE") +
+                elem.findall(".//TARIFFCODE") +
+                elem.findall("TARIFFCODE") +
+                elem.findall(".//GSTDETAILS.LIST/GSTHSNNAME") +
+                elem.findall(".//GSTHSNNAME") +
+                elem.findall("GSTHSNNAME") +
+                elem.findall(".//HSNNAME") +
+                elem.findall("HSNNAME") +
+                elem.findall(".//GSTCLASSIFICATION") +
                 elem.findall(".//HSN") +
                 elem.findall("HSN")
             )
@@ -905,16 +919,50 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             guid_val = guid_elem.text.strip() if guid_elem is not None and guid_elem.text else None
             alt_id = int(alter_elem.text.strip()) if alter_elem is not None and alter_elem.text and alter_elem.text.strip().isdigit() else 0
 
+            sg_hsn_nodes = (
+                elem.findall(".//HSNCODE") +
+                elem.findall("HSNCODE") +
+                elem.findall(".//HSNDETAILS.LIST/HSNCODE") +
+                elem.findall(".//GSTDETAILS.LIST/HSNCODE") +
+                elem.findall(".//TARIFFLIST.LIST/TARIFFCODE") +
+                elem.findall(".//TARIFFLIST.LIST/HSNCODE") +
+                elem.findall(".//TARIFFCODE") +
+                elem.findall("TARIFFCODE") +
+                elem.findall(".//GSTDETAILS.LIST/GSTHSNNAME") +
+                elem.findall(".//GSTHSNNAME") +
+                elem.findall("GSTHSNNAME") +
+                elem.findall(".//HSNNAME") +
+                elem.findall("HSNNAME") +
+                elem.findall(".//GSTCLASSIFICATION") +
+                elem.findall(".//HSN") +
+                elem.findall("HSN")
+            )
+            sg_hsn_val = ""
+            for hn in reversed(sg_hsn_nodes):
+                if hn is not None and hn.text and hn.text.strip():
+                    txt = hn.text.strip()
+                    if any(c.isdigit() for c in txt):
+                        sg_hsn_val = txt
+                        break
+                    elif not sg_hsn_val:
+                        sg_hsn_val = txt
+
             items.append({
                 "tallyExternalId": guid_val or sg_name.strip(),
                 "name": sg_name.strip(),
                 "parent": parent_val,
                 "guid": guid_val,
+                "hsnCode": sg_hsn_val,
+                "hsn_code": sg_hsn_val,
+                "hsn": sg_hsn_val,
                 "alterid": alt_id,
                 "raw": {
                     "name": sg_name.strip(),
                     "parent": parent_val,
                     "guid": guid_val,
+                    "hsnCode": sg_hsn_val,
+                    "hsn_code": sg_hsn_val,
+                    "hsn": sg_hsn_val,
                     "alterid": alt_id
                 }
             })

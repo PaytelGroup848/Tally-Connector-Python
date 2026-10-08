@@ -832,7 +832,9 @@ class CloudAuthService:
                 if val == 0.0 and qty != 0.0 and rate != 0.0:
                     val = round(qty * rate, 2)
 
-                unit_val = str(r.get("unit") or r.get("uom") or r.get("units") or r.get("unit_name") or "").strip()
+                unit_val = str(r.get("unit") or r.get("uom") or r.get("units") or r.get("unit_name") or r.get("baseUnits") or r.get("base_units") or "").strip()
+                if not unit_val:
+                    unit_val = "Pcs"
                 hsn_val = str(r.get("hsnCode") or r.get("hsn_code") or r.get("hsn") or "").strip()
                 batch_val = str(r.get("batch") or r.get("batchName") or r.get("batch_name") or "Primary Batch").strip()
 

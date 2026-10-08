@@ -352,8 +352,30 @@ class RemoteCommandWorker(QThread):
                         or norm_payload.get("partyAddress")
                         or norm_payload.get("consigneeAddress")
                     )
-                    norm_payload["place_of_supply"] = norm_payload.get("placeOfSupply") or norm_payload.get("place_of_supply") or norm_payload["state"]
                     items_preview = norm_payload.get("items") or norm_payload.get("inventory_entries") or norm_payload.get("inventoryEntries") or []
+                    if isinstance(items_preview, list):
+                        try:
+                            from apps.backend.adapters.tally.tally_importer import _lookup_item_master_unit, _lookup_item_master_hsn
+                            for itm in items_preview:
+                                if isinstance(itm, dict):
+                                    it_name = str(itm.get("item") or itm.get("itemName") or itm.get("name") or itm.get("stock_item") or "").strip()
+                                    if it_name:
+                                        curr_u = str(itm.get("units") or itm.get("unit") or itm.get("uom") or "").strip()
+                                        if not curr_u or curr_u.lower() == "pcs":
+                                            mu = _lookup_item_master_unit(resolved_company, it_name)
+                                            if mu:
+                                                itm["units"] = mu
+                                                itm["unit"] = mu
+                                        curr_h = str(itm.get("hsn_code") or itm.get("hsnCode") or itm.get("hsn") or itm.get("hsnCodeValue") or "").strip()
+                                        if not curr_h:
+                                            mh = _lookup_item_master_hsn(resolved_company, it_name)
+                                            if mh:
+                                                itm["hsn_code"] = mh
+                                                itm["hsnCode"] = mh
+                                                itm["hsn"] = mh
+                        except Exception as itm_exc:
+                            logger.debug(f"Voucher item master unit/HSN enrichment notice: {itm_exc}")
+
                     norm_payload["items"] = items_preview
                     norm_payload["amount"] = amt
                     logger.info(f"Voucher Payload: Company='{norm_payload.get('company_name')}', Type='{norm_payload.get('voucher_type')}', Party='{norm_payload.get('party_ledger')}', GSTIN='{norm_payload.get('gstin')}', ItemsCount={len(items_preview) if isinstance(items_preview, list) else 0}, Date='{norm_payload.get('date')}', Amount={norm_payload.get('amount')}")

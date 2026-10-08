@@ -1,11 +1,11 @@
 {
-  "version": "1.0.9",
-  "latestVersion": "1.0.9",
-  "latest_version": "1.0.9",
+  "version": "1.0.10",
+  "latestVersion": "1.0.10",
+  "latest_version": "1.0.10",
   "minVersion": "1.0.0",
-  "releaseNotes": "Fix Tally GSTIN auto-fetch from party master and enforce exact stock item master unit.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.9.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.9.exe",
-  "sha256": "c224a2eb459d6e97551258bdae1dc588b8fc7d9b63aced2adf9a08751113bfe5",
+  "releaseNotes": "Generic auto-fetch and inheritance for Stock Item Unit and HSN/Tariff code across all companies, including parent Stock Groups and master lookups during voucher creation and sync.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.10.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.10.exe",
+  "sha256": "6611b7e6305b5d52f0508ebdaa46791ba994a78e39900a09aa214f86139fc596",
   "mandatory": true
 }

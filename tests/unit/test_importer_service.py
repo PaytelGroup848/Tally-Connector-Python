@@ -348,6 +348,8 @@ class TestImporterServiceUnit(unittest.TestCase):
         mock_tally = MagicMock()
         mock_tally.ensure_stock_item = AsyncMock(return_value=True)
         mock_tally.ensure_unit = AsyncMock(return_value=True)
+        mock_tally.fetch_stock_item_guid = AsyncMock(return_value="GUID-ITEM-123")
+        mock_tally.fetch_unit_guid = AsyncMock(return_value="GUID-UNIT-123")
 
         service = ImporterService(tally_importer=mock_tally)
         item_res = asyncio.run(service.create_stock_item({

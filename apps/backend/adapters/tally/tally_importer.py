@@ -599,6 +599,69 @@ def _lookup_item_master_unit(company_name: str, item_name: str) -> Optional[str]
     _ITEM_MASTER_UNIT_CACHE[key] = None
     return None
 
+_ITEM_MASTER_HSN_CACHE: Dict[Tuple[str, str], Optional[str]] = {}
+
+def _lookup_item_master_hsn(company_name: str, item_name: str) -> Optional[str]:
+    """
+    Looks up the registered HSN/SAC Code for the Stock Item from MongoDB collections.
+    Falls back to parent Stock Group's HSN if not on the item directly.
+    """
+    if not item_name:
+        return None
+    key = (company_name or "", item_name.strip().lower())
+    if key in _ITEM_MASTER_HSN_CACHE:
+        return _ITEM_MASTER_HSN_CACHE[key]
+
+    try:
+        from shared.db.mongo_client import get_mongo_db
+        db = get_mongo_db()
+        clean_name = item_name.strip()
+        import re
+        name_rgx = re.compile(f"^{re.escape(clean_name)}$", re.IGNORECASE)
+
+        for col_name in ("stock_items", "stocks", "items", "stockbalances"):
+            col = db[col_name]
+            if company_name:
+                comp_rgx = re.compile(f"^{re.escape(company_name.strip())}$", re.IGNORECASE)
+                doc = col.find_one({"company_name": comp_rgx, "$or": [{"itemName": name_rgx}, {"name": name_rgx}]})
+                if not doc:
+                    doc = col.find_one({"company_name": comp_rgx, "$or": [{"itemName": clean_name}, {"name": clean_name}]})
+                if doc:
+                    h = _clean_str(doc.get("hsnCode") or doc.get("hsn_code") or doc.get("hsn"))
+                    if h:
+                        _ITEM_MASTER_HSN_CACHE[key] = h
+                        return h
+                    parent_grp = _clean_str(doc.get("parent") or doc.get("group"))
+                    if parent_grp:
+                        grp_doc = db.stock_groups.find_one({"name": re.compile(f"^{re.escape(parent_grp)}$", re.IGNORECASE)})
+                        if grp_doc:
+                            gh = _clean_str(grp_doc.get("hsnCode") or grp_doc.get("hsn_code") or grp_doc.get("hsn"))
+                            if gh:
+                                _ITEM_MASTER_HSN_CACHE[key] = gh
+                                return gh
+
+            doc = col.find_one({"$or": [{"itemName": name_rgx}, {"name": name_rgx}]})
+            if not doc:
+                doc = col.find_one({"$or": [{"itemName": clean_name}, {"name": clean_name}]})
+            if doc:
+                h = _clean_str(doc.get("hsnCode") or doc.get("hsn_code") or doc.get("hsn"))
+                if h:
+                    _ITEM_MASTER_HSN_CACHE[key] = h
+                    return h
+                parent_grp = _clean_str(doc.get("parent") or doc.get("group"))
+                if parent_grp:
+                    grp_doc = db.stock_groups.find_one({"name": re.compile(f"^{re.escape(parent_grp)}$", re.IGNORECASE)})
+                    if grp_doc:
+                        gh = _clean_str(grp_doc.get("hsnCode") or grp_doc.get("hsn_code") or grp_doc.get("hsn"))
+                        if gh:
+                            _ITEM_MASTER_HSN_CACHE[key] = gh
+                            return gh
+    except Exception as exc:
+        logger.debug(f"Master HSN lookup error for '{item_name}': {exc}")
+
+    _ITEM_MASTER_HSN_CACHE[key] = None
+    return None
+
 def _balance_double_entry_accounting(
     ledger_entries_xml: list,
     inventory_entries_xml: list,
@@ -984,6 +1047,16 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
             else:
                 i_unit = "Pcs"
 
+            master_hsn = _lookup_item_master_hsn(company_name, i_name)
+            raw_hsn = _clean_str(
+                item.get("hsn_code")
+                or item.get("hsnCode")
+                or item.get("hsn")
+                or item.get("hsnCodeValue")
+                or item.get("hsn_code_value")
+            )
+            i_hsn = raw_hsn or master_hsn or ""
+
             i_rate = _parse_float(
                 item.get("rate")
                 if item.get("rate") is not None
@@ -1107,6 +1180,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                         </BATCHALLOCATIONS.LIST>"""
 
             discount_tag = f"\n                        <DISCOUNT>{disc_pct:g}%</DISCOUNT>" if disc_pct > 0 else ""
+            hsn_tag = f"\n                    <GSTHSNNAME>{escape_xml(i_hsn)}</GSTHSNNAME>" if i_hsn else ""
 
             accounting_alloc_tag = f"""
                         <ACCOUNTINGALLOCATIONS.LIST>
@@ -1117,7 +1191,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
 
             inventory_entries_xml.append(f"""                <INVENTORYENTRIES.LIST>
                     <STOCKITEMNAME>{escape_xml(i_name)}</STOCKITEMNAME>
-                    <ISDEEMEDPOSITIVE>{item_deemed_positive}</ISDEEMEDPOSITIVE>
+                    <ISDEEMEDPOSITIVE>{item_deemed_positive}</ISDEEMEDPOSITIVE>{hsn_tag}
                     <RATE>{escape_xml(rate_str)}</RATE>
                     <AMOUNT>{item_amount:.2f}</AMOUNT>
                     <ACTUALQTY>{escape_xml(qty_str)}</ACTUALQTY>
@@ -1824,7 +1898,19 @@ class TallyImporter:
         if clean_name.lower() in self._known_stock_items[comp_key]:
             return True
 
-        clean_unit = unit_name.strip() if unit_name else "Pcs"
+        clean_unit = unit_name.strip() if unit_name else ""
+        if not clean_unit or clean_unit.lower() == "pcs":
+            lookup_u = _lookup_item_master_unit(company_name, clean_name)
+            if lookup_u:
+                clean_unit = lookup_u
+        if not clean_unit:
+            clean_unit = "Pcs"
+
+        clean_hsn = hsn_code.strip() if hsn_code else ""
+        if not clean_hsn:
+            lookup_h = _lookup_item_master_hsn(company_name, clean_name)
+            if lookup_h:
+                clean_hsn = lookup_h
 
         await self.ensure_unit(host=host, port=port, company_name=company_name, unit_name=clean_unit)
 
@@ -1832,7 +1918,7 @@ class TallyImporter:
             "company_name": company_name,
             "name": clean_name,
             "unit": clean_unit,
-            "hsn_code": hsn_code
+            "hsn_code": clean_hsn
         })
         try:
             ok, status, res_text, _ = await self.client.send_xml_request_async(
@@ -2311,8 +2397,20 @@ class TallyImporter:
             for it in items:
                 i_name = _extract_item_name(it)
                 if i_name:
-                    i_unit = _clean_str(it.get("units") or it.get("unit") or it.get("uom")) or "Pcs"
+                    i_unit = _clean_str(it.get("units") or it.get("unit") or it.get("uom") or it.get("baseUnits") or it.get("base_units"))
+                    if not i_unit or i_unit.lower() == "pcs":
+                        mu = _lookup_item_master_unit(company_name, i_name)
+                        if mu:
+                            i_unit = mu
+                    if not i_unit:
+                        i_unit = "Pcs"
+
                     i_hsn = _clean_str(it.get("hsn_code") or it.get("hsnCode") or it.get("hsn"))
+                    if not i_hsn:
+                        mh = _lookup_item_master_hsn(company_name, i_name)
+                        if mh:
+                            i_hsn = mh
+
                     await self.ensure_stock_item(
                         host=host, port=port, company_name=company_name, item_name=i_name, unit_name=i_unit, hsn_code=i_hsn
                     )
