@@ -19,6 +19,15 @@ def chunk_list(lst: list, chunk_size: int = 101):
     for i in range(0, len(lst), chunk_size):
         yield lst[i:i + chunk_size]
 
+def safe_bulk_write(col, ops: list, chunk_size: int = 250):
+    if not ops:
+        return
+    for chunk in chunk_list(ops, chunk_size):
+        try:
+            col.bulk_write(chunk, ordered=False)
+        except Exception as exc:
+            logger.debug(f"MongoDB write batch note for {getattr(col, 'name', 'col')}: {exc}")
+
 class BackgroundSyncWorker(QThread):
     progress_changed = Signal(int, str)
     company_synced = Signal(str, dict)
@@ -517,9 +526,7 @@ class BackgroundSyncWorker(QThread):
                         ))
 
                 for ops, col in [(l_ops, l_col), (cust_ops, cust_col), (supp_ops, supp_col)]:
-                    if ops:
-                        for chunk in chunk_list(ops, 500):
-                            col.bulk_write(chunk, ordered=False)
+                    safe_bulk_write(col, ops, chunk_size=250)
             except Exception as m_exc:
                 logger.warning(f"MongoDB ledger persistence notice: {m_exc}")
 
@@ -812,9 +819,7 @@ class BackgroundSyncWorker(QThread):
                     ))
 
                 for ops, col in [(s_ops, s_col), (items_ops, items_col), (stocks_ops, stocks_col), (stockbal_ops, stockbal_col)]:
-                    if ops:
-                        for chunk in chunk_list(ops, 500):
-                            col.bulk_write(chunk, ordered=False)
+                    safe_bulk_write(col, ops, chunk_size=250)
             except Exception as m_exc:
                 logger.warning(f"MongoDB stock item persistence notice: {m_exc}")
 
@@ -1069,8 +1074,10 @@ class BackgroundSyncWorker(QThread):
                         bank_ops.append(UpdateOne(bank_filter, {"$set": bank_doc}, upsert=True))
 
                     for b in bill_allocs:
-                        b_name = str(b.get("billName") or v_num or "")
-                        b_party = str(b.get("party") or v_party or "")
+                        b_name = str(b.get("billName") or v_num or "").strip()
+                        b_party = str(b.get("party") or v_party or "").strip()
+                        if not b_name:
+                            continue
                         bill_doc = {
                             "source": "TALLY",
                             "company_name": c_name,
@@ -1095,9 +1102,7 @@ class BackgroundSyncWorker(QThread):
                         ))
 
                 for ops, col in [(v_ops, v_col), (sales_ops, sales_col), (purch_ops, purch_col), (bank_ops, bank_col), (bills_ops, bills_col)]:
-                    if ops:
-                        for chunk in chunk_list(ops, 500):
-                            col.bulk_write(chunk, ordered=False)
+                    safe_bulk_write(col, ops, chunk_size=250)
 
                 party_latest_voucher: Dict[str, str] = {}
                 for v in extracted_vouchers:
@@ -1177,6 +1182,7 @@ class BackgroundSyncWorker(QThread):
                 is_last = (b_idx == total_l and not extracted_stock_items and not extracted_vouchers)
                 self.progress_changed.emit(base_pct + 75, f"Pushing Ledgers Batch #{b_idx}/{total_l} ({len(chunk)} items)...")
                 cloud_auth_service.sync_batch(sync_id, c_name, "LEDGER", chunk, b_idx, is_last)
+                time.sleep(0.08)
 
         if extracted_stock_items:
             stock_chunks = list(chunk_list(extracted_stock_items, 101))
@@ -1187,9 +1193,11 @@ class BackgroundSyncWorker(QThread):
                 is_last = (b_idx == total_s and not extracted_vouchers)
                 self.progress_changed.emit(base_pct + 80, f"Pushing Stock Batch #{b_idx}/{total_s} ({len(chunk)} items)...")
                 cloud_auth_service.sync_batch(sync_id, c_name, "STOCK", chunk, b_idx, is_last)
+                time.sleep(0.08)
 
         if extracted_vouchers:
-            voucher_chunks = list(chunk_list(extracted_vouchers, 101))
+            # 50 vouchers per chunk + 150ms backpressure micro-delay to prevent cloud server RAM exhaustion
+            voucher_chunks = list(chunk_list(extracted_vouchers, 50))
             total_v = len(voucher_chunks)
             for b_idx, chunk in enumerate(voucher_chunks, start=1):
                 if self._is_cancelled:
@@ -1197,6 +1205,7 @@ class BackgroundSyncWorker(QThread):
                 is_last = (b_idx == total_v)
                 self.progress_changed.emit(base_pct + 85, f"Pushing Vouchers Batch #{b_idx}/{total_v} ({len(chunk)} items)...")
                 cloud_auth_service.sync_batch(sync_id, c_name, "VOUCHER", chunk, b_idx, is_last)
+                time.sleep(0.15)
 
         cloud_auth_service.sync_complete(
             sync_id=sync_id,
