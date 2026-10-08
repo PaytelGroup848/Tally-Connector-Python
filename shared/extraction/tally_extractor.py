@@ -171,8 +171,11 @@ class TallyDataExtractor(BaseDataExtractor):
                 f"Tally does not support canonical entity type '{canonical_entity_type}'. Allowed types: {', '.join(TALLY_ENTITY_MAP.keys())}"
             )
 
-        host = connector_config.get("host", "127.0.0.1")
-        port = connector_config.get("port", 9000)
+        from shared.connection_config import resolve_active_tally_port
+        host, port = resolve_active_tally_port(
+            preferred_port=connector_config.get("port"),
+            preferred_host=connector_config.get("host")
+        )
         self.client.validate_host_and_port(host, port)
         extraction_filter_registry.validate_filters(c_entity, filters)
 

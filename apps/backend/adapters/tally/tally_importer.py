@@ -1569,6 +1569,10 @@ def parse_tally_import_response(xml_text: str, default_voucher_number: Optional[
     if not xml_text or not xml_text.strip():
         return False, None, "Empty response received from Tally Prime server."
 
+    lower_raw = xml_text.strip().lower()
+    if "<!doctype html" in lower_raw or "<html" in lower_raw or "license server is running" in lower_raw or "gateway release" in lower_raw:
+        return False, None, "Connected to Tally License Server or Web server instead of Tally Prime. Ensure Tally Prime is running and ODBC/XML port is correct."
+
     clean_xml = re.sub(r'&#(0?[0-8]|1[124-9]|2[0-9]|3[01]);', '', xml_text)
     clean_xml = re.sub(r'&#\d+;', '', clean_xml)
     clean_xml = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', '', clean_xml)
@@ -1788,7 +1792,11 @@ class TallyImporter:
             ok, status, resp_txt, err = await self.client.send_xml_request_async(
                 host=host, port=port, xml_content=xml_req, timeout=4.0
             )
-            if not ok or status != 200:
+            if not ok or status != 200 or not resp_txt:
+                return False, False, []
+
+            resp_lower = resp_txt.strip().lower()
+            if "<!doctype html" in resp_lower or "<html" in resp_lower or "license server is running" in resp_lower:
                 return False, False, []
 
             companies = parse_company_list(resp_txt)
@@ -2256,13 +2264,28 @@ class TallyImporter:
 
     async def import_ledger(self, host: str, port: int, ledger_data: Dict[str, Any]) -> Dict[str, Any]:
         """Explicitly creates a Ledger in Tally Prime and retrieves its tallyExternalId immediately."""
+        ledger_name = str(ledger_data.get("name") or ledger_data.get("party_ledger") or ledger_data.get("partyName") or ledger_data.get("party_name") or "").strip()
+        comp_name = str(ledger_data.get("company_name") or "")
+
+        # Guard: Check Tally connectivity & verify if target company is open in Tally Prime
+        is_online, is_loaded, open_comps = await self.check_tally_company_status(host, port, comp_name)
+        if not is_online:
+            return {
+                "success": False,
+                "message": f"Tally Prime is offline at {host}:{port}.",
+                "error": f"Tally Prime is not running or HTTP port {port} is closed.",
+            }
+        if comp_name and not is_loaded:
+            return {
+                "success": False,
+                "message": f"Company '{comp_name}' is not currently open in Tally.",
+                "error": f"Company '{comp_name}' is not open in Tally Prime (Active: {', '.join(open_comps) or 'None'}).",
+            }
+
         xml_payload = build_ledger_import_xml(ledger_data)
         ok, status_code, res_text, err_msg = await self.client.send_xml_request_async(
             host=host, port=port, xml_content=xml_payload
         )
-
-        ledger_name = str(ledger_data.get("name") or ledger_data.get("party_ledger") or ledger_data.get("partyName") or ledger_data.get("party_name") or "").strip()
-        comp_name = str(ledger_data.get("company_name") or "")
 
         if not ok or status_code != 200:
             return {

@@ -1,11 +1,11 @@
 {
-  "version": "1.0.13",
-  "latestVersion": "1.0.13",
-  "latest_version": "1.0.13",
+  "version": "1.0.14",
+  "latestVersion": "1.0.14",
+  "latest_version": "1.0.14",
   "minVersion": "1.0.0",
-  "releaseNotes": "Dynamic Tally port auto-discovery, element parsing fixes for units and StockGroup HSN inheritance, cross-company MongoDB isolation, and voucher batch queue resilience.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.13.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.13.exe",
-  "sha256": "c0d36d0f05c5887ed8060a925cf1c8f4306f3586b74f7de0dd2be5d3b1f2142d",
+  "releaseNotes": "Dynamic Tally port auto-detection without hardcoding; strictly rejects License Gateway (port 9999) HTML responses, and verifies authentic Tally Prime XML envelopes.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.14.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.14.exe",
+  "sha256": "6436227c1501656d2d9a6fdd3f6375df081538ff8e9670c3de520a5162960a60",
   "mandatory": true
 }

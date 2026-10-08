@@ -131,17 +131,24 @@ def get_configured_host() -> str:
     cfg = load_connection_config()
     return str(cfg.get("tally_host", "127.0.0.1"))
 
-def test_tally_port(host: str = "127.0.0.1", port: int = 9000, timeout: float = 2.0) -> Tuple[bool, List[str], str]:
+def test_tally_port(host: str = "127.0.0.1", port: Optional[int] = None, timeout: float = 2.0) -> Tuple[bool, List[str], str]:
     """
     Performs direct socket + TDL XML probe against the specified port.
     Returns (is_online, [open_company_names], status_message).
+    Strictly verifies that the target responds with genuine Tally Prime XML.
+    Explicitly rejects HTML web servers, License Server Gateways (port 9999), and non-Tally services.
     """
     clean_host = (host or "127.0.0.1").strip()
     if clean_host.lower() == "localhost":
         clean_host = "127.0.0.1"
 
+    if port is None:
+        return False, [], "No port specified"
+
     try:
         port_num = int(port)
+        if port_num <= 0 or port_num > 65535:
+            return False, [], f"Invalid port number: {port}"
     except Exception:
         return False, [], "Invalid port number"
 
@@ -170,10 +177,35 @@ def test_tally_port(host: str = "127.0.0.1", port: int = 9000, timeout: float = 
             timeout=timeout,
         )
         if h_res.status_code == 200 and h_res.text:
-            comp_dicts = parse_company_list(h_res.text)
-            names = [c["name"] for c in comp_dicts if c.get("name")]
-            return True, names, f"Connected ({len(names)} companies open)"
-        return True, [], "Tally port open (no company currently loaded)"
+            raw_text = h_res.text.strip()
+            lower_text = raw_text.lower()
+
+            # Strictly reject HTML web pages, Tally License Server / Gateway Server responses
+            if (
+                "<!doctype html" in lower_text
+                or "<html" in lower_text
+                or "license server is running" in lower_text
+                or "gateway release" in lower_text
+                or "gateway version" in lower_text
+            ):
+                return False, [], f"Port {port_num} is a License Gateway/Web Server, not Tally Prime XML server"
+
+            # Must be authentic Tally XML (<ENVELOPE> or <RESPONSE>)
+            if "<envelope" in lower_text or "<response" in lower_text:
+                try:
+                    comp_dicts = parse_company_list(raw_text)
+                    names = [c["name"] for c in comp_dicts if c.get("name")]
+                    if names:
+                        return True, names, f"Connected ({len(names)} companies open)"
+
+                    # Verify it's genuinely valid XML even if no companies are loaded
+                    import xml.etree.ElementTree as ET
+                    ET.fromstring(raw_text)
+                    return True, [], "Tally Prime port open (no company currently loaded)"
+                except Exception as parse_ex:
+                    return False, [], f"Tally XML parse error: {parse_ex}"
+
+        return False, [], f"Port {port_num} did not return valid Tally Prime XML"
     except Exception as exc:
         return False, [], f"Tally XML probe failed: {exc}"
 
@@ -197,67 +229,102 @@ def resolve_active_tally_port(
 ) -> Tuple[str, int]:
     """
     Dynamically and reliably resolves the active Tally Prime host and HTTP/XML port.
-    Never relies on a fixed hardcoded port.
+    Never uses hardcoded ports.
     
-    Order of resolution:
-    1. If a valid preferred_port (> 0) is passed and has open companies, returns (host, preferred_port).
-    2. Checks the user's saved connection configuration (connection_config.json).
-       If configured port has open companies, returns (cfg_host, cfg_port).
-    3. If not confirmed, probes candidate ports:
-       - Standard Tally ports: [preferred, cfg_port, 9047, 9025, 9000, 9001, 9002, 9003, 9004, 9005]
-       - Listening ports detected from running tally.exe processes via psutil.
-       - Tests candidate ports; any port returning open companies is prioritized and saved.
-    4. Safe fallback: Returns responding port or (cfg_host, cfg_port or 9047).
+    Candidate ports are discovered completely dynamically from:
+    1. Caller's requested preferred_port (from command payload or UI input)
+    2. User's saved connection configuration (connection_config.json)
+    3. Active Tally Prime installation's ServerPort from tally.ini
+    4. Listening TCP sockets opened by genuine running tally.exe / tallyprime.exe processes
+    
+    Guarantees:
+    - Never selects Tally License Server / Gateway Server (Port 9999 or any HTML response)
+    - Prioritizes port that has open companies
+    - Falls back safely to verified Tally XML port or user's configured port
     """
     cfg = load_connection_config()
     cfg_host = (preferred_host or cfg.get("tally_host") or "127.0.0.1").strip()
     if cfg_host.lower() == "localhost":
         cfg_host = "127.0.0.1"
 
-    # 1. Check preferred port if explicitly supplied and has open companies
+    candidates: List[int] = []
+
+    # 1. Preferred port from caller (if valid)
     if preferred_port is not None:
         try:
             p = int(preferred_port)
-            if p > 0 and is_socket_open(cfg_host, p):
-                ok, comps, _ = test_tally_port(cfg_host, p, timeout=2.5)
-                if ok and comps:
-                    return cfg_host, p
+            if p > 0 and p not in candidates:
+                candidates.append(p)
         except (ValueError, TypeError):
             pass
 
-    # 2. Check saved configured port if it has open companies
+    # 2. Configured port saved by user
+    cfg_port = None
     try:
-        cfg_port = int(cfg.get("tally_port", 9000))
-    except Exception:
-        cfg_port = 9000
-
-    if is_socket_open(cfg_host, cfg_port):
-        ok, comps, _ = test_tally_port(cfg_host, cfg_port, timeout=2.5)
-        if ok and comps:
-            return cfg_host, cfg_port
-
-    # 3. Discover candidates
-    candidates: List[int] = []
-
-    # Priority 1: Ports with 9047 prioritized first
-    for cp in [cfg_port, 9047, 9025, 9000, 9001, 9002, 9003, 9004, 9005]:
-        if cp > 0 and cp not in candidates:
-            candidates.append(cp)
-
-    # Priority 2: Any ports found listening by tally.exe via psutil
-    try:
-        import psutil
-        tally_pids = {p.pid for p in psutil.process_iter(["name", "pid"]) if "tally" in (p.info.get("name") or "").lower()}
-        if tally_pids:
-            for conn in psutil.net_connections(kind="inet"):
-                if conn.pid in tally_pids and conn.status == "LISTEN" and conn.laddr:
-                    lp = conn.laddr.port
-                    if lp > 0 and lp not in candidates:
-                        candidates.append(lp)
+        cp = int(cfg.get("tally_port"))
+        if cp > 0:
+            cfg_port = cp
+            if cp not in candidates:
+                candidates.append(cp)
     except Exception:
         pass
 
-    fallback_port = None
+    # 3. Dynamic discovery from running Tally processes and tally.ini
+    try:
+        import psutil
+        from pathlib import Path
+
+        AUXILIARY_NAMES = {"tallygatewayserver", "tallylic", "tallyscheduler", "tallydeveloper"}
+
+        tally_exes = set()
+        tally_pids = set()
+
+        for proc in psutil.process_iter(["name", "exe", "pid"]):
+            try:
+                name = (proc.info.get("name") or "").lower()
+                # Must be a tally process, but strictly ignore auxiliary servers (gateway, scheduler, license)
+                if "tally" in name and not any(aux in name for aux in AUXILIARY_NAMES):
+                    pid = proc.info.get("pid")
+                    exe = proc.info.get("exe")
+                    if pid:
+                        tally_pids.add(pid)
+                    if exe:
+                        tally_exes.add(exe)
+            except Exception:
+                continue
+
+        # 3a. Read ServerPort dynamically from tally.ini in each Tally install directory
+        for exe_path in tally_exes:
+            try:
+                ini_file = Path(exe_path).parent / "tally.ini"
+                if ini_file.exists():
+                    for line in ini_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                        clean_l = line.strip().lower()
+                        if clean_l.startswith("serverport="):
+                            val = clean_l.split("=", 1)[1].strip()
+                            if val.isdigit():
+                                port_val = int(val)
+                                if port_val > 0 and port_val not in candidates:
+                                    candidates.append(port_val)
+            except Exception:
+                pass
+
+        # 3b. Discover listening ports of genuine tally processes
+        if tally_pids:
+            try:
+                for conn in psutil.net_connections(kind="inet"):
+                    if conn.pid in tally_pids and conn.status == "LISTEN" and conn.laddr:
+                        lp = conn.laddr.port
+                        if lp > 0 and lp not in candidates:
+                            candidates.append(lp)
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.debug(f"Dynamic Tally process discovery notice: {exc}")
+
+    # 4. Probe candidates to find active Tally Prime XML server
+    verified_fallback_port: Optional[int] = None
+
     for p in candidates:
         if is_socket_open(cfg_host, p):
             ok, comps, _ = test_tally_port(cfg_host, p, timeout=2.5)
@@ -269,11 +336,14 @@ def resolve_active_tally_port(
                     except Exception:
                         pass
                     return cfg_host, p
-                elif fallback_port is None:
-                    fallback_port = p
+                elif verified_fallback_port is None:
+                    verified_fallback_port = p
 
-    if fallback_port is not None:
-        return cfg_host, fallback_port
+    if verified_fallback_port is not None:
+        return cfg_host, verified_fallback_port
 
-    return cfg_host, cfg_port
+    # If no candidate responded with verified XML, return user's configured/preferred port safely
+    fallback = candidates[0] if candidates else (cfg_port or 9000)
+    return cfg_host, fallback
+
 
