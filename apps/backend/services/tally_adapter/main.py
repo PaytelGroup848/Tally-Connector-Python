@@ -24,28 +24,52 @@ CONFIG = {"host": settings.tally_host, "port": settings.tally_port}
 client = TallyClient(connect_timeout=10.0, read_timeout=60.0)
 tally_importer = TallyImporter(client=client)
 
+def get_active_tally_config() -> Tuple[str, int]:
+    """Dynamically resolves the active Tally Prime host and port without hardcoding."""
+    from shared.connection_config import resolve_active_tally_port
+    active_host, active_port = resolve_active_tally_port(
+        preferred_port=CONFIG.get("port"),
+        preferred_host=CONFIG.get("host")
+    )
+    CONFIG["host"] = active_host
+    CONFIG["port"] = active_port
+    return active_host, active_port
+
 @app.on_event("startup")
 def startup_event():
     initialize_database()
+    try:
+        h, p = get_active_tally_config()
+        logger.info(f"Tally adapter initialized with active Tally endpoint at {h}:{p}")
+    except Exception as exc:
+        logger.warning(f"Failed to auto-resolve active Tally port on startup: {exc}")
 
 @app.get("/health")
 async def health():
-    return {"service": "tally_adapter", "status": "ok", "config": CONFIG}
+    h, p = get_active_tally_config()
+    return {"service": "tally_adapter", "status": "ok", "config": {"host": h, "port": p}}
 
 @app.post("/configure")
 async def configure(payload: dict):
-    h, p = payload.get("host", CONFIG["host"]), int(payload.get("port", CONFIG["port"]))
+    h = payload.get("host", CONFIG["host"])
+    p = int(payload.get("port", CONFIG["port"]))
     client.validate_host_and_port(h, p)
     CONFIG["host"], CONFIG["port"] = h, p
+    try:
+        from shared.connection_config import save_connection_config
+        save_connection_config(host=h, port=p)
+    except Exception as s_err:
+        logger.warning(f"Failed to persist connection config: {s_err}")
     return {"configured": True, "tally_config": CONFIG}
 
 @app.get("/validate/company")
 async def validate_company(target_company: Optional[str] = None):
     """Validates if Tally is running and targeted company is currently open."""
+    host, port = get_active_tally_config()
     xml_req = build_company_list_xml()
-    ok, code, res_text, err_msg = await client.send_xml_request_async(CONFIG["host"], CONFIG["port"], xml_req, timeout=5.0)
+    ok, code, res_text, err_msg = await client.send_xml_request_async(host, port, xml_req, timeout=5.0)
     if not ok or code != 200:
-        return {"valid": False, "reason": err_msg or "Tally Prime server unreachable"}
+        return {"valid": False, "reason": err_msg or f"Tally Prime server unreachable at {host}:{port}"}
     open_companies = [c.get("name", "").strip().lower() for c in parse_company_list(res_text)]
     if not open_companies:
         return {"valid": False, "reason": "No company is currently open in Tally Prime"}
@@ -55,10 +79,11 @@ async def validate_company(target_company: Optional[str] = None):
 
 @app.get("/extract/companies")
 async def extract_companies():
+    host, port = get_active_tally_config()
     xml_req = build_company_list_xml()
-    ok, code, res_text, err_msg = await client.send_xml_request_async(CONFIG["host"], CONFIG["port"], xml_req, timeout=5.0)
+    ok, code, res_text, err_msg = await client.send_xml_request_async(host, port, xml_req, timeout=5.0)
     if not ok or code != 200:
-        raise HTTPException(503, err_msg or "Failed to connect to Tally server to extract companies.")
+        raise HTTPException(503, err_msg or f"Failed to connect to Tally server at {host}:{port} to extract companies.")
     companies = parse_company_list(res_text)
 
     for c in companies:
@@ -79,9 +104,10 @@ async def extract_ledgers(company_name: Optional[str] = None, from_alter_id: Opt
         company_name=company_name,
         from_alter_id=from_alter_id
     )
-    ok, code, res_text, err_msg = await client.send_xml_request_async(CONFIG["host"], CONFIG["port"], xml_req, timeout=60.0)
+    host, port = get_active_tally_config()
+    ok, code, res_text, err_msg = await client.send_xml_request_async(host, port, xml_req, timeout=60.0)
     if not ok or code != 200:
-        raise HTTPException(503, err_msg or "Failed to connect to Tally server to extract ledgers.")
+        raise HTTPException(503, err_msg or f"Failed to connect to Tally server at {host}:{port} to extract ledgers.")
     ledgers = parse_metadata_response(res_text, tag_name="Ledger")
 
     target_comp = company_name or (ledgers[0].get("company") if ledgers else "Tally Prime Company") or "Tally Prime Company"
@@ -323,9 +349,10 @@ async def extract_vouchers(company_name: Optional[str] = None, from_alter_id: Op
         company_name=company_name,
         from_alter_id=from_alter_id
     )
-    ok, code, res_text, err_msg = await client.send_xml_request_async(CONFIG["host"], CONFIG["port"], xml_req, timeout=180.0)
+    host, port = get_active_tally_config()
+    ok, code, res_text, err_msg = await client.send_xml_request_async(host, port, xml_req, timeout=180.0)
     if not ok or code != 200:
-        raise HTTPException(503, err_msg or "Failed to connect to Tally server to extract vouchers.")
+        raise HTTPException(503, err_msg or f"Failed to connect to Tally server at {host}:{port} to extract vouchers.")
     vouchers = parse_metadata_response(res_text, tag_name="Voucher")
 
     target_comp = company_name or (vouchers[0].get("company") if vouchers else "Tally Prime Company") or "Tally Prime Company"
@@ -457,9 +484,10 @@ async def extract_stock_items(company_name: Optional[str] = None, from_alter_id:
         company_name=company_name,
         from_alter_id=from_alter_id
     )
-    ok, code, res_text, err_msg = await client.send_xml_request_async(CONFIG["host"], CONFIG["port"], xml_req, timeout=60.0)
+    host, port = get_active_tally_config()
+    ok, code, res_text, err_msg = await client.send_xml_request_async(host, port, xml_req, timeout=60.0)
     if not ok or code != 200:
-        raise HTTPException(503, err_msg or "Failed to connect to Tally server to extract stock items.")
+        raise HTTPException(503, err_msg or f"Failed to connect to Tally server at {host}:{port} to extract stock items.")
     stock_items = parse_metadata_response(res_text, tag_name="StockItem")
 
     mapped_records = []
@@ -508,37 +536,41 @@ async def extract_stock_items(company_name: Optional[str] = None, from_alter_id:
 
 @app.get("/extract/groups")
 async def extract_groups(company_name: Optional[str] = None):
+    host, port = get_active_tally_config()
     xml_req = build_collection_xml("Group", ["NAME", "PARENT", "GUID", "ALTERID", "ISADDABLE", "ISSUBLEDGER", "NATUREOFGROUP"], company_name=company_name)
-    ok, code, res_text, err_msg = await client.send_xml_request_async(CONFIG["host"], CONFIG["port"], xml_req, timeout=30.0)
+    ok, code, res_text, err_msg = await client.send_xml_request_async(host, port, xml_req, timeout=30.0)
     if not ok or code != 200:
-        raise HTTPException(503, err_msg or "Failed to extract groups from Tally.")
+        raise HTTPException(503, err_msg or f"Failed to extract groups from Tally at {host}:{port}.")
     groups = parse_metadata_response(res_text, tag_name="Group")
     return {"status": "success", "count": len(groups), "company": company_name, "groups": groups}
 
 @app.get("/extract/godowns")
 async def extract_godowns(company_name: Optional[str] = None):
+    host, port = get_active_tally_config()
     xml_req = build_collection_xml("Godown", ["NAME", "PARENT", "GUID", "ALTERID", "ADDRESS.LIST"], company_name=company_name)
-    ok, code, res_text, err_msg = await client.send_xml_request_async(CONFIG["host"], CONFIG["port"], xml_req, timeout=30.0)
+    ok, code, res_text, err_msg = await client.send_xml_request_async(host, port, xml_req, timeout=30.0)
     if not ok or code != 200:
-        raise HTTPException(503, err_msg or "Failed to extract godowns from Tally.")
+        raise HTTPException(503, err_msg or f"Failed to extract godowns from Tally at {host}:{port}.")
     godowns = parse_metadata_response(res_text, tag_name="Godown")
     return {"status": "success", "count": len(godowns), "company": company_name, "godowns": godowns}
 
 @app.get("/extract/units")
 async def extract_units(company_name: Optional[str] = None):
+    host, port = get_active_tally_config()
     xml_req = build_collection_xml("Unit", ["NAME", "SYMBOL", "ORIGINALNAME", "DECIMALPLACES", "GUID", "ALTERID"], company_name=company_name)
-    ok, code, res_text, err_msg = await client.send_xml_request_async(CONFIG["host"], CONFIG["port"], xml_req, timeout=30.0)
+    ok, code, res_text, err_msg = await client.send_xml_request_async(host, port, xml_req, timeout=30.0)
     if not ok or code != 200:
-        raise HTTPException(503, err_msg or "Failed to extract units from Tally.")
+        raise HTTPException(503, err_msg or f"Failed to extract units from Tally at {host}:{port}.")
     units = parse_metadata_response(res_text, tag_name="Unit")
     return {"status": "success", "count": len(units), "company": company_name, "units": units}
 
 @app.get("/extract/cost_centres")
 async def extract_cost_centres(company_name: Optional[str] = None):
+    host, port = get_active_tally_config()
     xml_req = build_collection_xml("CostCentre", ["NAME", "CATEGORY", "GUID", "ALTERID"], company_name=company_name)
-    ok, code, res_text, err_msg = await client.send_xml_request_async(CONFIG["host"], CONFIG["port"], xml_req, timeout=30.0)
+    ok, code, res_text, err_msg = await client.send_xml_request_async(host, port, xml_req, timeout=30.0)
     if not ok or code != 200:
-        raise HTTPException(503, err_msg or "Failed to extract cost centres from Tally.")
+        raise HTTPException(503, err_msg or f"Failed to extract cost centres from Tally at {host}:{port}.")
     cost_centres = parse_metadata_response(res_text, tag_name="CostCentre")
     return {"status": "success", "count": len(cost_centres), "company": company_name, "cost_centres": cost_centres}
 
@@ -626,8 +658,9 @@ async def extract_outstanding_bills(company_name: Optional[str] = None):
 @app.post("/import/voucher")
 async def import_voucher_endpoint(payload: dict):
     """Imports an online voucher/invoice payload into Tally Prime."""
-    host = payload.get("host", CONFIG["host"])
-    port = int(payload.get("port", CONFIG["port"]))
+    active_host, active_port = get_active_tally_config()
+    host = payload.get("host") or active_host
+    port = int(payload.get("port") or active_port)
     res = await tally_importer.import_voucher(host=host, port=port, voucher_data=payload)
     if not res.get("success"):
         raise HTTPException(400, res.get("error") or "Voucher import failed")

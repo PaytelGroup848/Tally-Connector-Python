@@ -2508,7 +2508,7 @@ class TallyImporter:
                 "diagnostic": diagnostic,
             }
 
-        v_guid = await self.fetch_voucher_guid(host, port, company_name, v_num)
+        v_guid = await self.fetch_voucher_guid(host, port, company_name, str(v_num)) if v_num else None
         return {
             "success": True,
             "voucher_number": v_num,

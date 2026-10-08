@@ -166,7 +166,7 @@ def test_tally_port(host: str = "127.0.0.1", port: int = 9000, timeout: float = 
         h_res = httpx.post(
             f"http://{clean_host}:{port_num}/",
             content=xml_req,
-            headers={"Content-Type": "text/xml", "Connection": "close"},
+            headers={"Content-Type": "text/xml"},
             timeout=timeout,
         )
         if h_res.status_code == 200 and h_res.text:
@@ -200,43 +200,46 @@ def resolve_active_tally_port(
     Never relies on a fixed hardcoded port.
     
     Order of resolution:
-    1. If a valid preferred_port (> 0) is passed and responding, returns (host, preferred_port).
-    2. Checks the user's saved connection configuration (connection_config.json) / runtime settings.
-       If configured port is responding, returns (cfg_host, cfg_port).
-    3. If configured port is offline, probes candidate ports:
-       - Standard Tally ports: [cfg_port, 9047, 9025, 9000, 9001, 9002, 9003, 9004, 9005]
+    1. If a valid preferred_port (> 0) is passed and has open companies, returns (host, preferred_port).
+    2. Checks the user's saved connection configuration (connection_config.json).
+       If configured port has open companies, returns (cfg_host, cfg_port).
+    3. If not confirmed, probes candidate ports:
+       - Standard Tally ports: [preferred, cfg_port, 9047, 9025, 9000, 9001, 9002, 9003, 9004, 9005]
        - Listening ports detected from running tally.exe processes via psutil.
-       - Tests candidate ports; any port returning open companies is prioritized.
-       - If an active Tally port is found, auto-saves to connection_config.json and returns (cfg_host, found_port).
-    4. Safe fallback: Returns (cfg_host, cfg_port or 9000).
+       - Tests candidate ports; any port returning open companies is prioritized and saved.
+    4. Safe fallback: Returns responding port or (cfg_host, cfg_port or 9047).
     """
     cfg = load_connection_config()
     cfg_host = (preferred_host or cfg.get("tally_host") or "127.0.0.1").strip()
     if cfg_host.lower() == "localhost":
         cfg_host = "127.0.0.1"
 
-    # 1. Check preferred port if explicitly supplied
+    # 1. Check preferred port if explicitly supplied and has open companies
     if preferred_port is not None:
         try:
             p = int(preferred_port)
             if p > 0 and is_socket_open(cfg_host, p):
-                return cfg_host, p
+                ok, comps, _ = test_tally_port(cfg_host, p, timeout=2.5)
+                if ok and comps:
+                    return cfg_host, p
         except (ValueError, TypeError):
             pass
 
-    # 2. Check saved configured port
+    # 2. Check saved configured port if it has open companies
     try:
         cfg_port = int(cfg.get("tally_port", 9000))
     except Exception:
         cfg_port = 9000
 
     if is_socket_open(cfg_host, cfg_port):
-        return cfg_host, cfg_port
+        ok, comps, _ = test_tally_port(cfg_host, cfg_port, timeout=2.5)
+        if ok and comps:
+            return cfg_host, cfg_port
 
-    # 3. Discover candidates if configured port is not responding
+    # 3. Discover candidates
     candidates: List[int] = []
 
-    # Priority 1: Common Tally ports (including user's 9047, 9025)
+    # Priority 1: Ports with 9047 prioritized first
     for cp in [cfg_port, 9047, 9025, 9000, 9001, 9002, 9003, 9004, 9005]:
         if cp > 0 and cp not in candidates:
             candidates.append(cp)
@@ -257,10 +260,10 @@ def resolve_active_tally_port(
     fallback_port = None
     for p in candidates:
         if is_socket_open(cfg_host, p):
-            ok, comps, _ = test_tally_port(cfg_host, p, timeout=2.0)
+            ok, comps, _ = test_tally_port(cfg_host, p, timeout=2.5)
             if ok:
                 if comps:
-                    logger.info(f"Dynamically discovered active Tally Prime on port {p} ({len(comps)} companies open)")
+                    logger.info(f"Dynamically discovered active Tally Prime on port {p} ({len(comps)} companies open: {comps})")
                     try:
                         save_connection_config(host=cfg_host, port=p)
                     except Exception:
@@ -270,10 +273,6 @@ def resolve_active_tally_port(
                     fallback_port = p
 
     if fallback_port is not None:
-        try:
-            save_connection_config(host=cfg_host, port=fallback_port)
-        except Exception:
-            pass
         return cfg_host, fallback_port
 
     return cfg_host, cfg_port

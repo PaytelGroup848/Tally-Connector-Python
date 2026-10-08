@@ -199,8 +199,10 @@ class TallyDataExtractor(BaseDataExtractor):
         c_entity = canonical_entity_type.strip().upper()
         clean_filters = extraction_filter_registry.validate_filters(c_entity, filters)
 
-        host = connector_config.get("host", "127.0.0.1")
-        port = int(connector_config.get("port", 9000))
+        from shared.connection_config import resolve_active_tally_port
+        pref_host = connector_config.get("host")
+        pref_port = connector_config.get("port")
+        host, port = resolve_active_tally_port(preferred_port=pref_port, preferred_host=pref_host)
         tally_tag, fetch_fields = TALLY_ENTITY_MAP[c_entity]
 
         from_alter_id = None

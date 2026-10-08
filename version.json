@@ -1,11 +1,11 @@
 {
-  "version": "1.0.12",
-  "latestVersion": "1.0.12",
-  "latest_version": "1.0.12",
+  "version": "1.0.13",
+  "latestVersion": "1.0.13",
+  "latest_version": "1.0.13",
   "minVersion": "1.0.0",
-  "releaseNotes": "Eliminate hardcoded port 9000: dynamic active port resolution across all 2-way sync commands (parties, vouchers, stock items) and background workers.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.12.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.12.exe",
-  "sha256": "5f87d48113ce33e44de6de3383f04c721693b03642084a72c1e233bf510b8dc2",
+  "releaseNotes": "Dynamic Tally port auto-discovery, element parsing fixes for units and StockGroup HSN inheritance, cross-company MongoDB isolation, and voucher batch queue resilience.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.13.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.13.exe",
+  "sha256": "c0d36d0f05c5887ed8060a925cf1c8f4306f3586b74f7de0dd2be5d3b1f2142d",
   "mandatory": true
 }

@@ -9,7 +9,7 @@ METADATA_TYPE_MAP = {
     "voucher_types": ("VoucherType", ["NAME", "PARENT", "GUID", "ALTERID"]),
     "cost_centres": ("CostCentre", ["NAME", "CATEGORY", "GUID", "ALTERID"]),
     "godowns": ("Godown", ["NAME", "PARENT", "GUID", "ALTERID", "ADDRESS.LIST"]),
-    "stock_groups": ("StockGroup", ["NAME", "PARENT", "GUID", "ALTERID"]),
+    "stock_groups": ("StockGroup", ["NAME", "PARENT", "GUID", "ALTERID", "HSNCODE", "HSN", "GSTAPPLICABLE", "HSNDETAILS.*", "GSTDETAILS.*", "TARIFFLIST.*"]),
     "stock_categories": ("StockCategory", ["NAME", "PARENT", "GUID", "ALTERID"]),
     "stock_items": ("StockItem", ["NAME", "PARENT", "CATEGORY", "BASEUNITS", "ADDITIONALUNITS", "GSTREPUOM", "CLOSINGBALANCE", "OPENINGBALANCE", "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM", "CLOSINGRATE", "CLOSINGVALUE", "OPENINGRATE", "OPENINGVALUE", "HSNCODE", "HSN", "GSTAPPLICABLE", "HSNDETAILS.*", "GSTDETAILS.*", "TARIFFLIST.*", "BATCHNAME", "BATCHALLOCATIONS.LIST", "GODOWNALLOCATIONS.LIST", "GUID", "ALTERID", "REORDERLEVEL"]),
     "units": ("Unit", ["NAME", "SYMBOL", "ORIGINALNAME", "DECIMALPLACES", "GUID", "ALTERID"]),

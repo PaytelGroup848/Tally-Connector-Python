@@ -9,7 +9,7 @@
 ; =====================================================================
 
 #define MyAppName "CtrlBooks"
-#define MyAppVersion "1.0.12"
+#define MyAppVersion "1.0.13"
 #define MyAppPublisher "CtrlBooks"
 #define MyAppURL "https://ctrlbooks.com"
 #define MyAppExeName "ctrlbooks.exe"

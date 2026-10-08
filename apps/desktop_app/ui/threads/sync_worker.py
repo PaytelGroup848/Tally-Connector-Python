@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false
 import time
 import uuid
 from typing import List, Dict, Any, Tuple, Optional
@@ -40,18 +41,22 @@ class BackgroundSyncWorker(QThread):
         self.source = source.upper()
         self._is_cancelled = False
         self.tally_client = TallyClient(connect_timeout=5.0, read_timeout=120.0)
+        self.tally_host = "127.0.0.1"
+        self.tally_port = 9000
 
     def cancel(self):
         self._is_cancelled = True
 
     def _discover_tally_ports(self) -> int:
         from shared.connection_config import resolve_active_tally_port
-        _, active_port = resolve_active_tally_port()
+        active_host, active_port = resolve_active_tally_port()
+        self.tally_host = active_host
+        self.tally_port = active_port
         return active_port
 
     def _get_open_tally_companies(self, port: int) -> List[Dict[str, Any]]:
         try:
-            ok, code, text, _ = self.tally_client.send_xml_request("127.0.0.1", port, build_company_list_xml(), timeout=3.0)
+            ok, code, text, _ = self.tally_client.send_xml_request(self.tally_host, port, build_company_list_xml(), timeout=3.0)
             if ok and code == 200:
                 return parse_company_list(text)
         except Exception as exc:
@@ -127,7 +132,7 @@ class BackgroundSyncWorker(QThread):
     def _sync_groups(self, c_name: str, port: int, now_iso: str, org_oid, c_oid):
         try:
             grp_xml = build_collection_xml("Group", ["NAME", "PARENT", "GUID", "ALTERID", "ISADDABLE", "ISSUBLEDGER", "NATUREOFGROUP"], company_name=c_name)
-            ok_g, code_g, text_g, _ = self.tally_client.send_xml_request("127.0.0.1", port, grp_xml, timeout=30.0)
+            ok_g, code_g, text_g, err_g = self.tally_client.send_xml_request(self.tally_host, port, grp_xml, timeout=30.0)
             if ok_g and code_g == 200:
                 grp_items = parse_metadata_response(text_g, tag_name="Group")
                 grp_col = get_collection("groups")
@@ -156,13 +161,15 @@ class BackgroundSyncWorker(QThread):
                 if grp_ops:
                     for chunk in chunk_list(grp_ops, 500):
                         grp_col.bulk_write(chunk, ordered=False)
+            else:
+                logger.warning(f"Groups extraction failed for '{c_name}': {err_g or f'HTTP {code_g}'}")
         except Exception as exc:
             logger.warning(f"Groups extraction error for '{c_name}': {exc}")
 
     def _sync_godowns(self, c_name: str, port: int, now_iso: str, org_oid, c_oid):
         try:
             gd_xml = build_collection_xml("Godown", ["NAME", "PARENT", "GUID", "ALTERID", "ADDRESS.LIST"], company_name=c_name)
-            ok_gd, code_gd, text_gd, _ = self.tally_client.send_xml_request("127.0.0.1", port, gd_xml, timeout=30.0)
+            ok_gd, code_gd, text_gd, err_gd = self.tally_client.send_xml_request(self.tally_host, port, gd_xml, timeout=30.0)
             if ok_gd and code_gd == 200:
                 gd_items = parse_metadata_response(text_gd, tag_name="Godown")
                 gd_col = get_collection("godowns")
@@ -188,13 +195,15 @@ class BackgroundSyncWorker(QThread):
                 if gd_ops:
                     for chunk in chunk_list(gd_ops, 500):
                         gd_col.bulk_write(chunk, ordered=False)
+            else:
+                logger.warning(f"Godowns extraction failed for '{c_name}': {err_gd or f'HTTP {code_gd}'}")
         except Exception as exc:
             logger.warning(f"Godowns extraction error for '{c_name}': {exc}")
 
     def _sync_units(self, c_name: str, port: int, now_iso: str, org_oid, c_oid):
         try:
             u_xml = build_collection_xml("Unit", ["NAME", "SYMBOL", "ORIGINALNAME", "DECIMALPLACES", "GUID", "ALTERID"], company_name=c_name)
-            ok_u, code_u, text_u, _ = self.tally_client.send_xml_request("127.0.0.1", port, u_xml, timeout=30.0)
+            ok_u, code_u, text_u, err_u = self.tally_client.send_xml_request(self.tally_host, port, u_xml, timeout=30.0)
             if ok_u and code_u == 200:
                 u_items = parse_metadata_response(text_u, tag_name="Unit")
                 u_col = get_collection("units")
@@ -221,13 +230,15 @@ class BackgroundSyncWorker(QThread):
                 if u_ops:
                     for chunk in chunk_list(u_ops, 500):
                         u_col.bulk_write(chunk, ordered=False)
+            else:
+                logger.warning(f"Units extraction failed for '{c_name}': {err_u or f'HTTP {code_u}'}")
         except Exception as exc:
             logger.warning(f"Units extraction error for '{c_name}': {exc}")
 
     def _sync_stock_groups(self, c_name: str, port: int, now_iso: str, org_oid, c_oid):
         try:
             sg_xml = build_collection_xml("StockGroup", ["NAME", "PARENT", "GUID", "ALTERID", "HSNCODE", "HSNDETAILS.LIST", "TARIFFLIST.LIST", "GSTDETAILS.LIST"], company_name=c_name)
-            ok_sg, code_sg, text_sg, _ = self.tally_client.send_xml_request("127.0.0.1", port, sg_xml, timeout=30.0)
+            ok_sg, code_sg, text_sg, err_sg = self.tally_client.send_xml_request(self.tally_host, port, sg_xml, timeout=30.0)
             if ok_sg and code_sg == 200:
                 sg_items = parse_metadata_response(text_sg, tag_name="StockGroup")
                 sg_col = get_collection("stock_groups")
@@ -260,6 +271,8 @@ class BackgroundSyncWorker(QThread):
                 if sg_ops:
                     for chunk in chunk_list(sg_ops, 500):
                         sg_col.bulk_write(chunk, ordered=False)
+            else:
+                logger.warning(f"Stock groups extraction failed for '{c_name}': {err_sg or f'HTTP {code_sg}'}")
         except Exception as exc:
             logger.warning(f"Stock groups extraction notice: {exc}")
 
@@ -270,7 +283,7 @@ class BackgroundSyncWorker(QThread):
                 ["NAME", "PARENT", "NUMBERINGMETHOD", "ISDEEMEDPOSITIVE", "AFFECTSSTOCK", "ISACTIVE", "GUID", "ALTERID"],
                 company_name=c_name
             )
-            ok_vt, code_vt, text_vt, _ = self.tally_client.send_xml_request("127.0.0.1", port, vt_xml, timeout=30.0)
+            ok_vt, code_vt, text_vt, err_vt = self.tally_client.send_xml_request(self.tally_host, port, vt_xml, timeout=30.0)
             if ok_vt and code_vt == 200:
                 vt_items = parse_metadata_response(text_vt, tag_name="VoucherType")
                 vt_col = get_collection("voucher_types")
@@ -295,6 +308,8 @@ class BackgroundSyncWorker(QThread):
                 if vt_ops:
                     for chunk in chunk_list(vt_ops, 500):
                         vt_col.bulk_write(chunk, ordered=False)
+            else:
+                logger.warning(f"Voucher types extraction failed for '{c_name}': {err_vt or f'HTTP {code_vt}'}")
         except Exception as exc:
             logger.warning(f"Voucher types extraction error for '{c_name}': {exc}")
 
@@ -307,7 +322,7 @@ class BackgroundSyncWorker(QThread):
                 ["NAME", "PARENT", "CLOSINGBALANCE", "OPENINGBALANCE", "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM", "OPENINGBALANCEDATE", "PARTYGSTIN", "GSTIN", "LEDGERCLASSIFICATION", "GUID", "ALTERID", "EMAIL", "LEDGERPHONE", "LEDGERMOBILE", "ADDRESS.LIST", "BILLCREDITPERIOD", "CREDITLIMIT", "ISBILLWISEON", "LEDGERGSTREGISTRATIONDETAILS.LIST"],
                 company_name=c_name
             )
-            ok_l, code_l, text_l, err_l = self.tally_client.send_xml_request("127.0.0.1", port, l_xml, timeout=60.0)
+            ok_l, code_l, text_l, err_l = self.tally_client.send_xml_request(self.tally_host, port, l_xml, timeout=60.0)
             if ok_l and code_l == 200:
                 extracted_ledgers = parse_metadata_response(text_l, tag_name="Ledger")
                 for l in extracted_ledgers:
@@ -315,7 +330,7 @@ class BackgroundSyncWorker(QThread):
                     if alt > max_ledger_alter:
                         max_ledger_alter = alt
             else:
-                logger.warning(f"Ledger extraction failed: {err_l}")
+                logger.error(f"Ledger extraction failed for '{c_name}': {err_l or f'HTTP {code_l}'}")
         except Exception as exc:
             logger.warning(f"Ledger extraction error for '{c_name}': {exc}")
 
@@ -383,7 +398,7 @@ class BackgroundSyncWorker(QThread):
                     if c_oid:
                         l_doc["companyId"] = c_oid
                         l_doc["cloud_company_id"] = str(c_oid)
-                    l_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
+                    l_filter: Dict[str, Any] = {"tallyExternalId": ext_id, "company_name": c_name}
                     if org_oid:
                         l_filter["organizationId"] = org_oid
                     if c_oid:
@@ -433,7 +448,7 @@ class BackgroundSyncWorker(QThread):
                         if c_oid:
                             cust_doc["companyId"] = c_oid
                             cust_doc["cloud_company_id"] = str(c_oid)
-                        cust_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
+                        cust_filter: Dict[str, Any] = {"tallyExternalId": ext_id, "company_name": c_name}
                         if org_oid:
                             cust_filter["organizationId"] = org_oid
                         if c_oid:
@@ -493,7 +508,7 @@ class BackgroundSyncWorker(QThread):
                         if c_oid:
                             supp_doc["companyId"] = c_oid
                             supp_doc["cloud_company_id"] = str(c_oid)
-                        supp_filter: Dict[str, Any] = {"tallyExternalId": supp_ext_id}
+                        supp_filter: Dict[str, Any] = {"tallyExternalId": supp_ext_id, "company_name": c_name}
                         if org_oid:
                             supp_filter["organizationId"] = org_oid
                         if c_oid:
@@ -520,7 +535,7 @@ class BackgroundSyncWorker(QThread):
                 ["NAME", "PARENT", "CATEGORY", "BASEUNITS", "ADDITIONALUNITS", "GSTREPUOM", "CLOSINGBALANCE", "OPENINGBALANCE", "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM", "CLOSINGRATE", "CLOSINGVALUE", "OPENINGRATE", "OPENINGVALUE", "HSNCODE", "GSTAPPLICABLE", "HSNDETAILS.LIST", "GSTDETAILS.LIST", "TARIFFLIST.LIST", "TARIFFCODE", "GSTCLASSIFICATION", "GSTHSNNAME", "HSNNAME", "BATCHNAME", "BATCHALLOCATIONS.LIST", "GODOWNALLOCATIONS.LIST", "GUID", "ALTERID", "REORDERLEVEL"],
                 company_name=c_name
             )
-            ok_s, code_s, text_s, err_s = self.tally_client.send_xml_request("127.0.0.1", port, s_xml, timeout=60.0)
+            ok_s, code_s, text_s, err_s = self.tally_client.send_xml_request(self.tally_host, port, s_xml, timeout=60.0)
             if ok_s and code_s == 200:
                 extracted_stock_items = parse_metadata_response(text_s, tag_name="StockItem")
                 for s in extracted_stock_items:
@@ -528,7 +543,7 @@ class BackgroundSyncWorker(QThread):
                     if alt > max_stock_alter:
                         max_stock_alter = alt
             else:
-                logger.warning(f"Stock items extraction failed: {err_s}")
+                logger.error(f"Stock items extraction failed for '{c_name}': {err_s or f'HTTP {code_s}'}")
         except Exception as exc:
             logger.warning(f"Stock items extraction error for '{c_name}': {exc}")
 
@@ -693,7 +708,7 @@ class BackgroundSyncWorker(QThread):
                     if c_oid:
                         s_doc["companyId"] = c_oid
                         s_doc["cloud_company_id"] = str(c_oid)
-                    item_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
+                    item_filter: Dict[str, Any] = {"tallyExternalId": ext_id, "company_name": c_name}
                     if org_oid:
                         item_filter["organizationId"] = org_oid
                     if c_oid:
@@ -730,7 +745,7 @@ class BackgroundSyncWorker(QThread):
                     if c_oid:
                         stock_record_doc["companyId"] = c_oid
                         stock_record_doc["cloud_company_id"] = str(c_oid)
-                    stocks_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
+                    stocks_filter: Dict[str, Any] = {"tallyExternalId": ext_id, "company_name": c_name}
                     if org_oid:
                         stocks_filter["organizationId"] = org_oid
                     if c_oid:
@@ -782,7 +797,7 @@ class BackgroundSyncWorker(QThread):
                         },
                         "updatedAt": now_utc
                     }
-                    stockbal_filter = {"tallyExternalId": ext_id}
+                    stockbal_filter = {"tallyExternalId": ext_id, "company_name": c_name}
                     if org_oid:
                         stockbal_filter["organizationId"] = org_oid
                         stockbal_doc["organizationId"] = org_oid
@@ -834,7 +849,7 @@ class BackgroundSyncWorker(QThread):
                 from_date="20000101",
                 to_date="20991231"
             )
-            ok_v, code_v, text_v, err_v = self.tally_client.send_xml_request("127.0.0.1", port, v_xml, timeout=300.0)
+            ok_v, code_v, text_v, err_v = self.tally_client.send_xml_request(self.tally_host, port, v_xml, timeout=300.0)
             if ok_v and code_v == 200:
                 extracted_vouchers = parse_metadata_response(text_v, tag_name="Voucher")
                 for v in extracted_vouchers:
@@ -842,7 +857,7 @@ class BackgroundSyncWorker(QThread):
                     if alt > max_voucher_alter:
                         max_voucher_alter = alt
             else:
-                logger.warning(f"Voucher extraction failed: {err_v}")
+                logger.error(f"Voucher extraction failed for '{c_name}': {err_v or f'HTTP {code_v}'}")
 
             if not extracted_vouchers:
                 logger.info(f"Retrying voucher extraction for '{c_name}' with safe core fields fallback...")
@@ -853,7 +868,7 @@ class BackgroundSyncWorker(QThread):
                     "ALLLEDGERENTRIES.LIST", "ALLINVENTORYENTRIES.LIST"
                 ]
                 v_fb_xml = build_collection_xml("Voucher", fallback_fields, company_name=c_name, from_date="20000101", to_date="20991231")
-                ok_fb, code_fb, text_fb, err_fb = self.tally_client.send_xml_request("127.0.0.1", port, v_fb_xml, timeout=180.0)
+                ok_fb, code_fb, text_fb, err_fb = self.tally_client.send_xml_request(self.tally_host, port, v_fb_xml, timeout=180.0)
                 if ok_fb and code_fb == 200:
                     extracted_vouchers = parse_metadata_response(text_fb, tag_name="Voucher")
                     for v in extracted_vouchers:
@@ -864,7 +879,7 @@ class BackgroundSyncWorker(QThread):
             if not extracted_vouchers:
                 logger.info(f"Retrying voucher extraction for '{c_name}' with Day Book report export fallback...")
                 db_xml = build_daybook_export_xml(company_name=c_name, from_date="20000101", to_date="20991231")
-                ok_db, code_db, text_db, err_db = self.tally_client.send_xml_request("127.0.0.1", port, db_xml, timeout=180.0)
+                ok_db, code_db, text_db, err_db = self.tally_client.send_xml_request(self.tally_host, port, db_xml, timeout=180.0)
                 if ok_db and code_db == 200:
                     extracted_vouchers = parse_metadata_response(text_db, tag_name="Voucher")
                     for v in extracted_vouchers:
@@ -951,7 +966,7 @@ class BackgroundSyncWorker(QThread):
                     if c_oid:
                         v_doc["companyId"] = c_oid
                         v_doc["cloud_company_id"] = str(c_oid)
-                    v_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
+                    v_filter: Dict[str, Any] = {"tallyExternalId": ext_id, "company_name": c_name}
                     if org_oid:
                         v_filter["organizationId"] = org_oid
                     if c_oid:
@@ -983,7 +998,7 @@ class BackgroundSyncWorker(QThread):
                             sales_doc["organizationId"] = org_oid
                         if c_oid:
                             sales_doc["companyId"] = c_oid
-                        sales_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
+                        sales_filter: Dict[str, Any] = {"tallyExternalId": ext_id, "company_name": c_name}
                         if org_oid:
                             sales_filter["organizationId"] = org_oid
                         if c_oid:
@@ -1015,7 +1030,7 @@ class BackgroundSyncWorker(QThread):
                             purch_doc["organizationId"] = org_oid
                         if c_oid:
                             purch_doc["companyId"] = c_oid
-                        purch_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
+                        purch_filter: Dict[str, Any] = {"tallyExternalId": ext_id, "company_name": c_name}
                         if org_oid:
                             purch_filter["organizationId"] = org_oid
                         if c_oid:
@@ -1045,7 +1060,7 @@ class BackgroundSyncWorker(QThread):
                             bank_doc["organizationId"] = org_oid
                         if c_oid:
                             bank_doc["companyId"] = c_oid
-                        bank_filter: Dict[str, Any] = {"tallyExternalId": ext_id}
+                        bank_filter: Dict[str, Any] = {"tallyExternalId": ext_id, "company_name": c_name}
                         if org_oid:
                             bank_filter["organizationId"] = org_oid
                         if c_oid:
@@ -1138,7 +1153,7 @@ class BackgroundSyncWorker(QThread):
 
         total_records = len(extracted_ledgers) + len(extracted_stock_items) + len(extracted_vouchers)
         self.progress_changed.emit(base_pct + 70, f"[{idx}/{total_companies}] Initiating Cloud Sync Session...")
-        sync_ok, _, s_data = cloud_auth_service.sync_start(
+        sync_ok, sync_msg, s_data = cloud_auth_service.sync_start(
             company_name=c_name,
             company_guid=c_guid,
             sync_type="FULL",
@@ -1150,52 +1165,87 @@ class BackgroundSyncWorker(QThread):
                 "lastAlterId": last_alter_id
             }
         )
+        if not sync_ok:
+            logger.warning(f"Cloud sync session start warning for '{c_name}': {sync_msg}")
+
         sync_id = (s_data.get("syncJobId") or s_data.get("syncId") or s_data.get("id") or str(uuid.uuid4())) if sync_ok else str(uuid.uuid4())
+        any_batch_failed = False
+        failed_batches: List[str] = []
+        synced_ledgers = 0
+        synced_stock = 0
+        synced_vouchers = 0
 
         if extracted_ledgers:
-            ledger_chunks = list(chunk_list(extracted_ledgers, 101))
+            ledger_chunks = list(chunk_list(extracted_ledgers, 100))
             total_l = len(ledger_chunks)
             for b_idx, chunk in enumerate(ledger_chunks, start=1):
                 if self._is_cancelled:
                     return
                 is_last = (b_idx == total_l and not extracted_stock_items and not extracted_vouchers)
                 self.progress_changed.emit(base_pct + 75, f"Pushing Ledgers Batch #{b_idx}/{total_l} ({len(chunk)} items)...")
-                cloud_auth_service.sync_batch(sync_id, c_name, "LEDGER", chunk, b_idx, is_last)
+                ok_b, msg_b, _ = cloud_auth_service.sync_batch(sync_id, c_name, "LEDGER", chunk, b_idx, is_last)
+                if ok_b:
+                    synced_ledgers += len(chunk)
+                else:
+                    any_batch_failed = True
+                    failed_batches.append(f"LEDGER #{b_idx}: {msg_b}")
+                    logger.warning(f"Ledger batch #{b_idx} sync notice for '{c_name}': {msg_b}")
                 time.sleep(0.08)
 
         if extracted_stock_items:
-            stock_chunks = list(chunk_list(extracted_stock_items, 101))
+            stock_chunks = list(chunk_list(extracted_stock_items, 100))
             total_s = len(stock_chunks)
             for b_idx, chunk in enumerate(stock_chunks, start=1):
                 if self._is_cancelled:
                     return
                 is_last = (b_idx == total_s and not extracted_vouchers)
                 self.progress_changed.emit(base_pct + 80, f"Pushing Stock Batch #{b_idx}/{total_s} ({len(chunk)} items)...")
-                cloud_auth_service.sync_batch(sync_id, c_name, "STOCK", chunk, b_idx, is_last)
+                ok_b, msg_b, _ = cloud_auth_service.sync_batch(sync_id, c_name, "STOCK", chunk, b_idx, is_last)
+                if ok_b:
+                    synced_stock += len(chunk)
+                else:
+                    any_batch_failed = True
+                    failed_batches.append(f"STOCK #{b_idx}: {msg_b}")
+                    logger.warning(f"Stock batch #{b_idx} sync notice for '{c_name}': {msg_b}")
                 time.sleep(0.08)
 
         if extracted_vouchers:
-            # 50 vouchers per chunk + 150ms backpressure micro-delay to prevent cloud server RAM exhaustion
-            voucher_chunks = list(chunk_list(extracted_vouchers, 50))
+            # 25 vouchers per chunk + 250ms backpressure pause to prevent cloud server memory exhaustion
+            voucher_chunks = list(chunk_list(extracted_vouchers, 25))
             total_v = len(voucher_chunks)
             for b_idx, chunk in enumerate(voucher_chunks, start=1):
                 if self._is_cancelled:
                     return
                 is_last = (b_idx == total_v)
                 self.progress_changed.emit(base_pct + 85, f"Pushing Vouchers Batch #{b_idx}/{total_v} ({len(chunk)} items)...")
-                cloud_auth_service.sync_batch(sync_id, c_name, "VOUCHER", chunk, b_idx, is_last)
-                time.sleep(0.15)
+                ok_b, msg_b, _ = cloud_auth_service.sync_batch(sync_id, c_name, "VOUCHER", chunk, b_idx, is_last)
+                if ok_b:
+                    synced_vouchers += len(chunk)
+                else:
+                    any_batch_failed = True
+                    failed_batches.append(f"VOUCHER #{b_idx}: {msg_b}")
+                    logger.warning(f"Voucher batch #{b_idx} sync notice for '{c_name}': {msg_b}")
+                time.sleep(0.25)
+
+        total_synced = synced_ledgers + synced_stock + synced_vouchers
+        final_status = "COMPLETED" if not any_batch_failed else "FAILED"
+        if any_batch_failed:
+            logger.error(f"Cloud sync completed with failures for '{c_name}': {len(failed_batches)} batches failed: {failed_batches[:3]}")
+        else:
+            logger.info(f"Cloud sync completed successfully for '{c_name}': {total_synced}/{total_records} records pushed.")
 
         cloud_auth_service.sync_complete(
             sync_id=sync_id,
             company_name=c_name,
-            status="COMPLETED",
-            total_synced=total_records,
+            status=final_status,
+            total_synced=total_synced,
             last_alter_id=last_alter_id,
             summary={
-                "ledgersSynced": len(extracted_ledgers),
-                "stockItemsSynced": len(extracted_stock_items),
-                "vouchersSynced": len(extracted_vouchers)
+                "ledgersSynced": synced_ledgers,
+                "stockItemsSynced": synced_stock,
+                "vouchersSynced": synced_vouchers,
+                "totalRecords": total_records,
+                "errors": failed_batches[:10] if failed_batches else []
             }
         )
 
@@ -1320,9 +1370,6 @@ class BackgroundSyncWorker(QThread):
         """
         try:
             cmd_col = get_collection("commands")
-            q_filter: Dict[str, Any] = {
-                "status": {"$in": ["SENT", "PENDING", "WAITING_FOR_TALLY", "QUEUED"]}
-            }
             or_comps: List[Dict[str, Any]] = [
                 {"company_name": c_name},
                 {"payload.company_name": c_name},
@@ -1334,7 +1381,11 @@ class BackgroundSyncWorker(QThread):
                 or_comps.append({"payload.companyId": c_oid})
                 or_comps.append({"payload.companyId": str(c_oid)})
                 or_comps.append({"companyId": str(c_oid)})
-            q_filter["$or"] = or_comps
+
+            q_filter: Dict[str, Any] = {
+                "status": {"$in": ["SENT", "PENDING", "WAITING_FOR_TALLY", "QUEUED"]},
+                "$or": or_comps
+            }
             if org_oid:
                 q_filter["organizationId"] = org_oid
 

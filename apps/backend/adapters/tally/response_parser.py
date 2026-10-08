@@ -29,6 +29,58 @@ def parse_tally_xml_response(xml_text: str) -> Tuple[bool, Optional[ET.Element],
 
     return True, root, None
 
+def find_first(elem: Optional[ET.Element], *paths: str) -> Optional[ET.Element]:
+    """Safely finds the first matching XML element without relying on truth-value evaluation."""
+    if elem is None:
+        return None
+    for p in paths:
+        found = elem.find(p)
+        if found is not None:
+            return found
+    return None
+
+def find_first_text(elem: Optional[ET.Element], *paths: str, default: str = "") -> str:
+    """Safely returns the text of the first matching XML element that has non-empty text."""
+    if elem is None:
+        return default
+    for p in paths:
+        found = elem.find(p)
+        if found is not None and found.text and found.text.strip():
+            return found.text.strip()
+    return default
+
+def extract_hsn_code(elem: Optional[ET.Element]) -> str:
+    """Extracts HSN/SAC code from an Element (StockItem or StockGroup) across standard Tally GST/HSN nodes."""
+    if elem is None:
+        return ""
+    hsn_nodes = (
+        elem.findall(".//HSNCODE") + 
+        elem.findall("HSNCODE") + 
+        elem.findall(".//HSNDETAILS.LIST/HSNCODE") + 
+        elem.findall(".//GSTDETAILS.LIST/HSNCODE") +
+        elem.findall(".//TARIFFLIST.LIST/TARIFFCODE") +
+        elem.findall(".//TARIFFLIST.LIST/HSNCODE") +
+        elem.findall(".//TARIFFCODE") +
+        elem.findall("TARIFFCODE") +
+        elem.findall(".//GSTDETAILS.LIST/GSTHSNNAME") +
+        elem.findall(".//GSTHSNNAME") +
+        elem.findall("GSTHSNNAME") +
+        elem.findall(".//HSNNAME") +
+        elem.findall("HSNNAME") +
+        elem.findall(".//GSTCLASSIFICATION") +
+        elem.findall(".//HSN") +
+        elem.findall("HSN")
+    )
+    hsn_val = ""
+    for hn in reversed(hsn_nodes):
+        if hn is not None and hn.text and hn.text.strip():
+            txt = hn.text.strip()
+            if any(c.isdigit() for c in txt):
+                return txt
+            elif not hsn_val:
+                hsn_val = txt
+    return hsn_val
+
 def parse_company_list(xml_text: str) -> List[Dict[str, Any]]:
     is_ok, root, err = parse_tally_xml_response(xml_text)
     if not is_ok or root is None:
@@ -135,7 +187,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
         for elem in root.findall(".//LEDGER"):
             item_name = elem.get("NAME") or elem.get("RESERVEDNAME")
             if not item_name:
-                name_elem = elem.find("NAME") or elem.find("LEDGER.LIST/NAME")
+                name_elem = find_first(elem, "NAME", "LEDGER.LIST/NAME")
                 if name_elem is not None and name_elem.text:
                     item_name = name_elem.text.strip()
 
@@ -150,15 +202,9 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             bal_elem = elem.find("CLOSINGBALANCE")
             op_bal_elem = elem.find("OPENINGBALANCE")
             
-            gstin_elem = elem.find("PARTYGSTIN")
-            if gstin_elem is None or not gstin_elem.text:
-                gstin_elem = elem.find("GSTIN")
-            if gstin_elem is None or not gstin_elem.text:
-                gstin_elem = elem.find(".//PARTYGSTIN")
-            if gstin_elem is None or not gstin_elem.text:
-                gstin_elem = elem.find(".//GSTIN")
+            gstin_elem = find_first(elem, "PARTYGSTIN", "GSTIN", ".//PARTYGSTIN", ".//GSTIN")
 
-            ltype_elem = elem.find("LEDGERCLASSIFICATION") or elem.find("LEDGERTYPE")
+            ltype_elem = find_first(elem, "LEDGERCLASSIFICATION", "LEDGERTYPE")
             alter_elem = elem.find("ALTERID")
 
             c_bal = 0.0
@@ -292,17 +338,11 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             if not v_num and guid_val:
                 v_num = f"VCH_{guid_val[:8]}"
 
-            date_elem = elem.find("DATE")
-            if date_elem is None:
-                date_elem = elem.find("EFFECTIVEDATE")
-            if date_elem is None:
-                date_elem = elem.find("VOUCHERDATE")
-            if date_elem is None:
-                date_elem = elem.find("REFERENCEDATE")
+            date_elem = find_first(elem, "DATE", "EFFECTIVEDATE", "VOUCHERDATE", "REFERENCEDATE")
             raw_date = date_elem.text.strip() if date_elem is not None and date_elem.text else (elem.get("DATE") or elem.get("EFFECTIVEDATE"))
             parsed_date = format_tally_date(raw_date)
 
-            eff_elem = elem.find("EFFECTIVEDATE") or elem.find("DATE")
+            eff_elem = find_first(elem, "EFFECTIVEDATE", "DATE")
             eff_raw = eff_elem.text.strip() if eff_elem is not None and eff_elem.text else elem.get("EFFECTIVEDATE")
             eff_date = format_tally_date(eff_raw) or parsed_date or "2023-04-01"
             if not parsed_date:
@@ -313,7 +353,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             ref_date_elem = elem.find("REFERENCEDATE")
             ref_date = format_tally_date(ref_date_elem.text.strip()) if ref_date_elem is not None and ref_date_elem.text else parsed_date
 
-            pos_elem = elem.find("PLACEOFSUPPLY") or elem.find("STATENAME")
+            pos_elem = find_first(elem, "PLACEOFSUPPLY", "STATENAME")
             place_of_supply = pos_elem.text.strip() if pos_elem is not None and pos_elem.text else ""
 
             opt_elem = elem.find("ISOPTIONAL")
@@ -323,11 +363,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             post_elem = elem.find("ISPOSTDATED")
             is_post_dated = (post_elem.text.strip().lower() == "yes") if post_elem is not None and post_elem.text else False
 
-            party_elem = elem.find("PARTYLEDGERNAME")
-            if party_elem is None:
-                party_elem = elem.find("PARTYNAME")
-            if party_elem is None:
-                party_elem = elem.find("BASICBUYERNAME")
+            party_elem = find_first(elem, "PARTYLEDGERNAME", "PARTYNAME", "BASICBUYERNAME")
             party_val = party_elem.text.strip() if party_elem is not None and party_elem.text else ""
 
             ledger_entries = elem.findall(".//ALLLEDGERENTRIES.LIST") or elem.findall(".//LEDGERENTRIES.LIST")
@@ -367,7 +403,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                     b_type_elem = b.find("BILLTYPE")
                     b_amt_elem = b.find("AMOUNT")
                     b_credit_elem = b.find("BILLCREDITPERIOD")
-                    b_due_elem = b.find("DUEDATEOFTOTALAMOUNT") or b.find("DUEDATE")
+                    b_due_elem = find_first(b, "DUEDATEOFTOTALAMOUNT", "DUEDATE")
 
                     b_amt_val = 0.0
                     if b_amt_elem is not None and b_amt_elem.text:
@@ -485,14 +521,14 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             inv_nodes = elem.findall(".//ALLINVENTORYENTRIES.LIST") + elem.findall(".//INVENTORYENTRIES.LIST")
             parsed_inventory_entries = []
             for inv in inv_nodes:
-                i_name_elem = inv.find("STOCKITEMNAME") or inv.find("ITEMNAME")
+                i_name_elem = find_first(inv, "STOCKITEMNAME", "ITEMNAME")
                 i_rate_elem = inv.find("RATE")
-                i_qty_elem = inv.find("ACTUALQTY") or inv.find("BILLEDQTY")
+                i_qty_elem = find_first(inv, "ACTUALQTY", "BILLEDQTY")
                 i_amt_elem = inv.find("AMOUNT")
                 i_disc_elem = inv.find("DISCOUNT")
-                i_godown_elem = inv.find(".//GODOWNNAME") or inv.find("GODOWNNAME")
-                i_batch_elem = inv.find(".//BATCHNAME") or inv.find("BATCHNAME")
-                i_hsn_elem = inv.find(".//HSNCODE") or inv.find("HSNCODE")
+                i_godown_elem = find_first(inv, ".//GODOWNNAME", "GODOWNNAME")
+                i_batch_elem = find_first(inv, ".//BATCHNAME", "BATCHNAME")
+                i_hsn_elem = find_first(inv, ".//HSNCODE", "HSNCODE")
 
                 i_amt_val = 0.0
                 if i_amt_elem is not None and i_amt_elem.text:
@@ -502,7 +538,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                         pass
 
                 i_qty_str = i_qty_elem.text.strip() if i_qty_elem is not None and i_qty_elem.text else ""
-                i_unit_elem = inv.find(".//UNIT") or inv.find("UNIT") or inv.find(".//BASEUNITS") or inv.find("BASEUNITS") or inv.find(".//GSTREPUOM")
+                i_unit_elem = find_first(inv, ".//UNIT", "UNIT", ".//BASEUNITS", "BASEUNITS", ".//GSTREPUOM")
                 i_unit = i_unit_elem.text.strip() if i_unit_elem is not None and i_unit_elem.text else ""
                 if not i_unit and i_qty_str:
                     u_match = re.findall(r'[a-zA-Z]+', i_qty_str)
@@ -521,9 +557,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                     "hsnCode": i_hsn_elem.text.strip() if i_hsn_elem is not None and i_hsn_elem.text else ""
                 })
 
-            amt_elem = elem.find("AMOUNT")
-            if amt_elem is None:
-                amt_elem = elem.find("CLOSINGBALANCE")
+            amt_elem = find_first(elem, "AMOUNT", "CLOSINGBALANCE")
             amt_val = 0.0
             if amt_elem is not None and amt_elem.text:
                 try:
@@ -533,7 +567,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             elif entries_total_amt > 0:
                 amt_val = entries_total_amt / 2.0 if len(ledger_entries) > 1 else entries_total_amt
 
-            narr_elem = elem.find("NARRATION") or elem.find("NARRATION.LIST/NARRATION") or elem.find(".//NARRATION")
+            narr_elem = find_first(elem, "NARRATION", "NARRATION.LIST/NARRATION", ".//NARRATION")
             narr_val = narr_elem.text.strip() if narr_elem is not None and narr_elem.text and narr_elem.text.strip() != "None" else ""
             if not narr_val:
                 for le in parsed_ledger_entries:
@@ -578,7 +612,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
         for elem in root.findall(".//STOCKITEM"):
             item_name = elem.get("NAME") or elem.get("RESERVEDNAME")
             if not item_name:
-                name_elem = elem.find("NAME") or elem.find("STOCKITEM.LIST/NAME")
+                name_elem = find_first(elem, "NAME", "STOCKITEM.LIST/NAME")
                 if name_elem is not None and name_elem.text:
                     item_name = name_elem.text.strip()
 
@@ -591,45 +625,21 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
 
             parent_elem = elem.find("PARENT")
             cat_elem = elem.find("CATEGORY")
-            unit_elem = (
-                elem.find("BASEUNITS") or elem.find("UNIT") or elem.find("GSTREPUOM") or
-                elem.find(".//BASEUNITS") or elem.find(".//UNIT") or elem.find(".//GSTREPUOM") or
-                elem.find("UOM") or elem.find(".//UOM") or elem.find("STOCKUNIT") or elem.find(".//STOCKUNIT")
+            unit_elem = find_first(
+                elem,
+                "BASEUNITS", "UNIT", "GSTREPUOM",
+                ".//BASEUNITS", ".//UNIT", ".//GSTREPUOM",
+                "UOM", ".//UOM", "STOCKUNIT", ".//STOCKUNIT"
             )
-            alt_unit_elem = elem.find("ADDITIONALUNITS") or elem.find(".//ADDITIONALUNITS")
+            alt_unit_elem = find_first(elem, "ADDITIONALUNITS", ".//ADDITIONALUNITS")
             bal_elem = elem.find("CLOSINGBALANCE")
             op_bal_elem = elem.find("OPENINGBALANCE")
             rate_elem = elem.find("CLOSINGRATE")
             val_elem = elem.find("CLOSINGVALUE")
             op_rate_elem = elem.find("OPENINGRATE")
             op_val_elem = elem.find("OPENINGVALUE")
-            hsn_nodes = (
-                elem.findall(".//HSNCODE") + 
-                elem.findall("HSNCODE") + 
-                elem.findall(".//HSNDETAILS.LIST/HSNCODE") + 
-                elem.findall(".//GSTDETAILS.LIST/HSNCODE") +
-                elem.findall(".//TARIFFLIST.LIST/TARIFFCODE") +
-                elem.findall(".//TARIFFLIST.LIST/HSNCODE") +
-                elem.findall(".//TARIFFCODE") +
-                elem.findall("TARIFFCODE") +
-                elem.findall(".//GSTDETAILS.LIST/GSTHSNNAME") +
-                elem.findall(".//GSTHSNNAME") +
-                elem.findall("GSTHSNNAME") +
-                elem.findall(".//HSNNAME") +
-                elem.findall("HSNNAME") +
-                elem.findall(".//GSTCLASSIFICATION") +
-                elem.findall(".//HSN") +
-                elem.findall("HSN")
-            )
-            hsn_val = ""
-            for hn in reversed(hsn_nodes):
-                if hn is not None and hn.text and hn.text.strip():
-                    txt = hn.text.strip()
-                    if any(c.isdigit() for c in txt):
-                        hsn_val = txt
-                        break
-                    elif not hsn_val:
-                        hsn_val = txt
+            
+            hsn_val = extract_hsn_code(elem)
 
             gst_app_elem = elem.find("GSTAPPLICABLE")
             reorder_elem = elem.find("REORDERLEVEL")
@@ -667,7 +677,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             if op_val == 0.0 and op_qty != 0.0 and op_rate != 0.0:
                 op_val = round(op_qty * op_rate, 2)
 
-            d_elem = elem.find("STARTINGFROM") or elem.find("ACTIVEFROM") or elem.find("APPLICABLEFROM")
+            d_elem = find_first(elem, "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM")
             raw_d = d_elem.text.strip() if d_elem is not None and d_elem.text else None
             parsed_date = format_tally_date(raw_d) or "2022-04-01"
 
@@ -832,7 +842,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
         for elem in root.findall(".//UNIT"):
             u_name = elem.get("NAME") or elem.get("RESERVEDNAME")
             if not u_name:
-                name_elem = elem.find("NAME") or elem.find("ORIGINALNAME")
+                name_elem = find_first(elem, "NAME", "ORIGINALNAME")
                 if name_elem is not None and name_elem.text:
                     u_name = name_elem.text.strip()
             guid_elem = elem.find("GUID")
@@ -841,7 +851,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             if not u_name:
                 continue
 
-            symbol_elem = elem.find("SYMBOL") or elem.find("NAME")
+            symbol_elem = find_first(elem, "SYMBOL", "NAME")
             symbol_val = symbol_elem.text.strip() if symbol_elem is not None and symbol_elem.text else u_name
             orig_elem = elem.find("ORIGINALNAME")
             orig_val = orig_elem.text.strip() if orig_elem is not None and orig_elem.text else u_name
@@ -1000,11 +1010,52 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                 }
             })
 
+    elif xml_tag in ("STOCKGROUP", "STOCKGROUPS", "STOCK_GROUP", "STOCK_GROUPS"):
+        for elem in root.findall(".//STOCKGROUP"):
+            sg_name = elem.get("NAME") or elem.get("RESERVEDNAME")
+            if not sg_name:
+                name_elem = find_first(elem, "NAME", "STOCKGROUP.LIST/NAME")
+                if name_elem is not None and name_elem.text:
+                    sg_name = name_elem.text.strip()
+
+            guid_elem = elem.find("GUID")
+            if not sg_name and guid_elem is not None and guid_elem.text:
+                sg_name = f"SG_{guid_elem.text.strip()[:8]}"
+
+            if not sg_name:
+                continue
+
+            parent_elem = elem.find("PARENT")
+            alter_elem = elem.find("ALTERID")
+            parent_val = parent_elem.text.strip() if parent_elem is not None and parent_elem.text else None
+            guid_val = guid_elem.text.strip() if guid_elem is not None and guid_elem.text else None
+            alt_id = int(alter_elem.text.strip()) if alter_elem is not None and alter_elem.text and alter_elem.text.strip().isdigit() else 0
+
+            hsn_val = extract_hsn_code(elem)
+
+            items.append({
+                "name": sg_name.strip(),
+                "parent": parent_val,
+                "guid": guid_val,
+                "tallyExternalId": guid_val or sg_name.strip(),
+                "alterid": alt_id,
+                "hsnCode": hsn_val,
+                "hsn_code": hsn_val,
+                "hsn": hsn_val,
+                "raw": {
+                    "name": sg_name.strip(),
+                    "parent": parent_val,
+                    "guid": guid_val,
+                    "alterid": alt_id,
+                    "hsnCode": hsn_val
+                }
+            })
+
     else:
         for elem in root.findall(f".//{xml_tag}"):
             item_name = elem.get("NAME") or elem.get("RESERVEDNAME")
             if not item_name:
-                name_elem = elem.find("NAME") or elem.find(f"{xml_tag}.LIST/NAME")
+                name_elem = find_first(elem, "NAME", f"{xml_tag}.LIST/NAME")
                 if name_elem is not None and name_elem.text:
                     item_name = name_elem.text.strip()
 

@@ -228,6 +228,32 @@ class VoucherQueueRepository:
         self._write_local_queue(local_items)
         return True
 
+    def mark_voucher_failed(self, cmd_id: str, error_reason: str) -> bool:
+        """Marks a voucher in the queue as FAILED permanently."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            col = get_collection("pending_voucher_queue")
+            col.update_one(
+                {"cmd_id": str(cmd_id)},
+                {"$set": {
+                    "status": "FAILED",
+                    "reason": error_reason,
+                    "failed_at": now_iso
+                }}
+            )
+        except Exception as exc:
+            logger.debug(f"MongoDB queue failure update error: {exc}")
+
+        local_items = self._read_local_queue()
+        for item in local_items:
+            if str(item.get("cmd_id")) == str(cmd_id):
+                item["status"] = "FAILED"
+                item["reason"] = error_reason
+                item["failed_at"] = now_iso
+        self._write_local_queue(local_items)
+        logger.info(f"Marked pending voucher cmd_id={cmd_id} as FAILED: {error_reason}")
+        return True
+
     def delete_pending_voucher(self, cmd_id: str) -> bool:
         """Removes a voucher from the pending queue."""
         try:

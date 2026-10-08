@@ -1,5 +1,6 @@
 
 
+# pyright: reportGeneralTypeIssues=false
 import time
 import asyncio
 from datetime import datetime, timezone

@@ -1,5 +1,6 @@
 import logging
 import xml.etree.ElementTree as ET
+from typing import Optional, List, Dict, Any, Tuple
 from PySide6.QtCore import QObject, Signal
 
 logger = logging.getLogger("app.desktop.company_fetch_worker")
