@@ -67,5 +67,32 @@ class TestTallyIntegrationUnit(unittest.TestCase):
 
         self.assertIn("ledgers", ALLOWED_METADATA_TYPES)
 
+    def test_06_tdl_formula_and_address_type_safety(self):
+        from apps.backend.adapters.tally.tally_importer import build_ledger_import_xml, build_voucher_import_xml
+
+        # 1. Verify AlterIdFilter has TYPE="Formulae"
+        col_xml = build_collection_xml("Voucher", ["ALTERID"], company_name="Test Company", from_alter_id=123)
+        self.assertIn('<SYSTEM TYPE="Formulae" NAME="AlterIdFilter">', col_xml)
+
+        # 2. Verify ledger import XML has TYPE="String" for ADDRESS.LIST
+        l_xml = build_ledger_import_xml({
+            "name": "Karnavati Traders",
+            "parent": "Sundry Debtors",
+            "address": "Karnavati Club Road, SG Highway, Ahmedabad"
+        })
+        self.assertIn('<ADDRESS.LIST TYPE="String">', l_xml)
+        self.assertIn('<ADDRESS>Karnavati Club Road, SG Highway, Ahmedabad</ADDRESS>', l_xml)
+
+        # 3. Verify voucher import XML has TYPE="String" for BASICBUYERADDRESS.LIST and ADDRESS.LIST
+        v_xml = build_voucher_import_xml({
+            "voucher_type": "Sales",
+            "party_ledger": "Customer A",
+            "amount": 1000.0,
+            "address": "Karnavati Club Road\nNear SG Highway\nAhmedabad"
+        })
+        self.assertIn('<BASICBUYERADDRESS.LIST TYPE="String">', v_xml)
+        self.assertIn('<ADDRESS.LIST TYPE="String">', v_xml)
+        self.assertIn('<BASICBUYERADDRESS>Karnavati Club Road</BASICBUYERADDRESS>', v_xml)
+
 if __name__ == "__main__":
     unittest.main()

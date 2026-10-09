@@ -1,11 +1,11 @@
 {
-  "version": "1.0.14",
-  "latestVersion": "1.0.14",
-  "latest_version": "1.0.14",
+  "version": "1.0.15",
+  "latestVersion": "1.0.15",
+  "latest_version": "1.0.15",
   "minVersion": "1.0.0",
-  "releaseNotes": "Dynamic Tally port auto-detection without hardcoding; strictly rejects License Gateway (port 9999) HTML responses, and verifies authentic Tally Prime XML envelopes.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.14.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.14.exe",
-  "sha256": "6436227c1501656d2d9a6fdd3f6375df081538ff8e9670c3de520a5162960a60",
+  "releaseNotes": "TDL formula safety fix: Strict String type annotation for address lists, elimination of UI Day Book modal fallback, and TDL Formulae definition enforcement.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.15.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.15.exe",
+  "sha256": "f4e59d32262bf5190d422296129d0c26f9f9988224531550fc045b3cda811b81",
   "mandatory": true
 }

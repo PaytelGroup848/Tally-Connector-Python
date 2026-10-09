@@ -118,7 +118,7 @@ def build_ledger_import_xml(ledger_data: Dict[str, Any]) -> str:
     gstin_tag = f"<PARTYGSTIN>{gstin}</PARTYGSTIN>" if gstin else ""
     mobile_tag = f"<LEDGERMOBILE>{mobile}</LEDGERMOBILE>" if mobile else ""
     email_tag = f"<EMAIL>{email}</EMAIL>" if email else ""
-    address_tag = f"<ADDRESS.LIST><ADDRESS>{address}</ADDRESS></ADDRESS.LIST>" if address else ""
+    address_tag = f"<ADDRESS.LIST TYPE=\"String\"><ADDRESS>{address}</ADDRESS></ADDRESS.LIST>" if address else ""
 
     duty_head = escape_xml(ledger_data.get("duty_head") or ledger_data.get("tax_head") or "")
     tax_tags = ""
@@ -1528,9 +1528,9 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
         if not lines:
             lines = [party_address.strip()]
         b_lines = "".join(f"\n                            <BASICBUYERADDRESS>{escape_xml(l)}</BASICBUYERADDRESS>" for l in lines[:4])
-        buyer_tags.append(f"<BASICBUYERADDRESS.LIST>{b_lines}\n                        </BASICBUYERADDRESS.LIST>")
+        buyer_tags.append(f"<BASICBUYERADDRESS.LIST TYPE=\"String\">{b_lines}\n                        </BASICBUYERADDRESS.LIST>")
         a_lines = "".join(f"\n                            <ADDRESS>{escape_xml(l)}</ADDRESS>" for l in lines[:4])
-        buyer_tags.append(f"<ADDRESS.LIST>{a_lines}\n                        </ADDRESS.LIST>")
+        buyer_tags.append(f"<ADDRESS.LIST TYPE=\"String\">{a_lines}\n                        </ADDRESS.LIST>")
     buyer_details_xml = ("\n                        " + "\n                        ".join(buyer_tags)) if buyer_tags else ""
 
     xml_envelope = f"""<ENVELOPE>

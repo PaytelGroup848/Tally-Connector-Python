@@ -3,7 +3,7 @@
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
 
 class CtrlBooksFooter(QWidget):
-    def __init__(self, phone: str = "+91 7564044692", email: str = "support@ctrlbooks.com", parent=None):
+    def __init__(self, phone: str = "+91 9311472357", email: str = "support@ctrlbooks.com", parent=None):
         super().__init__(parent)
         self.phone = phone
         self.email = email

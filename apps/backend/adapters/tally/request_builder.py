@@ -62,7 +62,7 @@ def build_collection_xml(
     system_tag = ""
     if from_alter_id is not None and from_alter_id > 0:
         filter_tag = "<FILTER>AlterIdFilter</FILTER>"
-        system_tag = f"<SYSTEM NAME=\"AlterIdFilter\">$ALTERID &gt; {from_alter_id}</SYSTEM>"
+        system_tag = f"<SYSTEM TYPE=\"Formulae\" NAME=\"AlterIdFilter\">$ALTERID &gt; {from_alter_id}</SYSTEM>"
 
     return f"""<ENVELOPE>
     <HEADER>

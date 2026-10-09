@@ -11,7 +11,7 @@ from shared.auth.cloud_auth_service import cloud_auth_service
 from shared.logging_config import get_logger
 from shared.db.mongo_client import get_collection
 from apps.backend.adapters.tally.tally_client import TallyClient
-from apps.backend.adapters.tally.request_builder import build_company_list_xml, build_collection_xml, build_daybook_export_xml
+from apps.backend.adapters.tally.request_builder import build_company_list_xml, build_collection_xml
 from apps.backend.adapters.tally.response_parser import parse_company_list, parse_metadata_response
 
 logger = get_logger("app.threads.sync_worker")
@@ -877,11 +877,15 @@ class BackgroundSyncWorker(QThread):
                             max_voucher_alter = alt
 
             if not extracted_vouchers:
-                logger.info(f"Retrying voucher extraction for '{c_name}' with Day Book report export fallback...")
-                db_xml = build_daybook_export_xml(company_name=c_name, from_date="20000101", to_date="20991231")
-                ok_db, code_db, text_db, err_db = self.tally_client.send_xml_request(self.tally_host, port, db_xml, timeout=180.0)
-                if ok_db and code_db == 200:
-                    extracted_vouchers = parse_metadata_response(text_db, tag_name="Voucher")
+                logger.info(f"Retrying voucher extraction for '{c_name}' with minimal raw collection fallback...")
+                min_fields = [
+                    "DATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "PARTYLEDGERNAME", "PARTYNAME",
+                    "AMOUNT", "GUID", "ALTERID", "ALLLEDGERENTRIES.LIST"
+                ]
+                v_min_xml = build_collection_xml("Voucher", min_fields, company_name=c_name, from_date="20000101", to_date="20991231")
+                ok_min, code_min, text_min, err_min = self.tally_client.send_xml_request(self.tally_host, port, v_min_xml, timeout=120.0)
+                if ok_min and code_min == 200:
+                    extracted_vouchers = parse_metadata_response(text_min, tag_name="Voucher")
                     for v in extracted_vouchers:
                         alt = int(v.get("alterid", 0) or 0)
                         if alt > max_voucher_alter:
