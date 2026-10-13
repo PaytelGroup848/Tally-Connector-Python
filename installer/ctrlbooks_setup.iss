@@ -9,7 +9,7 @@
 ; =====================================================================
 
 #define MyAppName "CtrlBooks"
-#define MyAppVersion "1.0.15"
+#define MyAppVersion "1.0.17"
 #define MyAppPublisher "CtrlBooks"
 #define MyAppURL "https://ctrlbooks.com"
 #define MyAppExeName "ctrlbooks.exe"
@@ -72,3 +72,21 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 Type: filesandordirs; Name: "{app}"
 Type: filesandordirs; Name: "{userappdata}\CtrlBooks"
 Type: filesandordirs; Name: "{localappdata}\CtrlBooks"
+
+[Code]
+function InitializeSetup(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/F /IM ctrlbooks.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := True;
+end;
+
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/F /IM ctrlbooks.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := True;
+end;
+

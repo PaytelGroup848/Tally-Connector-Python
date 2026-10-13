@@ -1,11 +1,11 @@
 {
-  "version": "1.0.15",
-  "latestVersion": "1.0.15",
-  "latest_version": "1.0.15",
+  "version": "1.0.17",
+  "latestVersion": "1.0.17",
+  "latest_version": "1.0.17",
   "minVersion": "1.0.0",
-  "releaseNotes": "TDL formula safety fix: Strict String type annotation for address lists, elimination of UI Day Book modal fallback, and TDL Formulae definition enforcement.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.15.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.15.exe",
-  "sha256": "f4e59d32262bf5190d422296129d0c26f9f9988224531550fc045b3cda811b81",
+  "releaseNotes": "Fix Parties and Stock Items sync: Added GST rate %, stock group hierarchy fallback, unit details, and voucher inventory items mapping for web tax invoices.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.17.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.17.exe",
+  "sha256": "eedda3f1d518597ce3b5627d9767cf51f7a063acbd3410e7686a45384e333cad",
   "mandatory": true
 }

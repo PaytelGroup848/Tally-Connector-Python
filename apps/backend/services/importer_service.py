@@ -222,6 +222,13 @@ class ImporterService:
         item_name = str(clean_payload.get("name") or clean_payload.get("itemName") or clean_payload.get("item_name") or "")
         unit_name = str(clean_payload.get("unit") or clean_payload.get("units") or clean_payload.get("base_units") or "Pcs")
         hsn_code = str(clean_payload.get("hsn_code") or clean_payload.get("hsnCode") or clean_payload.get("hsn") or "")
+        hsn_desc = str(clean_payload.get("hsn_description") or clean_payload.get("hsn_desc") or clean_payload.get("description") or "")
+        gst_rate = clean_payload.get("gst_rate") or clean_payload.get("gstRate") or clean_payload.get("tax_rate") or clean_payload.get("taxRate")
+        quantity = clean_payload.get("quantity") or clean_payload.get("qty") or clean_payload.get("opening_balance") or clean_payload.get("openingBalance") or 0.0
+        rate = clean_payload.get("rate") or clean_payload.get("opening_rate") or clean_payload.get("openingRate") or 0.0
+        value = clean_payload.get("value") or clean_payload.get("opening_value") or clean_payload.get("openingValue") or clean_payload.get("amount") or 0.0
+        godown = str(clean_payload.get("godown") or clean_payload.get("godown_name") or clean_payload.get("godownName") or clean_payload.get("warehouse") or clean_payload.get("location") or "")
+        batch = str(clean_payload.get("batch") or clean_payload.get("batch_name") or clean_payload.get("batchName") or clean_payload.get("batch_number") or clean_payload.get("batchNumber") or "")
 
         ok = await self.tally_importer.ensure_stock_item(
             host=host,
@@ -230,6 +237,13 @@ class ImporterService:
             item_name=item_name,
             unit_name=unit_name,
             hsn_code=hsn_code,
+            hsn_desc=hsn_desc,
+            gst_rate=gst_rate,
+            quantity=quantity,
+            rate=rate,
+            value=value,
+            godown=godown,
+            batch=batch,
         )
 
         ext_id = None

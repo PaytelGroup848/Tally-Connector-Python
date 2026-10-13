@@ -260,14 +260,16 @@ def resolve_active_tally_port(
 
     # 2. Configured port saved by user
     cfg_port = None
-    try:
-        cp = int(cfg.get("tally_port"))
-        if cp > 0:
-            cfg_port = cp
-            if cp not in candidates:
-                candidates.append(cp)
-    except Exception:
-        pass
+    raw_cfg_port = cfg.get("tally_port")
+    if raw_cfg_port is not None:
+        try:
+            cp = int(raw_cfg_port)
+            if cp > 0:
+                cfg_port = cp
+                if cp not in candidates:
+                    candidates.append(cp)
+        except (ValueError, TypeError):
+            pass
 
     # 3. Dynamic discovery from running Tally processes and tally.ini
     try:

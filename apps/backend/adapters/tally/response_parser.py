@@ -81,6 +81,49 @@ def extract_hsn_code(elem: Optional[ET.Element]) -> str:
                 hsn_val = txt
     return hsn_val
 
+def extract_gst_details(elem: Optional[ET.Element]) -> Tuple[float, str]:
+    """Extracts GST rate (%) and taxability from a StockItem or StockGroup Element."""
+    if elem is None:
+        return 0.0, "Taxable"
+    taxability = "Taxable"
+    for t_elem in elem.findall(".//TAXABILITY"):
+        if t_elem is not None and t_elem.text and t_elem.text.strip():
+            taxability = t_elem.text.strip()
+            break
+    igst_rate = None
+    cgst_rate = None
+    sgst_rate = None
+    for r_elem in elem.findall(".//RATEDETAILS.LIST"):
+        head_elem = r_elem.find("GSTRATEDUTYHEAD")
+        rate_elem = r_elem.find("GSTRATE")
+        head_text = (head_elem.text.strip() if head_elem is not None and head_elem.text else "").upper()
+        if rate_elem is not None and rate_elem.text and rate_elem.text.strip():
+            try:
+                r_val = float(rate_elem.text.strip().replace("%", ""))
+                if "IGST" in head_text:
+                    igst_rate = r_val
+                elif "CGST" in head_text:
+                    cgst_rate = r_val
+                elif "SGST" in head_text or "UTGST" in head_text:
+                    sgst_rate = r_val
+            except ValueError:
+                pass
+    if igst_rate is not None:
+        return igst_rate, taxability
+    if cgst_rate is not None and sgst_rate is not None:
+        return round(cgst_rate + sgst_rate, 2), taxability
+    if cgst_rate is not None:
+        return round(cgst_rate * 2.0, 2), taxability
+    for tag in [".//IGSTRATE", ".//GSTRATE", ".//RATEOFVAT", "GSTRATE", "IGSTRATE"]:
+        for n in elem.findall(tag):
+            if n is not None and n.text and n.text.strip():
+                try:
+                    return float(n.text.strip().replace("%", "")), taxability
+                except ValueError:
+                    pass
+    return 0.0, taxability
+
+
 def parse_company_list(xml_text: str) -> List[Dict[str, Any]]:
     is_ok, root, err = parse_tally_xml_response(xml_text)
     if not is_ok or root is None:
@@ -175,6 +218,93 @@ def clean_numeric(val: Any, default: float = 0.0) -> float:
             return default
     return default
 
+def parse_qty(qty_str: Any) -> Tuple[float, str]:
+    """Parse Tally quantity string e.g. '10 Nos' -> (10.0, 'Nos')."""
+    if not qty_str:
+        return 0.0, ""
+    m = re.match(r'^(-?[\d,.]+)\s*(.*)$', str(qty_str).strip())
+    if m:
+        try:
+            return float(m.group(1).replace(',', '')), m.group(2).strip()
+        except ValueError:
+            return 0.0, m.group(2).strip()
+    return 0.0, ""
+
+def parse_rate(rate_str: Any) -> float:
+    """Parse Tally rate string e.g. '826.00/Nos' -> 826.00."""
+    if not rate_str:
+        return 0.0
+    m = re.search(r'-?[\d,.]+', str(rate_str))
+    if m:
+        try:
+            return float(m.group(0).replace(',', ''))
+        except ValueError:
+            return 0.0
+    return 0.0
+
+_ITEM_MASTER_LOOKUP_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+def lookup_stock_item_details(item_name: str, company_name: str = "") -> Dict[str, Any]:
+    """Looks up stock item metadata (GUID, HSN code, Base Unit) from cache or MongoDB collections."""
+    if not item_name or not str(item_name).strip():
+        return {"guid": "", "hsnCode": "", "unit": "", "gstRate": 0.0}
+    clean = str(item_name).strip()
+    c_key = (company_name.strip().lower() if company_name else "", clean.lower())
+    global_key = ("", clean.lower())
+
+    if c_key in _ITEM_MASTER_LOOKUP_CACHE:
+        return _ITEM_MASTER_LOOKUP_CACHE[c_key]
+    if global_key in _ITEM_MASTER_LOOKUP_CACHE:
+        return _ITEM_MASTER_LOOKUP_CACHE[global_key]
+
+    try:
+        from shared.db.mongo_client import get_mongo_db
+        db = get_mongo_db()
+        for col_name in ("stock_items", "items", "stocks"):
+            col = db[col_name]
+            doc = None
+            if company_name:
+                doc = col.find_one({"company_name": company_name, "$or": [{"name": clean}, {"itemName": clean}]})
+            if not doc:
+                doc = col.find_one({"$or": [{"name": clean}, {"itemName": clean}]})
+            if not doc:
+                rgx = re.compile(f"^{re.escape(clean)}$", re.IGNORECASE)
+                if company_name:
+                    doc = col.find_one({"company_name": company_name, "$or": [{"name": rgx}, {"itemName": rgx}]})
+                if not doc:
+                    doc = col.find_one({"$or": [{"name": rgx}, {"itemName": rgx}]})
+            if doc:
+                g_val = str(doc.get("guid") or doc.get("tallyExternalId") or doc.get("itemTallyExternalId") or "").strip()
+                h_val = str(doc.get("hsnCode") or doc.get("hsn") or doc.get("hsn_code") or "").strip()
+                u_val = str(doc.get("unit") or doc.get("baseUnits") or doc.get("uom") or doc.get("units") or "").strip()
+                try:
+                    gst_val = float(doc.get("gstRate") or doc.get("gst_rate") or doc.get("taxRate") or doc.get("tax_rate") or 0.0)
+                except (ValueError, TypeError):
+                    gst_val = 0.0
+                if not h_val or gst_val <= 0.0:
+                    p_grp = str(doc.get("parent") or doc.get("group") or "").strip()
+                    if p_grp:
+                        grp_doc = db.stock_groups.find_one({"name": p_grp})
+                        if grp_doc:
+                            if not h_val:
+                                h_val = str(grp_doc.get("hsnCode") or grp_doc.get("hsn") or grp_doc.get("hsn_code") or "").strip()
+                            if gst_val <= 0.0:
+                                try:
+                                    gst_val = float(grp_doc.get("gstRate") or grp_doc.get("gst_rate") or grp_doc.get("taxRate") or 0.0)
+                                except (ValueError, TypeError):
+                                    pass
+                res = {"guid": g_val, "hsnCode": h_val, "unit": u_val, "gstRate": gst_val}
+                _ITEM_MASTER_LOOKUP_CACHE[c_key] = res
+                _ITEM_MASTER_LOOKUP_CACHE[global_key] = res
+                return res
+    except Exception as exc:
+        logger.debug(f"lookup_stock_item_details error for '{item_name}': {exc}")
+
+    res = {"guid": "", "hsnCode": "", "unit": "", "gstRate": 0.0}
+    _ITEM_MASTER_LOOKUP_CACHE[c_key] = res
+    return res
+
+
 def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]]:
     is_ok, root, err = parse_tally_xml_response(xml_text)
     if not is_ok or root is None:
@@ -202,7 +332,19 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             bal_elem = elem.find("CLOSINGBALANCE")
             op_bal_elem = elem.find("OPENINGBALANCE")
             
-            gstin_elem = find_first(elem, "PARTYGSTIN", "GSTIN", ".//PARTYGSTIN", ".//GSTIN")
+            gstin_elem = find_first(elem, "PARTYGSTIN", "GSTIN", ".//PARTYGSTIN", ".//GSTIN", ".//LEDGSTREGDETAILS.LIST/GSTIN")
+
+            state_elem = find_first(elem, "STATENAME", "STATE", ".//LEDMAILINGDETAILS.LIST/STATE", ".//LEDGSTREGDETAILS.LIST/STATE", ".//STATENAME", ".//STATE")
+            state_val = state_elem.text.strip() if state_elem is not None and state_elem.text and state_elem.text.strip() and "Not Applicable" not in state_elem.text else ""
+
+            country_elem = find_first(elem, "COUNTRYNAME", "COUNTRY", ".//LEDMAILINGDETAILS.LIST/COUNTRY", ".//COUNTRYNAME", ".//COUNTRY")
+            country_val = country_elem.text.strip() if country_elem is not None and country_elem.text and country_elem.text.strip() and "Not Applicable" not in country_elem.text else ""
+
+            pin_elem = find_first(elem, "PINCODE", ".//LEDMAILINGDETAILS.LIST/PINCODE", ".//PINCODE")
+            pin_val = pin_elem.text.strip() if pin_elem is not None and pin_elem.text and pin_elem.text.strip() else ""
+
+            reg_type_elem = find_first(elem, "GSTREGISTRATIONTYPE", ".//LEDGSTREGDETAILS.LIST/GSTREGISTRATIONTYPE", ".//GSTREGISTRATIONTYPE")
+            reg_type_val = reg_type_elem.text.strip() if reg_type_elem is not None and reg_type_elem.text and reg_type_elem.text.strip() and "Not Applicable" not in reg_type_elem.text else ""
 
             ltype_elem = find_first(elem, "LEDGERCLASSIFICATION", "LEDGERTYPE")
             alter_elem = elem.find("ALTERID")
@@ -241,6 +383,9 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             addr_nodes = elem.findall(".//ADDRESS.LIST/ADDRESS") + elem.findall(".//ADDRESS")
             addr_lines = [a.text.strip() for a in addr_nodes if a.text and a.text.strip()]
             addr_val = ", ".join(dict.fromkeys(addr_lines))
+
+            pan_elem = find_first(elem, "INCOMETAXNUMBER", ".//INCOMETAXNUMBER", "PAN", ".//PAN")
+            pan_val = pan_elem.text.strip() if pan_elem is not None and pan_elem.text else ""
 
             d_elem = elem.find("STARTINGFROM")
             if d_elem is None:
@@ -286,6 +431,11 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                 "email": email_val,
                 "phone": phone_val,
                 "address": addr_val,
+                "state": state_val,
+                "country": country_val,
+                "pincode": pin_val,
+                "registration_type": reg_type_val,
+                "pan": pan_val,
                 "openingBalance": op_bal,
                 "closingBalance": c_bal,
                 "creditLimit": credit_limit,
@@ -305,6 +455,11 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                     "email": email_val,
                     "phone": phone_val,
                     "address": addr_val,
+                    "state": state_val,
+                    "country": country_val,
+                    "pincode": pin_val,
+                    "registration_type": reg_type_val,
+                    "pan": pan_val,
                     "openingBalance": op_bal,
                     "closingBalance": c_bal,
                     "creditLimit": credit_limit,
@@ -518,43 +673,81 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             if not party_val and first_entry_name:
                 party_val = first_entry_name
 
+            if party_val:
+                p_lower = party_val.strip().lower()
+                for ple in parsed_ledger_entries:
+                    if not ple.get("isPartyLedger"):
+                        if ple.get("ledgerName", "").strip().lower() == p_lower:
+                            ple["isPartyLedger"] = True
+
             inv_nodes = elem.findall(".//ALLINVENTORYENTRIES.LIST") + elem.findall(".//INVENTORYENTRIES.LIST")
             parsed_inventory_entries = []
             for inv in inv_nodes:
-                i_name_elem = find_first(inv, "STOCKITEMNAME", "ITEMNAME")
-                i_rate_elem = inv.find("RATE")
-                i_qty_elem = find_first(inv, "ACTUALQTY", "BILLEDQTY")
-                i_amt_elem = inv.find("AMOUNT")
-                i_disc_elem = inv.find("DISCOUNT")
-                i_godown_elem = find_first(inv, ".//GODOWNNAME", "GODOWNNAME")
-                i_batch_elem = find_first(inv, ".//BATCHNAME", "BATCHNAME")
-                i_hsn_elem = find_first(inv, ".//HSNCODE", "HSNCODE")
+                i_name_elem = find_first(inv, "STOCKITEMNAME", "ITEMNAME", ".//STOCKITEMNAME", ".//ITEMNAME")
+                item_name_str = i_name_elem.text.strip() if i_name_elem is not None and i_name_elem.text else ""
+                if not item_name_str:
+                    continue
 
+                item_details = lookup_stock_item_details(item_name_str, company_name=find_first_text(elem, "SVCURRENTCOMPANY", ".//SVCURRENTCOMPANY"))
+
+                inv_guid_elem = find_first(inv, "GUID", ".//GUID", "STOCKITEMGUID", ".//STOCKITEMGUID")
+                inv_guid = inv_guid_elem.text.strip() if inv_guid_elem is not None and inv_guid_elem.text else ""
+                item_external_id = inv_guid or item_details.get("guid") or ""
+
+                i_hsn_elem = find_first(inv, ".//HSNCODE", "HSNCODE", ".//HSN", "HSN")
+                hsn_code_val = i_hsn_elem.text.strip() if i_hsn_elem is not None and i_hsn_elem.text else ""
+                if not hsn_code_val:
+                    hsn_code_val = item_details.get("hsnCode", "")
+
+                i_rate_elem = find_first(inv, "RATE", ".//RATE", ".//BATCHRATE", "BATCHRATE")
+                i_rate_str = i_rate_elem.text.strip() if i_rate_elem is not None and i_rate_elem.text else ""
+                rate_val = parse_rate(i_rate_str)
+
+                i_qty_elem = find_first(inv, "BILLEDQTY", "ACTUALQTY", ".//BILLEDQTY", ".//ACTUALQTY")
+                i_qty_str = i_qty_elem.text.strip() if i_qty_elem is not None and i_qty_elem.text else ""
+                qty_num, qty_unit_parsed = parse_qty(i_qty_str)
+
+                i_unit_elem = find_first(inv, ".//UNIT", "UNIT", ".//BASEUNITS", "BASEUNITS", ".//GSTREPUOM")
+                i_unit = i_unit_elem.text.strip() if i_unit_elem is not None and i_unit_elem.text else ""
+                unit_val = i_unit or qty_unit_parsed or item_details.get("unit", "")
+
+                i_amt_elem = find_first(inv, "AMOUNT", ".//AMOUNT")
                 i_amt_val = 0.0
                 if i_amt_elem is not None and i_amt_elem.text:
                     try:
                         i_amt_val = abs(float(i_amt_elem.text.strip()))
                     except ValueError:
                         pass
+                if i_amt_val == 0.0 and qty_num != 0.0 and rate_val != 0.0:
+                    i_amt_val = round(abs(qty_num * rate_val), 2)
+                else:
+                    i_amt_val = round(i_amt_val, 2)
 
-                i_qty_str = i_qty_elem.text.strip() if i_qty_elem is not None and i_qty_elem.text else ""
-                i_unit_elem = find_first(inv, ".//UNIT", "UNIT", ".//BASEUNITS", "BASEUNITS", ".//GSTREPUOM")
-                i_unit = i_unit_elem.text.strip() if i_unit_elem is not None and i_unit_elem.text else ""
-                if not i_unit and i_qty_str:
-                    u_match = re.findall(r'[a-zA-Z]+', i_qty_str)
-                    if u_match:
-                        i_unit = u_match[-1].strip()
+                i_godown_elem = find_first(inv, ".//GODOWNNAME", "GODOWNNAME", ".//BATCHALLOCATIONS.LIST/GODOWNNAME", "BATCHALLOCATIONS.LIST/GODOWNNAME")
+                godown_val = i_godown_elem.text.strip() if i_godown_elem is not None and i_godown_elem.text else ""
+                if not godown_val:
+                    godown_val = "Main Location"
+
+                i_disc_elem = find_first(inv, "DISCOUNT", ".//DISCOUNT", ".//BATCHDISCOUNT")
+                disc_val = i_disc_elem.text.strip() if i_disc_elem is not None and i_disc_elem.text else "0"
+
+                i_batch_elem = find_first(inv, ".//BATCHNAME", "BATCHNAME", ".//BATCHALLOCATIONS.LIST/BATCHNAME")
+                batch_val = i_batch_elem.text.strip() if i_batch_elem is not None and i_batch_elem.text else ""
+
+                parsed_qty_final = int(qty_num) if qty_num.is_integer() else round(qty_num, 4)
 
                 parsed_inventory_entries.append({
-                    "itemName": i_name_elem.text.strip() if i_name_elem is not None and i_name_elem.text else "",
-                    "rate": i_rate_elem.text.strip() if i_rate_elem is not None and i_rate_elem.text else "",
-                    "quantity": i_qty_str,
-                    "unit": i_unit,
+                    "itemName": item_name_str,
+                    "itemTallyExternalId": item_external_id,
+                    "hsnCode": hsn_code_val,
+                    "gstRate": float(item_details.get("gstRate", 0.0) or 0.0),
+                    "quantity": parsed_qty_final,
+                    "unit": unit_val,
+                    "rate": round(rate_val, 2),
                     "amount": i_amt_val,
-                    "discount": i_disc_elem.text.strip() if i_disc_elem is not None and i_disc_elem.text else "0",
-                    "godown": i_godown_elem.text.strip() if i_godown_elem is not None and i_godown_elem.text else "",
-                    "batch": i_batch_elem.text.strip() if i_batch_elem is not None and i_batch_elem.text else "",
-                    "hsnCode": i_hsn_elem.text.strip() if i_hsn_elem is not None and i_hsn_elem.text else ""
+                    "godown": godown_val,
+                    "discount": disc_val,
+                    "batch": batch_val
                 })
 
             amt_elem = find_first(elem, "AMOUNT", "CLOSINGBALANCE")
@@ -640,6 +833,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             op_val_elem = elem.find("OPENINGVALUE")
             
             hsn_val = extract_hsn_code(elem)
+            gst_rate_val, taxability_val = extract_gst_details(elem)
 
             gst_app_elem = elem.find("GSTAPPLICABLE")
             reorder_elem = elem.find("REORDERLEVEL")
@@ -730,6 +924,11 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                 "hsnCode": hsn_val,
                 "hsn_code": hsn_val,
                 "hsn": hsn_val,
+                "gstRate": gst_rate_val,
+                "gst_rate": gst_rate_val,
+                "taxRate": gst_rate_val,
+                "tax_rate": gst_rate_val,
+                "taxability": taxability_val,
                 "gstApplicable": gst_app_val,
                 "reorderLevel": reorder_val,
                 "guid": guid_val,
@@ -755,10 +954,24 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                     "hsnCode": hsn_val,
                     "hsn_code": hsn_val,
                     "hsn": hsn_val,
+                    "gstRate": gst_rate_val,
+                    "gst_rate": gst_rate_val,
+                    "taxRate": gst_rate_val,
+                    "tax_rate": gst_rate_val,
+                    "taxability": taxability_val,
                     "guid": guid_val,
                     "alterid": alt_id
                 }
             })
+
+            if item_name:
+                clean_in = item_name.strip()
+                _ITEM_MASTER_LOOKUP_CACHE[("", clean_in.lower())] = {
+                    "guid": str(guid_val or ext_id or ""),
+                    "hsnCode": str(hsn_val or ""),
+                    "unit": str(unit_val or ""),
+                    "gstRate": float(gst_rate_val or 0.0)
+                }
 
     elif xml_tag in ("GROUP", "GROUPS"):
         for elem in root.findall(".//GROUP"):
@@ -957,6 +1170,8 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                     elif not sg_hsn_val:
                         sg_hsn_val = txt
 
+            sg_gst_rate, sg_taxability = extract_gst_details(elem)
+
             items.append({
                 "tallyExternalId": guid_val or sg_name.strip(),
                 "name": sg_name.strip(),
@@ -965,6 +1180,11 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                 "hsnCode": sg_hsn_val,
                 "hsn_code": sg_hsn_val,
                 "hsn": sg_hsn_val,
+                "gstRate": sg_gst_rate,
+                "gst_rate": sg_gst_rate,
+                "taxRate": sg_gst_rate,
+                "tax_rate": sg_gst_rate,
+                "taxability": sg_taxability,
                 "alterid": alt_id,
                 "raw": {
                     "name": sg_name.strip(),
@@ -973,6 +1193,9 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                     "hsnCode": sg_hsn_val,
                     "hsn_code": sg_hsn_val,
                     "hsn": sg_hsn_val,
+                    "gstRate": sg_gst_rate,
+                    "taxRate": sg_gst_rate,
+                    "taxability": sg_taxability,
                     "alterid": alt_id
                 }
             })

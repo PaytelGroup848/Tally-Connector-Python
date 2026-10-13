@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
+
 from shared.config import get_settings
 from shared.logging_config import setup_logging, get_logger
 from shared.exceptions import register_exception_handlers

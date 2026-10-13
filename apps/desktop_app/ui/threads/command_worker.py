@@ -3,6 +3,7 @@
 # pyright: reportGeneralTypeIssues=false
 import time
 import asyncio
+from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from bson import ObjectId
 from PySide6.QtCore import QThread, Signal
@@ -12,6 +13,12 @@ from shared.db.mongo_client import get_collection
 from shared.repositories.activity_history_repository import activity_history_repo
 from shared.repositories.voucher_queue_repository import voucher_queue_repo
 from apps.backend.services.importer_service import ImporterService
+from apps.desktop_app.ui.threads.command_handlers import (
+    execute_voucher_command,
+    execute_party_command,
+    execute_create_stock_item_command,
+    execute_update_stock_item_command,
+)
 
 logger = get_logger("app.threads.command_worker")
 
@@ -119,6 +126,11 @@ class RemoteCommandWorker(QThread):
             result_data = {}
             error_msg = None
             error_details = {}
+            resolved_company: str = ""
+            active_host: str = str(getattr(self.settings, "tally_host", "localhost") or "localhost")
+            active_port: int = int(getattr(self.settings, "tally_port", 9000) or 9000)
+            amt: float = 0.0
+            norm_payload: Dict[str, Any] = dict(payload)
 
             try:
                 comp_id = cmd.get("companyId") or cmd.get("company_id") or payload.get("companyId") or payload.get("company_id")
@@ -131,7 +143,6 @@ class RemoteCommandWorker(QThread):
                     or payload.get("company")
                     or payload.get("current_company")
                 )
-                resolved_company = ""
                 if raw_comp and str(raw_comp).strip().lower() not in ("none", "null", "undefined", ""):
                     resolved_company = str(raw_comp).strip()
 
@@ -256,453 +267,54 @@ class RemoteCommandWorker(QThread):
                     "CREATE_SALES_ORDER",
                     "CREATE_PURCHASE_ORDER",
                 ):
-                    norm_payload = dict(payload)
-                    norm_payload["target"] = "TALLY"
-                    norm_payload["host"] = active_host
-                    norm_payload["port"] = active_port
-                    norm_payload["tally_host"] = active_host
-                    norm_payload["tally_port"] = active_port
-                    norm_payload["companyId"] = comp_id or cmd.get("companyId") or cmd.get("company_id") or payload.get("companyId")
-                    if cmd_type in ("CREATE_RECEIPT", "PAYMENT_RECEIVED"):
-                        default_vtype = "Receipt"
-                    elif cmd_type in ("CREATE_PAYMENT", "PAYMENT_MADE"):
-                        default_vtype = "Payment"
-                    elif cmd_type in ("CREATE_PURCHASE",):
-                        default_vtype = "Purchase"
-                    elif cmd_type in ("CREATE_DEBIT_NOTE",):
-                        default_vtype = "Debit Note"
-                    elif cmd_type in ("CREATE_CREDIT_NOTE",):
-                        default_vtype = "Credit Note"
-                    elif cmd_type in ("CREATE_JOURNAL",):
-                        default_vtype = "Journal"
-                    elif cmd_type in ("CREATE_CONTRA",):
-                        default_vtype = "Contra"
-                    elif cmd_type in ("CREATE_SALES_ORDER",):
-                        default_vtype = "Sales Order"
-                    elif cmd_type in ("CREATE_PURCHASE_ORDER",):
-                        default_vtype = "Purchase Order"
-                    else:
-                        default_vtype = "Sales"
-                    norm_payload["voucher_type"] = norm_payload.get("voucherType") or norm_payload.get("voucher_type", default_vtype)
-                    norm_payload["party_ledger"] = (
-                        norm_payload.get("partyLedger")
-                        or norm_payload.get("party_ledger")
-                        or norm_payload.get("partyName")
-                        or norm_payload.get("party_name")
-                        or norm_payload.get("customerName")
-                        or norm_payload.get("supplierName")
-                        or "Cash"
+                    norm_payload, success, result_data, error_msg, error_details, should_continue = execute_voucher_command(
+                        worker=self,
+                        payload=payload,
+                        cmd=cmd,
+                        cmd_id=cmd_id,
+                        cmd_type=cmd_type,
+                        comp_id=comp_id,
+                        resolved_company=resolved_company,
+                        active_host=active_host,
+                        active_port=active_port,
+                        amt=amt,
+                        curr_email=curr_email,
+                        curr_org=curr_org,
                     )
-                    norm_payload["sales_ledger"] = norm_payload.get("salesLedger") or norm_payload.get("sales_ledger")
-                    norm_payload["purchase_ledger"] = norm_payload.get("purchaseLedger") or norm_payload.get("purchase_ledger")
-                    norm_payload["credit_note_ledger"] = (
-                        norm_payload.get("creditNoteLedger")
-                        or norm_payload.get("credit_note_ledger")
-                        or norm_payload.get("salesReturnLedger")
-                        or norm_payload.get("sales_return_ledger")
-                    )
-                    norm_payload["debit_note_ledger"] = (
-                        norm_payload.get("debitNoteLedger")
-                        or norm_payload.get("debit_note_ledger")
-                        or norm_payload.get("purchaseReturnLedger")
-                        or norm_payload.get("purchase_return_ledger")
-                    )
-                    norm_payload["bank_ledger"] = (
-                        norm_payload.get("bankLedger")
-                        or norm_payload.get("bank_ledger")
-                        or norm_payload.get("cash_bank_ledger")
-                        or norm_payload.get("account")
-                        or norm_payload.get("bank_account")
-                    )
-                    norm_payload["to_account"] = norm_payload.get("toAccount") or norm_payload.get("to_account")
-                    norm_payload["from_account"] = norm_payload.get("fromAccount") or norm_payload.get("from_account")
-                    norm_payload["ledger_entries"] = norm_payload.get("ledgerEntries") or norm_payload.get("ledger_entries")
-                    norm_payload["bill_number"] = (
-                        norm_payload.get("billNumber")
-                        or norm_payload.get("bill_number")
-                        or norm_payload.get("billNo")
-                        or norm_payload.get("bill_no")
-                        or norm_payload.get("invoiceNumber")
-                        or norm_payload.get("invoice_number")
-                    )
-                    norm_payload["order_no"] = (
-                        norm_payload.get("orderNo")
-                        or norm_payload.get("order_no")
-                        or norm_payload.get("orderNumber")
-                        or norm_payload.get("order_number")
-                    )
-                    norm_payload["due_date"] = (
-                        norm_payload.get("dueDate")
-                        or norm_payload.get("due_date")
-                        or norm_payload.get("orderDueDate")
-                        or norm_payload.get("deliveryDate")
-                    )
-                    norm_payload["company_name"] = norm_payload.get("companyName") or norm_payload.get("company_name") or resolved_company
-                    norm_payload["company_name"] = resolved_company
-                    norm_payload["date"] = norm_payload.get("date") or norm_payload.get("voucherDate")
-                    norm_payload["gstin"] = (
-                        norm_payload.get("gstin")
-                        or norm_payload.get("gstinUin")
-                        or norm_payload.get("gstNumber")
-                        or norm_payload.get("party_gstin")
-                        or norm_payload.get("partyGstin")
-                        or norm_payload.get("consigneeGstinUin")
-                        or norm_payload.get("buyerGstin")
-                    )
-                    norm_payload["state"] = (
-                        norm_payload.get("state")
-                        or norm_payload.get("party_state")
-                        or norm_payload.get("placeOfSupply")
-                        or norm_payload.get("place_of_supply")
-                        or norm_payload.get("supplierState")
-                    )
-                    norm_payload["address"] = (
-                        norm_payload.get("address")
-                        or norm_payload.get("party_address")
-                        or norm_payload.get("partyAddress")
-                        or norm_payload.get("consigneeAddress")
-                    )
-                    items_preview = norm_payload.get("items") or norm_payload.get("inventory_entries") or norm_payload.get("inventoryEntries") or []
-                    if isinstance(items_preview, list):
-                        try:
-                            from apps.backend.adapters.tally.tally_importer import _lookup_item_master_unit, _lookup_item_master_hsn
-                            for itm in items_preview:
-                                if isinstance(itm, dict):
-                                    it_name = str(itm.get("item") or itm.get("itemName") or itm.get("name") or itm.get("stock_item") or "").strip()
-                                    if it_name:
-                                        curr_u = str(itm.get("units") or itm.get("unit") or itm.get("uom") or "").strip()
-                                        if not curr_u or curr_u.lower() == "pcs":
-                                            mu = _lookup_item_master_unit(resolved_company, it_name)
-                                            if mu:
-                                                itm["units"] = mu
-                                                itm["unit"] = mu
-                                        curr_h = str(itm.get("hsn_code") or itm.get("hsnCode") or itm.get("hsn") or itm.get("hsnCodeValue") or "").strip()
-                                        if not curr_h:
-                                            mh = _lookup_item_master_hsn(resolved_company, it_name)
-                                            if mh:
-                                                itm["hsn_code"] = mh
-                                                itm["hsnCode"] = mh
-                                                itm["hsn"] = mh
-                        except Exception as itm_exc:
-                            logger.debug(f"Voucher item master unit/HSN enrichment notice: {itm_exc}")
-
-                    norm_payload["items"] = items_preview
-                    norm_payload["amount"] = amt
-                    logger.info(f"Voucher Payload: Company='{norm_payload.get('company_name')}', Type='{norm_payload.get('voucher_type')}', Party='{norm_payload.get('party_ledger')}', GSTIN='{norm_payload.get('gstin')}', ItemsCount={len(items_preview) if isinstance(items_preview, list) else 0}, Date='{norm_payload.get('date')}', Amount={norm_payload.get('amount')}")
-
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        res = loop.run_until_complete(self.importer_service.import_voucher(norm_payload))
-                        if res.get("status") == "SUCCESS":
-                            success = True
-                            res_amt = res.get("amount")
-                            if res_amt is not None:
-                                try:
-                                    parsed_res_amt = float(res_amt)
-                                    if parsed_res_amt > 0:
-                                        norm_payload["amount"] = parsed_res_amt
-                                except (ValueError, TypeError):
-                                    pass
-                            if res.get("company_name"):
-                                norm_payload["company_name"] = res.get("company_name")
-                            v_ext = res.get("tallyExternalId") or res.get("guid") or res.get("voucher_number") or "IMPORTED"
-                            result_data = {
-                                "tallyVoucherNumber": res.get("voucher_number") or res.get("guid") or "IMPORTED",
-                                "tallyExternalId": v_ext,
-                                "guid": v_ext,
-                                "status": "SUCCESS"
-                            }
-                        elif res.get("should_queue"):
-                            from shared.repositories.voucher_queue_repository import voucher_queue_repo
-                            q_comp = norm_payload.get("company_name") or resolved_company
-                            voucher_queue_repo.enqueue_pending_voucher(
-                                cmd_id=cmd_id,
-                                cmd_type=cmd_type,
-                                payload=norm_payload,
-                                target_company=q_comp,
-                                user_email=curr_email,
-                                organization_id=str(curr_org or ""),
-                                reason=res.get("reason")
-                            )
-                            cloud_auth_service.send_command_result(
-                                command_id=cmd_id,
-                                status="WAITING_FOR_TALLY",
-                                result={"status": "QUEUED", "company": q_comp, "message": res.get("message")},
-                                error_message=res.get("reason")
-                            )
-                            v_label = norm_payload.get("voucher_number") or norm_payload.get("voucherNumber") or "Entry"
-                            self.command_processed.emit(
-                                cmd_id,
-                                cmd_type,
-                                True,
-                                f"⏳ Voucher #{v_label} queued for '{q_comp}'. Auto-posts once company opens in Tally.",
-                                {"should_queue": True, "status": "QUEUED"}
-                            )
-                            continue
-                        else:
-                            success = False
-                            error_msg = res.get("error") or res.get("message") or "Tally rejected voucher creation."
-                            diag = res.get("diagnostic") or {}
-                            raw_err_amt = norm_payload.get("amount")
-                            err_amt = amt
-                            if raw_err_amt is not None:
-                                try:
-                                    err_amt = float(raw_err_amt)
-                                except (ValueError, TypeError):
-                                    err_amt = amt
-                            error_details = {
-                                "voucher_type": norm_payload.get("voucher_type", "Sales"),
-                                "voucher_number": norm_payload.get("voucher_number") or norm_payload.get("voucherNumber") or "N/A",
-                                "company": norm_payload.get("company_name") or resolved_company,
-                                "party": norm_payload.get("party_ledger") or "Cash",
-                                "amount": err_amt,
-                                "date": norm_payload.get("date") or "N/A",
-                                "reason": res.get("reason") or diag.get("reason") or error_msg,
-                                "action": res.get("action") or diag.get("action") or "Please verify the voucher details in your web app.",
-                                "technical_error": error_msg,
-                                "cmd_id": cmd_id,
-                                "cmd_type": cmd_type
-                            }
-                            logger.error(f"Command #{cmd_id} failed in Tally: {error_msg}")
-                    finally:
-                        loop.close()
+                    if should_continue:
+                        continue
 
                 elif cmd_type in ("CREATE_LEDGER", "CREATE_PARTY", "CREATE_CUSTOMER", "CREATE_SUPPLIER", "CREATE_VENDOR"):
-                    norm_payload = dict(payload)
-                    norm_payload["target"] = "TALLY"
-                    norm_payload["host"] = active_host
-                    norm_payload["port"] = active_port
-                    norm_payload["tally_host"] = active_host
-                    norm_payload["tally_port"] = active_port
-                    norm_payload["companyId"] = cmd.get("companyId") or cmd.get("company_id") or payload.get("companyId") or comp_id
-                    norm_payload["company_name"] = norm_payload.get("companyName") or norm_payload.get("company_name") or resolved_company
-
-                    party_name = (
-                        norm_payload.get("partyName")
-                        or norm_payload.get("party_name")
-                        or norm_payload.get("name")
-                        or norm_payload.get("party_ledger")
-                        or norm_payload.get("customerName")
+                    norm_payload, success, result_data, error_msg, error_details = execute_party_command(
+                        payload=payload,
+                        cmd=cmd,
+                        cmd_id=cmd_id,
+                        cmd_type=cmd_type,
+                        comp_id=comp_id,
+                        resolved_company=resolved_company,
+                        active_host=active_host,
+                        active_port=active_port,
+                        importer_service=self.importer_service,
                     )
-                    norm_payload["name"] = party_name
-                    norm_payload["party_ledger"] = party_name
-
-                    p_type = str(norm_payload.get("partyType") or norm_payload.get("party_type") or norm_payload.get("type") or "").strip().upper()
-                    if "SUPPLIER" in p_type or "VENDOR" in p_type or "CREDITOR" in p_type:
-                        default_parent = "Sundry Creditors"
-                        norm_payload["voucher_type"] = "Supplier Master"
-                    else:
-                        default_parent = "Sundry Debtors"
-                        norm_payload["voucher_type"] = "Customer Master"
-
-                    norm_payload["parent"] = norm_payload.get("parent") or default_parent
-                    norm_payload["mobile"] = norm_payload.get("contactNumber") or norm_payload.get("mobile") or norm_payload.get("phone")
-                    raw_op_bal = norm_payload.get("openingBalance") or norm_payload.get("opening_balance")
-                    try:
-                        op_bal = float(raw_op_bal) if raw_op_bal is not None else 0.0
-                    except (ValueError, TypeError):
-                        op_bal = 0.0
-                    norm_payload["opening_balance"] = op_bal
-                    norm_payload["amount"] = norm_payload["opening_balance"]
-                    norm_payload["gstin"] = norm_payload.get("gstin") or norm_payload.get("party_gstin") or norm_payload.get("gstNumber")
-                    norm_payload["state"] = norm_payload.get("state")
-                    norm_payload["address"] = norm_payload.get("address")
-
-                    logger.info(f"Party Creation Payload: Company='{norm_payload.get('company_name')}', Name='{norm_payload.get('name')}', Parent='{norm_payload.get('parent')}', Mobile='{norm_payload.get('mobile')}', OpeningBalance={norm_payload.get('opening_balance')}")
-
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        res = loop.run_until_complete(self.importer_service.create_ledger(norm_payload))
-                        if res.get("status") == "SUCCESS" or res.get("already_exists") or (res.get("error") and "already exists" in str(res.get("error")).lower()):
-                            success = True
-                            ext_id = res.get("tallyExternalId") or res.get("guid") or f"TALLY-{norm_payload.get('name')}"
-                            result_data = {
-                                "ledgerName": norm_payload.get("name"),
-                                "partyName": norm_payload.get("name"),
-                                "tallyExternalId": ext_id,
-                                "guid": ext_id,
-                                "status": "SUCCESS",
-                                "already_exists": bool(res.get("already_exists"))
-                            }
-                            try:
-                                p_name = norm_payload.get("name")
-                                is_supp = "SUPPLIER" in p_type or "VENDOR" in p_type or "CREDITOR" in p_type
-                                col_names = ["suppliers", "ledgers"] if is_supp else ["customers", "ledgers"]
-                                for c_name in col_names:
-                                    c_col = get_collection(c_name)
-                                    q = {"name": p_name}
-                                    if comp_id:
-                                        q["companyId"] = comp_id
-                                    c_col.update_many(q, {"$set": {"tallyExternalId": ext_id, "updatedAt": datetime.now(timezone.utc)}})
-                            except Exception as m_err:
-                                logger.debug(f"Direct MongoDB party update notice: {m_err}")
-                        else:
-                            success = False
-                            error_msg = res.get("error") or res.get("message") or "Failed to create party/ledger in Tally."
-                            error_details = {
-                                "voucher_type": norm_payload["voucher_type"],
-                                "voucher_number": "N/A",
-                                "company": norm_payload.get("company_name") or resolved_company,
-                                "party": norm_payload.get("name") or "N/A",
-                                "amount": norm_payload["opening_balance"],
-                                "date": "N/A",
-                                "reason": error_msg,
-                                "action": "Check if party name already exists or if Tally Prime is accessible.",
-                                "technical_error": error_msg,
-                                "cmd_id": cmd_id,
-                                "cmd_type": cmd_type
-                            }
-                    finally:
-                        loop.close()
 
                 elif cmd_type in ("CREATE_STOCK_ITEM", "CREATE_ITEM"):
-                    norm_payload = dict(payload)
-                    norm_payload["target"] = "TALLY"
-                    norm_payload["host"] = active_host
-                    norm_payload["port"] = active_port
-                    norm_payload["tally_host"] = active_host
-                    norm_payload["tally_port"] = active_port
-                    norm_payload["companyId"] = cmd.get("companyId") or cmd.get("company_id") or payload.get("companyId")
-                    norm_payload["company_name"] = norm_payload.get("companyName") or norm_payload.get("company_name")
-                    norm_payload["companyId"] = comp_id
-                    norm_payload["company_name"] = resolved_company
-                    norm_payload["name"] = norm_payload.get("name") or norm_payload.get("itemName") or norm_payload.get("item_name")
-                    norm_payload["unit"] = norm_payload.get("unit") or norm_payload.get("units") or "Pcs"
-                    norm_payload["hsn_code"] = norm_payload.get("hsn_code") or norm_payload.get("hsnCode") or norm_payload.get("hsn", "")
-
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        res = loop.run_until_complete(self.importer_service.create_stock_item(norm_payload))
-                        if res.get("status") == "SUCCESS":
-                            success = True
-                            ext_id = res.get("tallyExternalId") or res.get("guid") or f"TALLY-{norm_payload.get('name')}"
-                            result_data = {
-                                "itemName": norm_payload.get("name"),
-                                "tallyExternalId": ext_id,
-                                "guid": ext_id,
-                                "status": "SUCCESS"
-                            }
-                            try:
-                                s_name = norm_payload.get("name")
-                                for c_name in ["stock_items", "items"]:
-                                    c_col = get_collection(c_name)
-                                    q = {"$or": [{"name": s_name}, {"itemName": s_name}]}
-                                    if comp_id:
-                                        q["companyId"] = comp_id
-                                    c_col.update_many(q, {"$set": {"tallyExternalId": ext_id, "itemTallyExternalId": ext_id, "updatedAt": datetime.now(timezone.utc)}})
-                            except Exception as m_err:
-                                logger.debug(f"Direct MongoDB stock item update notice: {m_err}")
-                        else:
-                            success = False
-                            error_msg = res.get("error") or res.get("message") or "Failed to create stock item in Tally."
-                    finally:
-                        loop.close()
+                    norm_payload, success, result_data, error_msg = execute_create_stock_item_command(
+                        payload=payload,
+                        cmd=cmd,
+                        comp_id=comp_id,
+                        resolved_company=resolved_company,
+                        active_host=active_host,
+                        active_port=active_port,
+                        importer_service=self.importer_service,
+                    )
 
                 elif cmd_type in ("UPDATE_STOCK_ITEM", "UPDATE_ITEM", "ALTER_STOCK_ITEM"):
-                    norm_payload = dict(payload)
-                    norm_payload["target"] = "TALLY"
-                    norm_payload["companyId"] = comp_id
-                    norm_payload["company_name"] = resolved_company
-                    item_name = str(norm_payload.get("itemName") or norm_payload.get("name") or norm_payload.get("item_name") or "")
-                    norm_payload["name"] = item_name
-                    unit_val = str(norm_payload.get("unit") or norm_payload.get("units") or norm_payload.get("base_units") or "Pcs")
-                    norm_payload["unit"] = unit_val
-                    hsn_val = str(norm_payload.get("hsn_code") or norm_payload.get("hsnCode") or norm_payload.get("hsn") or "")
-                    norm_payload["hsn_code"] = hsn_val
-                    t_ext_id = str(norm_payload.get("tallyExternalId") or norm_payload.get("guid") or norm_payload.get("itemTallyExternalId") or "")
-                    qty_val = float(norm_payload.get("quantity", 0.0) or norm_payload.get("closingBalance", 0.0) or 0.0)
-                    rate_val = float(norm_payload.get("rate", 0.0) or norm_payload.get("closingRate", 0.0) or 0.0)
-                    value_val = float(norm_payload.get("value", 0.0) or norm_payload.get("closingValue", 0.0) or (qty_val * rate_val))
-                    godown_val = str(norm_payload.get("godown") or "Main Location")
-                    batch_val = str(norm_payload.get("batch") or norm_payload.get("batchName") or "Primary Batch")
-                    norm_payload["quantity"] = qty_val
-                    norm_payload["rate"] = rate_val
-                    norm_payload["value"] = value_val
-                    norm_payload["godown"] = godown_val
-                    norm_payload["batch"] = batch_val
-
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        res = loop.run_until_complete(self.importer_service.update_stock_item(norm_payload))
-                        if res.get("status") == "SUCCESS":
-                            success = True
-                            result_data = {
-                                "itemName": item_name,
-                                "tallyExternalId": t_ext_id,
-                                "status": "SUCCESS",
-                                "updated": True
-                            }
-
-                            # Overwrite in MongoDB collections without duplicate
-                            try:
-                                now_dt = datetime.now(timezone.utc)
-                                set_doc = {
-                                    "name": item_name,
-                                    "itemName": item_name,
-                                    "tallyExternalId": t_ext_id or item_name,
-                                    "itemTallyExternalId": t_ext_id or item_name,
-                                    "closingBalance": qty_val,
-                                    "quantity": qty_val,
-                                    "closingRate": rate_val,
-                                    "rate": rate_val,
-                                    "closingValue": value_val,
-                                    "value": value_val,
-                                    "openingBalance": qty_val,
-                                    "openingRate": rate_val,
-                                    "openingValue": value_val,
-                                    "unit": unit_val,
-                                    "units": unit_val,
-                                    "uom": unit_val,
-                                    "unit_name": unit_val,
-                                    "baseUnits": unit_val,
-                                    "base_units": unit_val,
-                                    "hsnCode": hsn_val,
-                                    "hsn_code": hsn_val,
-                                    "hsn": hsn_val,
-                                    "godown": godown_val,
-                                    "batch": batch_val,
-                                    "company_name": resolved_company,
-                                    "updatedAt": now_dt,
-                                    "updated_at": now_dt.isoformat()
-                                }
-                                if comp_id:
-                                    set_doc["companyId"] = comp_id
-                                    set_doc["cloud_company_id"] = str(comp_id)
-
-                                for col_name in ["stock_items", "stocks", "items", "stockbalances"]:
-                                    col = get_collection(col_name)
-                                    doc = None
-                                    if t_ext_id:
-                                        f1 = {"tallyExternalId": t_ext_id}
-                                        if comp_id:
-                                            f1["companyId"] = comp_id
-                                        doc = col.find_one(f1)
-                                    if not doc and item_name:
-                                        f2 = {"$or": [{"itemName": item_name}, {"name": item_name}]}
-                                        if comp_id:
-                                            f2["companyId"] = comp_id
-                                        doc = col.find_one(f2)
-
-                                    if doc:
-                                        col.update_one({"_id": doc["_id"]}, {"$set": set_doc})
-                                    else:
-                                        upsert_filter = {"tallyExternalId": t_ext_id} if t_ext_id else {"itemName": item_name}
-                                        if comp_id:
-                                            upsert_filter["companyId"] = comp_id
-                                        col.update_one(upsert_filter, {"$set": set_doc}, upsert=True)
-
-                                logger.info(f"Overwrote stock item '{item_name}' in MongoDB collections successfully without duplicate.")
-                            except Exception as m_err:
-                                logger.warning(f"MongoDB update notice for stock item '{item_name}': {m_err}")
-                        else:
-                            success = False
-                            error_msg = res.get("error") or res.get("message") or "Failed to update stock item in Tally."
-                    finally:
-                        loop.close()
+                    norm_payload, success, result_data, error_msg = execute_update_stock_item_command(
+                        payload=payload,
+                        comp_id=comp_id,
+                        resolved_company=resolved_company,
+                        importer_service=self.importer_service,
+                    )
 
                 elif cmd_type == "DELETE_VOUCHER":
                     norm_payload = dict(payload)

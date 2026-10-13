@@ -711,21 +711,14 @@ class ConnectedDashboardScreen(QWidget):
             }
         """)
 
-        backup_act = QAction("☁️  Backup 👑", menu)
         sync_config_act = QAction("📄  Sync Tally Config", menu)
         resync_act = QAction("🔄  Re-Sync", menu)
-        remove_act = QAction("🗑️  Remove", menu)
 
-        menu.addAction(backup_act)
         menu.addAction(sync_config_act)
         menu.addAction(resync_act)
-        menu.addSeparator()
-        menu.addAction(remove_act)
 
-        backup_act.triggered.connect(lambda: self.handle_backup(name))
         sync_config_act.triggered.connect(lambda: self.handle_sync_config(name))
         resync_act.triggered.connect(lambda: self.start_qthread_sync(name, source, card))
-        remove_act.triggered.connect(lambda: self.handle_remove_company(name, card))
 
         menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
 

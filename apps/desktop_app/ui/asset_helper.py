@@ -48,7 +48,7 @@ def create_more_dots_icon(color_hex: str = "#0F172A", size: int = 24):
     that looks razor-sharp and clearly visible on any Windows screen or resolution.
     """
     from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import Qt, QPointF
 
     pix = QPixmap(size, size)
     pix.fill(Qt.GlobalColor.transparent)
@@ -62,9 +62,9 @@ def create_more_dots_icon(color_hex: str = "#0F172A", size: int = 24):
     gap = 6.5
     cy = size / 2.0
 
-    painter.drawEllipse(cx - r, cy - gap - r, r * 2, r * 2)
-    painter.drawEllipse(cx - r, cy - r, r * 2, r * 2)
-    painter.drawEllipse(cx - r, cy + gap - r, r * 2, r * 2)
+    painter.drawEllipse(QPointF(cx, cy - gap), r, r)
+    painter.drawEllipse(QPointF(cx, cy), r, r)
+    painter.drawEllipse(QPointF(cx, cy + gap), r, r)
     painter.end()
 
     return QIcon(pix)

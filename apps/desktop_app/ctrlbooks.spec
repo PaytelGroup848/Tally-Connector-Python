@@ -3,6 +3,7 @@
 import os
 import sys
 from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
@@ -106,7 +107,7 @@ a = Analysis(
         'apps.desktop_app.ui.threads.sync_worker',
         'apps.desktop_app.ui.threads.command_worker',
         'apps.desktop_app.ui.threads.company_fetch_worker',
-    ],
+    ] + collect_submodules('apps') + collect_submodules('shared'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

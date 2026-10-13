@@ -7,117 +7,19 @@ from datetime import datetime, timezone
 
 from shared.config import get_settings
 from shared.logging_config import get_logger
+from shared.cloud.helpers import (
+    _safe_get_collection,
+    _get_writable_data_file,
+    get_or_create_device_id,
+    format_tally_date,
+    classify_ledger_type,
+    AUTH_SESSION_FILE,
+    DEVICE_CONFIG_FILE,
+)
+from shared.cloud.cloud_sync_client import CloudSyncClient
+from shared.cloud.cloud_command_client import CloudCommandClient
 
 logger = get_logger("app.auth.cloud")
-
-def _safe_get_collection(name: str):
-    """Lazily and safely retrieves MongoDB collection without failing at import time."""
-    try:
-        from shared.db.mongo_client import get_collection
-        return get_collection(name)
-    except Exception as exc:
-        logger.debug(f"MongoDB collection '{name}' access notice: {exc}")
-        return None
-
-def _get_writable_data_file(filename: str) -> Path:
-    """Returns a writable Path for app data storage across all environments."""
-    local_path = Path("data") / filename
-    try:
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        test_file = local_path.parent / ".perm_check"
-        test_file.touch(exist_ok=True)
-        test_file.unlink(missing_ok=True)
-        return local_path
-    except Exception:
-        pass
-
-    import os
-    local_app_data = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    fallback = Path(local_app_data) / "CtrlBooks" / "data" / filename
-    try:
-        fallback.parent.mkdir(parents=True, exist_ok=True)
-        return fallback
-    except Exception:
-        import tempfile
-        tmp = Path(tempfile.gettempdir()) / "CtrlBooks" / "data" / filename
-        tmp.parent.mkdir(parents=True, exist_ok=True)
-        return tmp
-
-AUTH_SESSION_FILE = _get_writable_data_file("auth_session.json")
-DEVICE_CONFIG_FILE = _get_writable_data_file("device_id.json")
-
-def get_or_create_device_id() -> str:
-    """Returns persistent unique hardware device identifier."""
-    target_file = DEVICE_CONFIG_FILE
-    if not target_file.exists() and Path("data/device_id.json").exists():
-        target_file = Path("data/device_id.json")
-
-    if target_file.exists():
-        try:
-            with open(target_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                dev_id = data.get("deviceId") or data.get("device_id")
-                if dev_id:
-                    return str(dev_id)
-        except Exception:
-            pass
-
-    new_device_id = str(uuid.uuid4())
-    try:
-        DEVICE_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(DEVICE_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump({"deviceId": new_device_id, "created_at": datetime.now(timezone.utc).isoformat()}, f, indent=2)
-    except Exception as exc:
-        logger.warning(f"Could not persist device ID file: {exc}")
-
-    return new_device_id
-
-def format_tally_date(d_str: Optional[str]) -> str:
-    """Formats Tally date string (YYYYMMDD, DD-Mon-YYYY, etc.) to YYYY-MM-DD."""
-    if not d_str or not str(d_str).strip():
-        return "2022-04-01"
-    s = str(d_str).strip()
-    if len(s) == 8 and s.isdigit():
-        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
-    if len(s) == 10 and s[4] == '-' and s[7] == '-':
-        return s
-    for fmt in ("%d-%b-%Y", "%d-%b-%y", "%d-%m-%Y", "%d/%m/%Y"):
-        try:
-            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
-        except Exception:
-            pass
-    return s
-
-def classify_ledger_type(parent: Optional[str], raw_type: Optional[str] = None) -> str:
-    """Classifies ledger type into CUSTOMER, VENDOR, BANK, CASH, EXPENSE, INCOME, TAX, ASSET, LIABILITY, or GENERAL."""
-    if raw_type and str(raw_type).strip():
-        return str(raw_type).strip().upper()
-    if not parent:
-        return "GENERAL"
-    p = str(parent).strip().lower()
-    if "debtor" in p or "customer" in p:
-        return "CUSTOMER"
-    elif "creditor" in p or "supplier" in p or "vendor" in p:
-        return "VENDOR"
-    elif "bank" in p:
-        return "BANK"
-    elif "cash" in p:
-        return "CASH"
-    elif "sales" in p:
-        return "SALES"
-    elif "purchase" in p:
-        return "PURCHASE"
-    elif "expense" in p:
-        return "EXPENSE"
-    elif "income" in p or "revenue" in p:
-        return "INCOME"
-    elif "tax" in p or "duties" in p or "gst" in p or "vat" in p or "tds" in p:
-        return "TAX"
-    elif "asset" in p or "stock" in p or "deposit" in p or "investment" in p:
-        return "ASSET"
-    elif "liabilit" in p or "loan" in p or "capital" in p or "provision" in p:
-        return "LIABILITY"
-    return "GENERAL"
 
 class CloudAuthService:
     def __init__(self, base_url: Optional[str] = None):
@@ -130,8 +32,12 @@ class CloudAuthService:
         self.current_user: Dict[str, Any] = {}
         self._limits = httpx.Limits(max_keepalive_connections=20, max_connections=50, keepalive_expiry=30.0)
         self._client: Optional[httpx.Client] = None
-        self.load_session()
 
+        # Composite delegate clients
+        self._sync_client = CloudSyncClient(self)
+        self._command_client = CloudCommandClient(self)
+
+        self.load_session()
     def _get_client(self, timeout: float = 30.0) -> httpx.Client:
         if self._client is None or self._client.is_closed:
             self._client = httpx.Client(timeout=httpx.Timeout(timeout, connect=10.0), limits=self._limits)
@@ -703,6 +609,8 @@ class CloudAuthService:
             return str(data["error"])
         return f"{default_msg} (HTTP {res.status_code})"
 
+
+    # --- Cloud Batch Sync Delegations ---
     def sync_start(
         self,
         company_name: str,
@@ -712,73 +620,9 @@ class CloudAuthService:
         metadata: Optional[Dict[str, Any]] = None,
         company_id: Optional[str] = None
     ) -> Tuple[bool, str, Dict[str, Any]]:
-        """Calls Cloud Sync Start endpoint (/sync/start)."""
-        if not self.access_token:
-            return False, "Not authenticated. Please login first.", {}
-
-        target_cid = company_id
-        if not target_cid or len(str(target_cid)) < 12:
-            ok_c, c_list = self.get_cloud_companies()
-            if ok_c and c_list:
-                for c in c_list:
-                    c_n = c.get("tallyCompanyName") or c.get("companyName") or c.get("name") or ""
-                    if c_n.strip().lower() == company_name.strip().lower():
-                        target_cid = c.get("id") or c.get("_id")
-                        break
-
-        if not target_cid or len(str(target_cid)) < 12:
-            link_ok, _, link_data = self.link_company(company_name, company_guid)
-            if link_ok and link_data:
-                target_cid = link_data.get("id") or link_data.get("_id")
-
-        if not target_cid:
-            target_cid = company_guid or company_name
-
-        if target_cid and len(str(target_cid)) >= 8:
-            try:
-                col = _safe_get_collection("companies")
-                if col is not None:
-                    col.update_one(
-                        {"$or": [{"company_name": company_name}, {"name": company_name}, {"tallyCompanyName": company_name}]},
-                        {"$set": {"cloud_company_id": str(target_cid)}},
-                        upsert=True
-                    )
-            except Exception:
-                pass
-
-        s_type = "INITIAL" if sync_type.upper() in ("INITIAL", "FULL") else "INCREMENTAL"
-
-        url = f"{self.base_url}/sync/start"
-        headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
-        payload = {
-            "companyId": str(target_cid),
-            "type": s_type
-        }
-        logger.info(f"Calling Cloud Sync Start for '{company_name}' ({s_type}, companyId: {target_cid})")
-
-        try:
-            client = self._get_client(15.0)
-            res = client.post(url, json=payload, headers=headers)
-            data = res.json() if res.text else {}
-
-            if res.status_code == 401 and self.refresh_token_val:
-                refreshed, _ = self.refresh_token()
-                if refreshed and self.access_token:
-                    headers["Authorization"] = f"Bearer {self.access_token}"
-                    res = client.post(url, json=payload, headers=headers)
-                    data = res.json() if res.text else {}
-
-            if res.status_code == 200 or data.get("success") is True:
-                resp_data = data.get("data") or data
-                msg = data.get("message", "Cloud sync session started successfully.")
-                return True, msg, resp_data
-            else:
-                err_msg = self._extract_error_message(res, data, "Failed to start sync session")
-                logger.warning(f"Cloud sync/start HTTP {res.status_code}: {err_msg}")
-                return False, err_msg, {}
-        except Exception as exc:
-            logger.error(f"Error calling sync/start: {exc}")
-            return False, f"Connection error starting sync session: {exc}", {}
+        return self._sync_client.sync_start(
+            company_name, company_guid, sync_type, total_records, metadata, company_id
+        )
 
     def sync_batch(
         self,
@@ -789,235 +633,9 @@ class CloudAuthService:
         batch_number: int = 1,
         is_last_batch: bool = False
     ) -> Tuple[bool, str, Dict[str, Any]]:
-        """Calls Cloud Sync Batch endpoint (/sync/batch)."""
-        if not self.access_token:
-            return False, "Not authenticated. Please login first.", {}
-
-        url = f"{self.base_url}/sync/batch"
-        headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
-        
-        u_type = str(entity_type).upper()
-        if "LEDGER" in u_type:
-            norm_entity = "LEDGER"
-        elif "STOCK" in u_type:
-            norm_entity = "STOCK"
-        elif "SUPPLIER" in u_type or "VENDOR" in u_type:
-            norm_entity = "SUPPLIER"
-        elif "CUSTOMER" in u_type:
-            norm_entity = "CUSTOMER"
-        else:
-            norm_entity = "VOUCHER"
-
-        records_to_send = []
-        if norm_entity == "STOCK":
-            for r in items:
-                if not isinstance(r, dict):
-                    continue
-                t_ext_id = r.get("tallyExternalId") or r.get("guid") or r.get("name") or ""
-                item_name = r.get("itemName") or r.get("name") or ""
-                item_ext_id = r.get("itemTallyExternalId") or r.get("guid") or t_ext_id
-                godown_val = r.get("godown") or "Main Location"
-                try:
-                    qty = float(r.get("quantity", 0.0) or r.get("closingBalance", 0.0) or 0.0)
-                except (ValueError, TypeError):
-                    qty = 0.0
-                try:
-                    rate = float(r.get("rate", 0.0) or r.get("closingRate", 0.0) or 0.0)
-                except (ValueError, TypeError):
-                    rate = 0.0
-                try:
-                    val = float(r.get("value", 0.0) or r.get("closingValue", 0.0) or 0.0)
-                except (ValueError, TypeError):
-                    val = 0.0
-                if val == 0.0 and qty != 0.0 and rate != 0.0:
-                    val = round(qty * rate, 2)
-
-                unit_val = str(r.get("unit") or r.get("uom") or r.get("units") or r.get("unit_name") or r.get("baseUnits") or r.get("base_units") or "").strip()
-                if not unit_val:
-                    unit_val = "Pcs"
-                hsn_val = str(r.get("hsnCode") or r.get("hsn_code") or r.get("hsn") or "").strip()
-                batch_val = str(r.get("batch") or r.get("batchName") or r.get("batch_name") or "Primary Batch").strip()
-
-                records_to_send.append({
-                    "tallyExternalId": str(t_ext_id),
-                    "itemName": str(item_name),
-                    "name": str(item_name),
-                    "itemTallyExternalId": str(item_ext_id),
-                    "godown": str(godown_val),
-                    "batch": str(batch_val),
-                    "quantity": qty,
-                    "rate": rate,
-                    "value": val,
-                    "unit": unit_val,
-                    "units": unit_val,
-                    "uom": unit_val,
-                    "unit_name": unit_val,
-                    "baseUnits": unit_val,
-                    "base_units": unit_val,
-                    "unit_details": r.get("unit_details") or {},
-                    "hsnCode": hsn_val,
-                    "hsn_code": hsn_val,
-                    "hsn": hsn_val,
-                    "gstApplicable": str(r.get("gstApplicable") or "Applicable"),
-                })
-        elif norm_entity == "SUPPLIER":
-            for r in items:
-                if not isinstance(r, dict):
-                    continue
-                t_ext_id = r.get("tallyExternalId") or r.get("guid") or r.get("name") or ""
-                name_val = r.get("name") or ""
-                parent_val = r.get("parent") or "Sundry Creditors"
-                group_val = r.get("group") or parent_val
-                gstin_val = r.get("gstin") or ""
-                email_val = r.get("email") or ""
-                phone_val = r.get("phone") or ""
-                address_val = r.get("address") or ""
-                alt_id = int(r.get("alterId", 0) or r.get("alterid", 0) or 0)
-                try:
-                    op_bal = float(r.get("openingBalance", 0.0) or 0.0)
-                except (ValueError, TypeError):
-                    op_bal = 0.0
-                try:
-                    c_bal = float(r.get("closingBalance", 0.0) or 0.0)
-                except (ValueError, TypeError):
-                    c_bal = 0.0
-
-                records_to_send.append({
-                    "tallyExternalId": str(t_ext_id),
-                    "name": str(name_val),
-                    "parent": str(parent_val),
-                    "group": str(group_val),
-                    "gstin": str(gstin_val),
-                    "email": str(email_val),
-                    "phone": str(phone_val),
-                    "address": str(address_val),
-                    "openingBalance": op_bal,
-                    "closingBalance": c_bal,
-                    "ledgerType": "LIABILITY",
-                    "alterId": alt_id
-                })
-        elif norm_entity == "LEDGER":
-            for r in items:
-                if not isinstance(r, dict):
-                    continue
-                raw_val = r.get("raw")
-                raw_dict: Dict[str, Any] = dict(raw_val) if isinstance(raw_val, dict) else {}
-                
-                c_bal = r.get("closingBalance")
-                if c_bal is None:
-                    c_bal = r.get("closing_balance")
-                if c_bal is None:
-                    c_bal = raw_dict.get("closing_balance", raw_dict.get("closingbalance"))
-                if c_bal is None:
-                    c_bal = 0.0
-
-                op_bal = r.get("openingBalance")
-                if op_bal is None:
-                    op_bal = r.get("opening_balance")
-                if op_bal is None:
-                    op_bal = raw_dict.get("opening_balance", raw_dict.get("openingbalance", 0.0))
-                if op_bal is None:
-                    op_bal = 0.0
-
-                parent_val = r.get("parent") or raw_dict.get("parent") or ""
-                group_val = r.get("group") or parent_val
-                raw_ltype = r.get("ledgerType") or r.get("ledger_type") or raw_dict.get("ledger_type") or raw_dict.get("ledgerclassification")
-                comp_ltype = classify_ledger_type(parent_val, raw_ltype)
-
-                gstin_val = r.get("gstin") or raw_dict.get("gstin") or raw_dict.get("partygstin")
-                t_ext_id = r.get("tallyExternalId") or r.get("guid") or raw_dict.get("guid") or r.get("name") or raw_dict.get("name") or ""
-                name_val = r.get("name") or raw_dict.get("name") or ""
-
-                records_to_send.append({
-                    "tallyExternalId": str(t_ext_id),
-                    "name": str(name_val),
-                    "parent": str(parent_val),
-                    "group": str(group_val),
-                    "ledgerType": comp_ltype,
-                    "openingBalance": float(op_bal),
-                    "closingBalance": float(c_bal),
-                    "gstin": str(gstin_val) if gstin_val else None
-                })
-        elif norm_entity == "VOUCHER":
-            for r in items:
-                if not isinstance(r, dict):
-                    continue
-                raw_val = r.get("raw")
-                raw_dict: Dict[str, Any] = dict(raw_val) if isinstance(raw_val, dict) else {}
-                
-                v_num = str(r.get("voucherNumber") or r.get("voucher_number") or raw_dict.get("name") or raw_dict.get("vouchernumber") or "")
-                v_type = str(r.get("voucherType") or r.get("voucher_type") or raw_dict.get("parent") or raw_dict.get("vouchertypename") or "Sales")
-                v_party = str(r.get("partyLedger") or r.get("party_ledger") or raw_dict.get("party") or raw_dict.get("partyledgername") or "Cash")
-                
-                raw_amt = r.get("amount")
-                if raw_amt is None:
-                    raw_amt = raw_dict.get("amount", raw_dict.get("closing_balance", raw_dict.get("closingbalance", 0.0)))
-                try:
-                    amt_val = abs(float(raw_amt)) if raw_amt is not None else 0.0
-                except (ValueError, TypeError):
-                    amt_val = 0.0
-
-                d_val = r.get("date") or raw_dict.get("date") or r.get("effectiveDate")
-                formatted_date = format_tally_date(d_val) or "2023-04-01"
-                v_narr = str(r.get("narration") or raw_dict.get("narration") or "")
-                t_ext_id = str(r.get("voucherId") or r.get("tallyExternalId") or r.get("guid") or raw_dict.get("guid") or v_num)
-
-                raw_obj = {
-                    "voucherId": str(t_ext_id),
-                    "name": str(raw_dict.get("name") or v_num),
-                    "parent": str(raw_dict.get("parent") or v_type),
-                    "party": str(raw_dict.get("party") or v_party),
-                    "date": str(formatted_date),
-                    "alterid": int(raw_dict.get("alterid") or r.get("alter_id") or r.get("alterId") or 0)
-                }
-
-                records_to_send.append({
-                    "voucherId": str(t_ext_id),
-                    "tallyExternalId": str(t_ext_id),
-                    "voucherNumber": str(v_num),
-                    "voucherType": str(v_type),
-                    "date": str(formatted_date),
-                    "amount": float(amt_val),
-                    "partyLedger": str(v_party),
-                    "narration": str(v_narr),
-                    "lines": r.get("lines") or r.get("ledgerEntries") or [],
-                    "billAllocations": r.get("billAllocations") or [],
-                    "raw": raw_obj
-                })
-        else:
-            records_to_send = items
-
-        payload = {
-            "syncJobId": sync_id,
-            "batchNumber": batch_number,
-            "entityType": norm_entity,
-            "records": records_to_send,
-            "isLastBatch": is_last_batch
-        }
-        logger.info(f"Calling Cloud Sync Batch #{batch_number} for '{company_name}' ({norm_entity}: {len(records_to_send)} items)")
-
-        try:
-            client = self._get_client(30.0)
-            res = client.post(url, json=payload, headers=headers)
-            data = res.json() if res.text else {}
-
-            if res.status_code == 401 and self.refresh_token_val:
-                refreshed, _ = self.refresh_token()
-                if refreshed and self.access_token:
-                    headers["Authorization"] = f"Bearer {self.access_token}"
-                    res = client.post(url, json=payload, headers=headers)
-                    data = res.json() if res.text else {}
-
-            if res.status_code == 200 or data.get("success") is True:
-                resp_data = data.get("data") or data
-                msg = data.get("message", f"Batch #{batch_number} synced successfully.")
-                return True, msg, resp_data
-            else:
-                err_msg = self._extract_error_message(res, data, f"Failed to sync batch #{batch_number}")
-                logger.warning(f"Cloud sync/batch HTTP {res.status_code}: {err_msg}")
-                return False, err_msg, {}
-        except Exception as exc:
-            return False, f"Connection error sending sync batch: {exc}", {}
+        return self._sync_client.sync_batch(
+            sync_id, company_name, entity_type, items, batch_number, is_last_batch
+        )
 
     @property
     def is_authenticated(self) -> bool:
@@ -1033,76 +651,13 @@ class CloudAuthService:
         last_alter_id: int = 0,
         summary: Optional[Dict[str, Any]] = None
     ) -> Tuple[bool, str, Dict[str, Any]]:
-        """Calls Cloud Sync Complete endpoint (/sync/complete)."""
-        if not self.access_token:
-            return False, "Not authenticated. Please login first.", {}
+        return self._sync_client.sync_complete(
+            sync_id, company_name, status, total_synced, last_alter_id, summary
+        )
 
-        url = f"{self.base_url}/sync/complete"
-        headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
-        payload = {
-            "syncJobId": sync_id,
-            "status": status.upper()
-        }
-        logger.info(f"Calling Cloud Sync Complete for '{company_name}' (Status: {status})")
-
-        try:
-            client = self._get_client(15.0)
-            res = client.post(url, json=payload, headers=headers)
-            data = res.json() if res.text else {}
-
-            if res.status_code == 401 and self.refresh_token_val:
-                refreshed, _ = self.refresh_token()
-                if refreshed and self.access_token:
-                    headers["Authorization"] = f"Bearer {self.access_token}"
-                    res = client.post(url, json=payload, headers=headers)
-                    data = res.json() if res.text else {}
-
-            if res.status_code == 200 or data.get("success") is True:
-                resp_data = data.get("data") or data
-                msg = data.get("message", "Cloud sync session completed successfully.")
-                return True, msg, resp_data
-            else:
-                err_msg = self._extract_error_message(res, data, "Failed to complete sync session")
-                logger.warning(f"Cloud sync/complete HTTP {res.status_code}: {err_msg}")
-                return False, err_msg, {}
-        except Exception as exc:
-            logger.error(f"Error calling sync/complete: {exc}")
-            return False, f"Connection error completing sync session: {exc}", {}
-
+    # --- Remote Command & Telemetry Delegations ---
     def get_pending_commands(self) -> Tuple[bool, str, List[Dict[str, Any]]]:
-        """Fetches pending remote 2-way sync commands queued on the Cloud Server (GET /commands)."""
-        if not self.access_token:
-            return False, "Not authenticated. Please login first.", []
-
-        url = f"{self.base_url}/commands"
-        headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
-        try:
-            client = self._get_client(15.0)
-            res = client.get(url, headers=headers)
-            data = res.json() if res.text else {}
-
-            if res.status_code == 401 and self.refresh_token_val:
-                refreshed, _ = self.refresh_token()
-                if refreshed and self.access_token:
-                    headers["Authorization"] = f"Bearer {self.access_token}"
-                    res = client.get(url, headers=headers)
-                    data = res.json() if res.text else {}
-
-            if res.status_code == 200 or data.get("success") is True:
-                data_obj = data.get("data") or {}
-                commands_list: List[Dict[str, Any]] = []
-                if isinstance(data_obj, dict) and isinstance(data_obj.get("commands"), list):
-                    commands_list = data_obj["commands"]
-                elif isinstance(data.get("commands"), list):
-                    commands_list = data["commands"]
-                msg = str(data.get("message") or f"Retrieved {len(commands_list)} pending commands.")
-                return True, msg, commands_list
-            else:
-                err_msg = self._extract_error_message(res, data, "Failed to retrieve pending commands")
-                return False, err_msg, []
-        except Exception as exc:
-            logger.error(f"Error fetching commands: {exc}")
-            return False, f"Connection error fetching commands: {exc}", []
+        return self._command_client.get_pending_commands()
 
     def send_command_result(
         self,
@@ -1111,160 +666,33 @@ class CloudAuthService:
         result: Optional[Dict[str, Any]] = None,
         error_message: Optional[str] = None
     ) -> Tuple[bool, str, Dict[str, Any]]:
-        """Sends command execution result back to Cloud Server (POST /commands/:commandId/result)."""
-        if not self.access_token:
-            return False, "Not authenticated. Please login first.", {}
-
-        url = f"{self.base_url}/commands/{command_id}/result"
-        res_data = dict(result or {})
-        t_ext = (
-            res_data.get("tallyExternalId")
-            or res_data.get("guid")
-            or res_data.get("tally_guid")
-            or res_data.get("externalId")
-            or res_data.get("id")
+        return self._command_client.send_command_result(
+            command_id, status, result, error_message
         )
-        if t_ext and "tallyExternalId" not in res_data:
-            res_data["tallyExternalId"] = str(t_ext)
-
-        payload: Dict[str, Any] = {
-            "status": status.upper(),
-            "result": res_data,
-            "resultPayload": res_data,
-        }
-        if t_ext:
-            payload["tallyExternalId"] = str(t_ext)
-        if error_message and str(error_message).strip():
-            payload["errorMessage"] = str(error_message).strip()
-        headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
-        try:
-            client = self._get_client(15.0)
-            res = client.post(url, json=payload, headers=headers)
-            data = res.json() if res.text else {}
-
-            if res.status_code == 401 and self.refresh_token_val:
-                refreshed, _ = self.refresh_token()
-                if refreshed and self.access_token:
-                    headers["Authorization"] = f"Bearer {self.access_token}"
-                    res = client.post(url, json=payload, headers=headers)
-                    data = res.json() if res.text else {}
-
-            if res.status_code == 200 or data.get("success") is True:
-                resp_data = data.get("data") or data
-                msg = data.get("message", "Command result recorded.")
-                return True, msg, resp_data
-            else:
-                err_msg = self._extract_error_message(res, data, "Failed to send command result")
-                return False, err_msg, {}
-        except Exception as exc:
-            logger.error(f"Error sending command result: {exc}")
-            return False, f"Connection error sending command result: {exc}", {}
 
     def get_remote_config(self) -> Tuple[bool, str, Dict[str, Any]]:
-        """Fetches dynamic connector configuration from Cloud Server (GET /config)."""
-        if not self.access_token:
-            return False, "Not authenticated. Please login first.", {}
-
-        url = f"{self.base_url}/config"
-        headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
-        try:
-            client = self._get_client(15.0)
-            res = client.get(url, headers=headers)
-            data = res.json() if res.text else {}
-
-            if res.status_code == 401 and self.refresh_token_val:
-                refreshed, _ = self.refresh_token()
-                if refreshed and self.access_token:
-                    headers["Authorization"] = f"Bearer {self.access_token}"
-                    res = client.get(url, headers=headers)
-                    data = res.json() if res.text else {}
-
-            if res.status_code == 200 or data.get("success") is True:
-                resp_data = data.get("data") or data
-                msg = data.get("message", "Connector config retrieved.")
-                return True, msg, resp_data
-            else:
-                err_msg = self._extract_error_message(res, data, "Failed to retrieve connector config")
-                return False, err_msg, {}
-        except Exception as exc:
-            logger.error(f"Error fetching connector config: {exc}")
-            return False, f"Connection error fetching connector config: {exc}", {}
+        return self._command_client.get_remote_config()
 
     def get_connector_version(self) -> Tuple[bool, str, Dict[str, Any]]:
-        """Checks latest connector version and update download URL from Cloud Server (GET /version)."""
-        url = f"{self.base_url}/version"
-        headers = {"Content-Type": "application/json"}
-        if self.access_token:
-            headers["Authorization"] = f"Bearer {self.access_token}"
-
-        try:
-            client = self._get_client(15.0)
-            res = client.get(url, headers=headers)
-            data = res.json() if res.text else {}
-            if res.status_code == 200 or data.get("success") is True:
-                resp_data = data.get("data") or data
-                msg = data.get("message", "Version information retrieved.")
-                return True, msg, resp_data
-            else:
-                err_msg = self._extract_error_message(res, data, "Failed to retrieve version information")
-                return False, err_msg, {}
-        except Exception as exc:
-            logger.error(f"Error fetching connector version: {exc}")
-            return False, f"Connection error fetching connector version: {exc}", {}
+        return self._command_client.get_connector_version()
 
     def is_tally_online(self, host: Optional[str] = None, port: Optional[int] = None) -> bool:
-        """Lightweight TCP probe to check if Tally Prime / ERP 9 is responding."""
-        import socket
-        from shared.connection_config import resolve_active_tally_port
-        target_host, target_port = resolve_active_tally_port(preferred_port=port, preferred_host=host)
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1.0)
-            res = sock.connect_ex((target_host, target_port))
-            sock.close()
-            return res == 0
-        except Exception:
-            return False
+        return self._command_client.is_tally_online(host, port)
 
     def send_heartbeat(self, tally_connected: Optional[bool] = None) -> Tuple[bool, str, Dict[str, Any]]:
-        """Sends periodic connector heartbeat to Cloud Server (POST /heartbeat)."""
-        if not self.access_token:
-            return False, "Not authenticated. Please login first.", {}
+        return self._command_client.send_heartbeat(tally_connected)
 
-        if tally_connected is None:
-            tally_connected = self.is_tally_online()
 
-        url = f"{self.base_url}/heartbeat"
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-        }
-        payload: Dict[str, Any] = {
-            "tallyConnected": bool(tally_connected),
-            "status": "ONLINE",
-            "connectorVersion": get_settings().app_version,
-        }
+cloud_auth_service: CloudAuthService = CloudAuthService()
 
-        try:
-            client = self._get_client(10.0)
-            res = client.post(url, json=payload, headers=headers)
-            data = res.json() if res.text else {}
-
-            if res.status_code == 401 and self.refresh_token_val:
-                refreshed, _ = self.refresh_token()
-                if refreshed and self.access_token:
-                    headers["Authorization"] = f"Bearer {self.access_token}"
-                    res = client.post(url, json=payload, headers=headers)
-                    data = res.json() if res.text else {}
-
-            if res.status_code == 200 or data.get("success") is True:
-                resp_data = data.get("data") or data
-                return True, data.get("message", "Heartbeat recorded"), resp_data
-            else:
-                err_msg = self._extract_error_message(res, data, "Failed to send heartbeat")
-                return False, err_msg, {}
-        except Exception as exc:
-            logger.debug(f"Heartbeat call warning (non-fatal): {exc}")
-            return False, str(exc), {}
-
-cloud_auth_service = CloudAuthService()
+__all__ = [
+    "CloudAuthService",
+    "cloud_auth_service",
+    "get_or_create_device_id",
+    "format_tally_date",
+    "classify_ledger_type",
+    "AUTH_SESSION_FILE",
+    "DEVICE_CONFIG_FILE",
+    "_get_writable_data_file",
+    "_safe_get_collection",
+]
