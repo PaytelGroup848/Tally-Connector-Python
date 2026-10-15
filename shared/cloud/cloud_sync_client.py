@@ -445,12 +445,88 @@ class CloudSyncClient:
                 v_narr = str(r.get("narration") or raw_dict.get("narration") or "")
                 t_ext_id = str(r.get("voucherId") or r.get("tallyExternalId") or r.get("guid") or raw_dict.get("guid") or v_num)
 
+                adv_settings = r.get("advancedSettings") or raw_dict.get("advancedSettings") or {}
+                ref_num = str(r.get("reference") or raw_dict.get("reference") or "")
+                ref_date = str(r.get("referenceDate") or raw_dict.get("referenceDate") or formatted_date)
+                pos_val = str(r.get("placeOfSupply") or raw_dict.get("placeOfSupply") or "")
+                cust_name = str(r.get("customerName") or r.get("customer") or v_party)
+                inv_items = r.get("items") or r.get("inventoryEntries") or []
+                ledger_lines = r.get("lines") or r.get("ledgerEntries") or []
+                bills = r.get("billAllocations") or []
+                banks = r.get("bankAllocations") or []
+
+                dispatch_doc_no = str(adv_settings.get("dispatchDocNo") or r.get("dispatchDocNo") or raw_dict.get("dispatchDocNo") or "")
+                dispatched_through = str(adv_settings.get("dispatchedThrough") or r.get("dispatchedThrough") or raw_dict.get("dispatchedThrough") or "")
+                destination = str(adv_settings.get("destination") or r.get("destination") or raw_dict.get("destination") or "")
+                vehicle_no = str(adv_settings.get("vehicleNo") or adv_settings.get("carrier") or r.get("vehicleNo") or raw_dict.get("vehicleNo") or "")
+                order_no = str(adv_settings.get("orderNo") or r.get("orderNo") or raw_dict.get("orderNo") or "")
+                order_date = str(adv_settings.get("orderDate") or r.get("orderDate") or raw_dict.get("orderDate") or "")
+                terms_val = str(adv_settings.get("terms") or r.get("terms") or raw_dict.get("terms") or "")
+                consignee_name = str(adv_settings.get("consigneeName") or r.get("consigneeName") or raw_dict.get("consigneeName") or "")
+                consignee_address = str(adv_settings.get("consigneeAddress") or r.get("consigneeAddress") or raw_dict.get("consigneeAddress") or "")
+                consignee_state = str(adv_settings.get("consigneeState") or r.get("consigneeState") or raw_dict.get("consigneeState") or "")
+                consignee_country = str(adv_settings.get("consigneeCountry") or r.get("consigneeCountry") or raw_dict.get("consigneeCountry") or "")
+                consignee_pincode = str(adv_settings.get("consigneePincode") or r.get("consigneePincode") or raw_dict.get("consigneePincode") or "")
+                consignee_gstin = str(adv_settings.get("consigneeGstin") or r.get("consigneeGstin") or raw_dict.get("consigneeGstin") or "")
+
+                clean_adv_settings = {
+                    "dispatchDocNo": dispatch_doc_no,
+                    "dispatchedThrough": dispatched_through,
+                    "destination": destination,
+                    "carrier": vehicle_no,
+                    "vehicleNo": vehicle_no,
+                    "orderNo": order_no,
+                    "orderDate": order_date,
+                    "terms": terms_val,
+                    "consigneeName": consignee_name,
+                    "consigneeAddress": consignee_address,
+                    "consigneeState": consignee_state,
+                    "consigneeCountry": consignee_country,
+                    "consigneePincode": consignee_pincode,
+                    "consigneeGstin": consignee_gstin,
+                }
+
                 raw_obj = {
                     "voucherId": str(t_ext_id),
+                    "tallyExternalId": str(t_ext_id),
                     "name": str(raw_dict.get("name") or v_num),
+                    "voucherNumber": str(v_num),
                     "parent": str(raw_dict.get("parent") or v_type),
+                    "voucherType": str(v_type),
                     "party": str(raw_dict.get("party") or v_party),
+                    "partyLedger": str(v_party),
+                    "customerName": str(cust_name),
+                    "customer": str(cust_name),
                     "date": str(formatted_date),
+                    "reference": str(ref_num),
+                    "referenceDate": str(ref_date),
+                    "placeOfSupply": str(pos_val),
+                    "amount": float(amt_val),
+                    "narration": str(v_narr),
+                    "items": inv_items,
+                    "lines": ledger_lines,
+                    "inventoryEntries": inv_items,
+                    "ledgerEntries": ledger_lines,
+                    "billAllocations": bills,
+                    "bankAllocations": banks,
+                    "advancedSettings": clean_adv_settings,
+                    "dispatchDetails": {
+                        "dispatchDocNo": dispatch_doc_no,
+                        "dispatchedThrough": dispatched_through,
+                        "destination": destination,
+                        "vehicleNo": vehicle_no,
+                    },
+                    "orderDetails": {
+                        "orderNo": order_no,
+                        "orderDate": order_date,
+                        "terms": terms_val,
+                    },
+                    "consigneeDetails": {
+                        "consigneeName": consignee_name,
+                        "consigneeAddress": consignee_address,
+                        "consigneeState": consignee_state,
+                        "consigneeGstin": consignee_gstin,
+                    },
                     "alterid": int(raw_dict.get("alterid") or r.get("alter_id") or r.get("alterId") or 0)
                 }
 
@@ -462,11 +538,32 @@ class CloudSyncClient:
                     "date": str(formatted_date),
                     "amount": float(amt_val),
                     "partyLedger": str(v_party),
+                    "customerName": str(cust_name),
+                    "customer": str(cust_name),
+                    "partyName": str(v_party),
+                    "reference": str(ref_num),
+                    "referenceDate": str(ref_date),
+                    "placeOfSupply": str(pos_val),
                     "narration": str(v_narr),
-                    "lines": r.get("lines") or r.get("ledgerEntries") or [],
-                    "items": r.get("inventoryEntries") or r.get("items") or [],
-                    "inventoryEntries": r.get("inventoryEntries") or r.get("items") or [],
-                    "billAllocations": r.get("billAllocations") or [],
+                    "lines": ledger_lines,
+                    "items": inv_items,
+                    "inventoryEntries": inv_items,
+                    "ledgerEntries": ledger_lines,
+                    "billAllocations": bills,
+                    "bankAllocations": banks,
+                    "advancedSettings": clean_adv_settings,
+                    "dispatchDocNo": dispatch_doc_no,
+                    "dispatchedThrough": dispatched_through,
+                    "destination": destination,
+                    "carrier": vehicle_no,
+                    "vehicleNo": vehicle_no,
+                    "orderNo": order_no,
+                    "orderDate": order_date,
+                    "terms": terms_val,
+                    "consigneeName": consignee_name,
+                    "consigneeAddress": consignee_address,
+                    "consigneeState": consignee_state,
+                    "consigneeGstin": consignee_gstin,
                     "raw": raw_obj
                 })
         else:

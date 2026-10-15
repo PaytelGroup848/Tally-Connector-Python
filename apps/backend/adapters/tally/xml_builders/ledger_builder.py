@@ -118,7 +118,7 @@ def build_ledger_import_xml(ledger_data: Dict[str, Any], action: str = "Create")
         reg_val_tally = reg_type or ("Regular" if gstin else "Unregistered")
         if gstin or reg_val_tally:
             pos_tag_tally = f"\n <PLACEOFSUPPLY>{state}</PLACEOFSUPPLY>" if state else ""
-            state_tag_tally = f"\n STATE>{state}</STATE>" if state else ""
+            state_tag_tally = f"\n <STATE>{state}</STATE>" if state else ""
             gstin_tag_tally = f"\n <GSTIN>{gstin}</GSTIN>" if gstin else ""
             multi_gst_list = f"""
                         <LEDGSTREGDETAILS.LIST>

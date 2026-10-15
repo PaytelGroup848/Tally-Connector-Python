@@ -46,20 +46,20 @@ def _extract_item_name(item: Any) -> str:
     if isinstance(item, dict):
         for key in (
             "stockItemName", "stock_item_name", "stock_item", "stockItem",
-            "itemName", "item_name", "name", "productName", "product_name",
+            "itemName", "item_name", "item", "name", "productName", "product_name",
             "product", "title", "description", "itemDescription"
         ):
             val = item.get(key)
             if isinstance(val, str) and _clean_str(val):
                 return _clean_str(val)
             elif isinstance(val, dict):
-                sub_name = val.get("name") or val.get("itemName") or val.get("stockItemName")
+                sub_name = val.get("name") or val.get("itemName") or val.get("stockItemName") or val.get("item")
                 if sub_name and _clean_str(sub_name):
                     return _clean_str(sub_name)
 
         raw_dict = item.get("raw")
         if isinstance(raw_dict, dict):
-            for key in ("name", "stockItemName", "itemName", "stock_item_name", "stock_item"):
+            for key in ("name", "stockItemName", "itemName", "item", "stock_item_name", "stock_item"):
                 val = raw_dict.get(key)
                 if val and _clean_str(val):
                     return _clean_str(val)
@@ -68,6 +68,16 @@ def _extract_item_name(item: Any) -> str:
 
 def _extract_items_list(voucher_data: Dict[str, Any]) -> list:
     """Finds the items list from various incoming payload keys."""
+    raw_items = voucher_data.get("items")
+    if isinstance(raw_items, dict):
+        combined = []
+        for sub_k in ("source", "destination", "consumption", "production", "items_out", "items_in", "items", "rows"):
+            sub_list = raw_items.get(sub_k)
+            if isinstance(sub_list, list):
+                combined.extend(sub_list)
+        if combined:
+            return combined
+
     for key in (
         "items", "inventory_entries", "inventoryEntries", "inventory",
         "stock_items", "stockItems", "line_items", "lineItems",
@@ -76,6 +86,14 @@ def _extract_items_list(voucher_data: Dict[str, Any]) -> list:
         val = voucher_data.get(key)
         if isinstance(val, list) and len(val) > 0:
             return val
+        elif isinstance(val, dict):
+            combined = []
+            for sub_k in ("source", "destination", "consumption", "production", "items_out", "items_in", "items", "rows"):
+                sub_list = val.get(sub_k)
+                if isinstance(sub_list, list):
+                    combined.extend(sub_list)
+            if combined:
+                return combined
 
     raw = voucher_data.get("raw")
     if isinstance(raw, dict):
@@ -83,6 +101,14 @@ def _extract_items_list(voucher_data: Dict[str, Any]) -> list:
             val = raw.get(key)
             if isinstance(val, list) and len(val) > 0:
                 return val
+            elif isinstance(val, dict):
+                combined = []
+                for sub_k in ("source", "destination", "consumption", "production", "items_out", "items_in", "items", "rows"):
+                    sub_list = val.get(sub_k)
+                    if isinstance(sub_list, list):
+                        combined.extend(sub_list)
+                if combined:
+                    return combined
 
     return []
 
@@ -107,6 +133,21 @@ def _extract_party_ledger(voucher_data: Dict[str, Any]) -> str:
             val = raw.get(key)
             if isinstance(val, str) and _clean_str(val):
                 return _clean_str(val)
+
+    # Check particulars or ledger_entries for first party
+    for p_key in ("particulars", "ledger_entries", "ledgerEntries", "debit_particulars", "items"):
+        parts = voucher_data.get(p_key)
+        if isinstance(parts, list):
+            first_found = None
+            for p in parts:
+                if isinstance(p, dict):
+                    p_name = _clean_str(p.get("partyName") or p.get("party_name") or p.get("ledgerName") or p.get("ledger_name") or p.get("name") or p.get("ledger") or p.get("party"))
+                    if p_name and p_name.lower() not in ("cash", "bank"):
+                        return p_name
+                    elif p_name and not first_found:
+                        first_found = p_name
+            if first_found:
+                return first_found
 
     return "Cash"
 
@@ -385,9 +426,15 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
     v_raw_num = (
         voucher_data.get("voucher_number")
         or voucher_data.get("voucherNumber")
+        or voucher_data.get("voucher_no")
+        or voucher_data.get("voucherNo")
         or voucher_data.get("invoice_number")
+        or voucher_data.get("invoiceNumber")
         or voucher_data.get("bill_no")
+        or voucher_data.get("billNo")
         or voucher_data.get("reference")
+        or voucher_data.get("referenceNumber")
+        or voucher_data.get("reference_number")
     )
     if not v_raw_num or not _clean_str(v_raw_num):
         import random
@@ -398,15 +445,22 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
     narration = escape_xml(_clean_str(voucher_data.get("narration")) or "Imported from Cloud/Web 2-Way Sync")
     party_ledger = escape_xml(_extract_party_ledger(voucher_data))
 
+    adv_settings_raw = voucher_data.get("advancedSettings") or voucher_data.get("advanced_settings")
+    adv_settings: Dict[str, Any] = {}
+    if isinstance(adv_settings_raw, dict):
+        adv_settings = dict(adv_settings_raw)
+
     raw_party_gstin = _clean_str(
         voucher_data.get("gstin")
         or voucher_data.get("gstinUin")
         or voucher_data.get("gstNumber")
         or voucher_data.get("party_gstin")
         or voucher_data.get("partyGstin")
-        or voucher_data.get("consigneeGstinUin")
         or voucher_data.get("buyerGstin")
         or voucher_data.get("supplierGstin")
+        or adv_settings.get("gstinUin")
+        or adv_settings.get("gstin")
+        or voucher_data.get("consigneeGstinUin")
     )
     raw_party_state = _clean_str(
         voucher_data.get("state")
@@ -414,12 +468,130 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
         or voucher_data.get("placeOfSupply")
         or voucher_data.get("place_of_supply")
         or voucher_data.get("supplierState")
+        or adv_settings.get("supplierState")
+        or adv_settings.get("state")
     )
     raw_party_address = _clean_str(
         voucher_data.get("address")
         or voucher_data.get("party_address")
         or voucher_data.get("partyAddress")
+        or adv_settings.get("address")
+        or adv_settings.get("partyAddress")
         or voucher_data.get("consigneeAddress")
+    )
+
+    # Consignee Details (Ship To)
+    consignee_name = _clean_str(
+        voucher_data.get("consignee_name")
+        or voucher_data.get("consigneeName")
+        or adv_settings.get("consigneeName")
+        or adv_settings.get("consignee_name")
+        or adv_settings.get("shipToName")
+    )
+    consignee_gstin = _clean_str(
+        voucher_data.get("consignee_gstin")
+        or voucher_data.get("consigneeGstinUin")
+        or voucher_data.get("consignee_gstin_uin")
+        or voucher_data.get("consigneeGstin")
+        or adv_settings.get("consigneeGstinUin")
+        or adv_settings.get("consignee_gstin_uin")
+        or adv_settings.get("consigneeGstin")
+    )
+    consignee_state = _clean_str(
+        voucher_data.get("consignee_state")
+        or voucher_data.get("consigneeState")
+        or adv_settings.get("consigneeState")
+        or adv_settings.get("consignee_state")
+    )
+    consignee_country = _clean_str(
+        voucher_data.get("consignee_country")
+        or voucher_data.get("consigneeCountry")
+        or adv_settings.get("consigneeCountry")
+        or adv_settings.get("consignee_country")
+        or "India"
+    )
+    consignee_pincode = _clean_str(
+        voucher_data.get("consignee_pincode")
+        or voucher_data.get("consigneePostalCode")
+        or voucher_data.get("consignee_postal_code")
+        or voucher_data.get("consigneePincode")
+        or adv_settings.get("consigneePostalCode")
+        or adv_settings.get("consignee_postal_code")
+        or adv_settings.get("consigneePincode")
+    )
+    consignee_address = _clean_str(
+        voucher_data.get("consignee_address")
+        or voucher_data.get("consigneeAddress")
+        or adv_settings.get("consigneeAddress")
+        or adv_settings.get("consignee_address")
+    )
+
+    # Dispatch Details
+    dispatch_doc_no = _clean_str(
+        voucher_data.get("dispatch_doc_no")
+        or voucher_data.get("dispatchDocNo")
+        or adv_settings.get("dispatchDocNo")
+        or adv_settings.get("dispatch_doc_no")
+        or adv_settings.get("lrNo")
+        or adv_settings.get("lrNumber")
+    )
+    dispatch_through = _clean_str(
+        voucher_data.get("dispatch_through")
+        or voucher_data.get("dispatchThrough")
+        or adv_settings.get("dispatchThrough")
+        or adv_settings.get("dispatch_through")
+        or adv_settings.get("transporter")
+    )
+    dispatch_from = _clean_str(
+        voucher_data.get("dispatch_destination")
+        or voucher_data.get("dispatchFrom")
+        or voucher_data.get("dispatch_from")
+        or voucher_data.get("destination")
+        or adv_settings.get("dispatchFrom")
+        or adv_settings.get("dispatch_from")
+        or adv_settings.get("destination")
+    )
+    dispatch_date_raw = (
+        voucher_data.get("dispatch_date")
+        or voucher_data.get("dispatchDate")
+        or adv_settings.get("dispatchDate")
+        or adv_settings.get("dispatch_date")
+    )
+    vehicle_no = _clean_str(
+        voucher_data.get("vehicle_no")
+        or voucher_data.get("vehicleNo")
+        or voucher_data.get("motorVehicleNo")
+        or adv_settings.get("motorVehicleNo")
+        or adv_settings.get("vehicleNo")
+    )
+
+    # Order Details
+    order_no = _clean_str(
+        voucher_data.get("order_no")
+        or voucher_data.get("orderNo")
+        or voucher_data.get("orderNumber")
+        or voucher_data.get("order_number")
+        or adv_settings.get("orderNo")
+        or adv_settings.get("order_no")
+        or adv_settings.get("orderNumber")
+    )
+    order_date_raw = (
+        voucher_data.get("order_date")
+        or voucher_data.get("orderDate")
+        or adv_settings.get("orderDate")
+        or adv_settings.get("order_date")
+    )
+    terms_of_delivery = _clean_str(
+        voucher_data.get("terms_of_delivery")
+        or voucher_data.get("termsOfDelivery")
+        or adv_settings.get("termsOfDelivery")
+        or adv_settings.get("terms_of_delivery")
+    )
+    party_pincode = _clean_str(
+        voucher_data.get("postal_code")
+        or voucher_data.get("postalCode")
+        or voucher_data.get("pincode")
+        or adv_settings.get("postalCode")
     )
 
     auto_gstin, auto_state, auto_addr = _lookup_party_master_gstin(company_name, party_ledger)
@@ -432,9 +604,36 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
     total_amount = _parse_float(
         voucher_data.get("amount")
         or voucher_data.get("total_amount")
-        or voucher_data.get("total"),
+        or voucher_data.get("total")
+        or voucher_data.get("grandTotal")
+        or voucher_data.get("subTotal"),
         0.0,
     )
+    if total_amount <= 0.0 or "contra" in voucher_type.lower() or "journal" in voucher_type.lower():
+        for p_key in ("particulars", "ledger_entries", "ledgerEntries", "debit_particulars", "items"):
+            parts = voucher_data.get(p_key)
+            if isinstance(parts, list) and len(parts) > 0:
+                p_deb_sum = 0.0
+                p_cred_sum = 0.0
+                has_debit_or_credit = False
+                for p in parts:
+                    if isinstance(p, dict):
+                        p_val = _parse_float(p.get("amount") or p.get("amt") or 0.0)
+                        p_typ = str(p.get("type") or p.get("entry_type") or "").strip().lower()
+                        if p_typ in ("debit", "dr", "by") or p.get("isDebit") is True or p.get("is_debit") is True:
+                            p_deb_sum += p_val
+                            has_debit_or_credit = True
+                        elif p_typ in ("credit", "cr", "to") or p.get("isDebit") is False or p.get("is_debit") is False:
+                            p_cred_sum += p_val
+                            has_debit_or_credit = True
+                if has_debit_or_credit:
+                    if p_deb_sum > 0 and (total_amount <= 0.0 or p_deb_sum == p_cred_sum or round(total_amount, 2) == round(p_deb_sum + p_cred_sum, 2)):
+                        total_amount = round(p_deb_sum, 2)
+                    elif p_cred_sum > 0 and total_amount <= 0.0:
+                        total_amount = round(p_cred_sum, 2)
+                    if total_amount > 0:
+                        voucher_data["amount"] = total_amount
+                        break
 
     company_tag = f"<SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>" if company_name else ""
 
@@ -505,13 +704,48 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
 </ENVELOPE>"""
 
     if is_stock_journal:
-        out_items_raw = list(voucher_data.get("source_items") or voucher_data.get("consumption_items") or voucher_data.get("items_out") or [])
-        in_items_raw = list(voucher_data.get("destination_items") or voucher_data.get("production_items") or voucher_data.get("items_in") or [])
+        raw_items_dict: Dict[str, Any] = {}
+        raw_items_val = voucher_data.get("items")
+        if isinstance(raw_items_val, dict):
+            raw_items_dict = dict(raw_items_val)
+
+        out_items_raw = list(
+            voucher_data.get("source_items")
+            or voucher_data.get("sourceItems")
+            or voucher_data.get("consumption_items")
+            or voucher_data.get("consumptionItems")
+            or voucher_data.get("items_out")
+            or voucher_data.get("itemsOut")
+            or voucher_data.get("outward_items")
+            or voucher_data.get("outwardItems")
+            or raw_items_dict.get("source")
+            or raw_items_dict.get("consumption")
+            or raw_items_dict.get("items_out")
+            or raw_items_dict.get("itemsOut")
+            or raw_items_dict.get("outward")
+            or []
+        )
+        in_items_raw = list(
+            voucher_data.get("destination_items")
+            or voucher_data.get("destinationItems")
+            or voucher_data.get("production_items")
+            or voucher_data.get("productionItems")
+            or voucher_data.get("items_in")
+            or voucher_data.get("itemsIn")
+            or voucher_data.get("inward_items")
+            or voucher_data.get("inwardItems")
+            or raw_items_dict.get("destination")
+            or raw_items_dict.get("production")
+            or raw_items_dict.get("items_in")
+            or raw_items_dict.get("itemsIn")
+            or raw_items_dict.get("inward")
+            or []
+        )
         gen_items = _extract_items_list(voucher_data)
 
         if not out_items_raw and not in_items_raw:
             for it in gen_items:
-                itype = str(it.get("type", "")).lower()
+                itype = str(it.get("type", "") or it.get("item_type", "") or it.get("itemType", "")).lower()
                 if itype in ("source", "consumption", "out", "outward", "issue"):
                     out_items_raw.append(it)
                 elif itype in ("destination", "production", "in", "inward", "receipt"):
@@ -521,8 +755,22 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                 out_items_raw = list(gen_items)
                 in_items_raw = list(gen_items)
 
-        src_godown_default = _clean_str(voucher_data.get("source_godown") or voucher_data.get("from_godown") or voucher_data.get("godown")) or "Main Location"
-        dest_godown_default = _clean_str(voucher_data.get("destination_godown") or voucher_data.get("to_godown") or voucher_data.get("dest_godown") or voucher_data.get("godown")) or "Main Location"
+        src_godown_default = _clean_str(
+            voucher_data.get("source_godown")
+            or voucher_data.get("sourceGodown")
+            or voucher_data.get("from_godown")
+            or voucher_data.get("fromGodown")
+            or voucher_data.get("godown")
+        ) or "Main Location"
+        dest_godown_default = _clean_str(
+            voucher_data.get("destination_godown")
+            or voucher_data.get("destinationGodown")
+            or voucher_data.get("to_godown")
+            or voucher_data.get("toGodown")
+            or voucher_data.get("dest_godown")
+            or voucher_data.get("destGodown")
+            or voucher_data.get("godown")
+        ) or "Main Location"
 
         sj_entries_xml = []
 
@@ -539,8 +787,8 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
             i_rate = _parse_float(item.get("rate") if item.get("rate") is not None else item.get("price", 0.0), 0.0)
             amt = abs(round(_parse_float(item.get("amount") or item.get("total"), i_qty * i_rate), 2))
             rate_str = f"{i_rate:.2f}/{i_unit}" if i_unit else f"{i_rate:.2f}"
-            g_name = _clean_str(item.get("source_godown") or item.get("godown") or src_godown_default) or "Main Location"
-            b_name = _clean_str(item.get("batch") or item.get("batch_name") or item.get("batch_no")) or "Primary Batch"
+            g_name = _clean_str(item.get("source_godown") or item.get("sourceGodown") or item.get("godown") or item.get("godownName") or item.get("godown_name") or src_godown_default) or "Main Location"
+            b_name = _clean_str(item.get("batch") or item.get("batch_name") or item.get("batchName") or item.get("batch_no") or item.get("batchNo")) or "Primary Batch"
 
             sj_entries_xml.append(f"""<INVENTORYENTRIESOUT.LIST>
                     <STOCKITEMNAME>{escape_xml(i_name)}</STOCKITEMNAME>
@@ -571,8 +819,8 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
             i_rate = _parse_float(item.get("rate") if item.get("rate") is not None else item.get("price", 0.0), 0.0)
             amt = abs(round(_parse_float(item.get("amount") or item.get("total"), i_qty * i_rate), 2))
             rate_str = f"{i_rate:.2f}/{i_unit}" if i_unit else f"{i_rate:.2f}"
-            g_name = _clean_str(item.get("destination_godown") or item.get("godown") or dest_godown_default) or "Main Location"
-            b_name = _clean_str(item.get("batch") or item.get("batch_name") or item.get("batch_no")) or "Primary Batch"
+            g_name = _clean_str(item.get("destination_godown") or item.get("destinationGodown") or item.get("godown") or item.get("godownName") or item.get("godown_name") or dest_godown_default) or "Main Location"
+            b_name = _clean_str(item.get("batch") or item.get("batch_name") or item.get("batchName") or item.get("batch_no") or item.get("batchNo")) or "Primary Batch"
 
             sj_entries_xml.append(f"""<INVENTORYENTRIESIN.LIST>
                     <STOCKITEMNAME>{escape_xml(i_name)}</STOCKITEMNAME>
@@ -631,7 +879,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
     )
 
     items = _extract_items_list(voucher_data)
-    if "journal" in voucher_type.lower() and not is_stock_journal:
+    if ("journal" in voucher_type.lower() or "contra" in voucher_type.lower()) and not is_stock_journal:
         items = []
     inventory_entries_xml = []
     calculated_items_total = 0.0
@@ -740,6 +988,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                 or item.get("orderNo")
                 or item.get("order_number")
                 or item.get("orderNumber")
+                or order_no
                 or voucher_data.get("order_no")
                 or voucher_data.get("orderNo")
                 or voucher_data.get("order_number")
@@ -793,14 +1042,14 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                 if is_purchase:
                     item_alloc_ledger = escape_xml(_clean_str(item.get("purchase_ledger") or item.get("purchaseLedger") or voucher_data.get("purchase_ledger") or voucher_data.get("purchaseLedger")) or "Purchase")
                 else:
-                    item_alloc_ledger = escape_xml(_clean_str(item.get("credit_note_ledger") or item.get("sales_return_ledger") or voucher_data.get("credit_note_ledger") or voucher_data.get("sales_return_ledger")) or "Sales Return")
+                    item_alloc_ledger = escape_xml(_clean_str(item.get("credit_note_ledger") or item.get("creditNoteLedger") or item.get("sales_return_ledger") or item.get("salesReturnLedger") or voucher_data.get("credit_note_ledger") or voucher_data.get("creditNoteLedger") or voucher_data.get("sales_return_ledger") or voucher_data.get("salesReturnLedger")) or "Sales Return")
             else:
                 item_deemed_positive = "No"
                 item_amount = abs(net_amt)
                 alloc_deemed_positive = "No"
                 alloc_amount = abs(net_amt)
                 if is_debit_note:
-                    item_alloc_ledger = escape_xml(_clean_str(item.get("debit_note_ledger") or item.get("purchase_return_ledger") or voucher_data.get("debit_note_ledger") or voucher_data.get("purchase_return_ledger")) or "Purchase Return")
+                    item_alloc_ledger = escape_xml(_clean_str(item.get("debit_note_ledger") or item.get("debitNoteLedger") or item.get("purchase_return_ledger") or item.get("purchaseReturnLedger") or voucher_data.get("debit_note_ledger") or voucher_data.get("debitNoteLedger") or voucher_data.get("purchase_return_ledger") or voucher_data.get("purchaseReturnLedger")) or "Purchase Return")
                 else:
                     item_alloc_ledger = escape_xml(_clean_str(item.get("sales_ledger") or item.get("salesLedger") or voucher_data.get("sales_ledger") or voucher_data.get("salesLedger")) or sales_ledger)
 
@@ -888,15 +1137,51 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
         voucher_data["company_name"] = company_name
 
     ledger_entries_xml = []
-    provided_entries = voucher_data.get("ledger_entries") or voucher_data.get("ledgerEntries")
+    provided_entries = (
+        voucher_data.get("ledger_entries")
+        or voucher_data.get("ledgerEntries")
+        or voucher_data.get("particulars")
+    )
+    if not provided_entries and ("contra" in voucher_type.lower() or "journal" in voucher_type.lower()):
+        cand_items = voucher_data.get("items")
+        if isinstance(cand_items, list) and any(
+            isinstance(x, dict) and (
+                "type" in x
+                or "isDebit" in x
+                or "is_debit" in x
+                or "partyName" in x
+                or "ledgerName" in x
+            )
+            for x in cand_items
+        ):
+            provided_entries = cand_items
 
     if provided_entries and isinstance(provided_entries, list) and not has_valid_items:
         for entry in provided_entries:
-            l_name = escape_xml(_clean_str(entry.get("ledger_name") or entry.get("ledgerName") or entry.get("name")))
+            if not isinstance(entry, dict):
+                continue
+            l_name = escape_xml(
+                _clean_str(
+                    entry.get("ledger_name")
+                    or entry.get("ledgerName")
+                    or entry.get("partyName")
+                    or entry.get("party_name")
+                    or entry.get("name")
+                    or entry.get("ledger")
+                    or entry.get("party")
+                    or entry.get("itemName")
+                )
+            )
             if not l_name:
                 continue
-            amt = _parse_float(entry.get("amount", 0.0))
-            is_debit = entry.get("is_debit", False) or entry.get("isDebit", False) or str(entry.get("type", "")).upper() in ("DR", "DEBIT") or (entry.get("isDeemedPositive") == "Yes")
+            amt = _parse_float(entry.get("amount", 0.0) or entry.get("amt", 0.0))
+            entry_type = str(entry.get("type") or entry.get("entry_type") or "").strip().upper()
+            is_debit = (
+                entry.get("is_debit", False)
+                or entry.get("isDebit", False)
+                or entry_type in ("DR", "DEBIT", "BY")
+                or (entry.get("isDeemedPositive") == "Yes")
+            )
             is_deemed_pos = "Yes" if is_debit else "No"
             tally_amt = -abs(amt) if is_debit else abs(amt)
 
@@ -905,7 +1190,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                     <ISDEEMEDPOSITIVE>{is_deemed_pos}</ISDEEMEDPOSITIVE>
                     <AMOUNT>{tally_amt:.2f}</AMOUNT>
                 </ALLLEDGERENTRIES.LIST>""")
-    elif has_valid_items:
+    if not ledger_entries_xml and has_valid_items:
         is_purchase_or_cn = "purchase" in voucher_type.lower() or "credit note" in voucher_type.lower() or "sales return" in voucher_type.lower()
         party_deemed_pos = "No" if is_purchase_or_cn else "Yes"
         party_amt = abs(total_amount) if is_purchase_or_cn else -abs(total_amount)
@@ -925,7 +1210,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                     <ISDEEMEDPOSITIVE>{tax_deemed_pos}</ISDEEMEDPOSITIVE>
                     <AMOUNT>{t_amt:.2f}</AMOUNT>
                 </LEDGERENTRIES.LIST>""")
-    else:
+    elif not ledger_entries_xml:
         party_gstin_tag = f"\n PARTYGSTIN>{party_gstin}</PARTYGSTIN>" if party_gstin else ""
         if "sale" in voucher_type.lower():
             ledger_entries_xml.append(f"""<ALLLEDGERENTRIES.LIST>
@@ -1029,7 +1314,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                     <AMOUNT>{abs(total_amount):.2f}</AMOUNT>
                 </ALLLEDGERENTRIES.LIST>""")
         elif "credit note" in voucher_type.lower() or "sales return" in voucher_type.lower():
-            credit_note_ledger = escape_xml(_clean_str(voucher_data.get("credit_note_ledger") or voucher_data.get("sales_return_ledger")) or "Sales Return")
+            credit_note_ledger = escape_xml(_clean_str(voucher_data.get("credit_note_ledger") or voucher_data.get("sales_return_ledger") or voucher_data.get("creditNoteLedger") or voucher_data.get("salesReturnLedger")) or "Sales Return")
             ledger_entries_xml.append(f"""<ALLLEDGERENTRIES.LIST>
                     <LEDGERNAME>{party_ledger}</LEDGERNAME>
                     <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
@@ -1042,7 +1327,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                     <AMOUNT>-{abs(total_amount):.2f}</AMOUNT>
                 </ALLLEDGERENTRIES.LIST>""")
         elif "debit note" in voucher_type.lower() or "purchase return" in voucher_type.lower():
-            debit_note_ledger = escape_xml(_clean_str(voucher_data.get("debit_note_ledger") or voucher_data.get("purchase_return_ledger")) or "Purchase Return")
+            debit_note_ledger = escape_xml(_clean_str(voucher_data.get("debit_note_ledger") or voucher_data.get("purchase_return_ledger") or voucher_data.get("debitNoteLedger") or voucher_data.get("purchaseReturnLedger")) or "Purchase Return")
             ledger_entries_xml.append(f""" <ALLLEDGERENTRIES.LIST>
                     <LEDGERNAME>{party_ledger}</LEDGERNAME>
                     <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
@@ -1081,31 +1366,138 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                     <AMOUNT>-{abs(total_amount):.2f}</AMOUNT>
                 </ALLLEDGERENTRIES.LIST>""")
         elif "contra" in voucher_type.lower():
-            to_acc = escape_xml(_clean_str(voucher_data.get("to_account") or voucher_data.get("toAccount") or voucher_data.get("bank_ledger") or party_ledger))
-            from_acc = escape_xml(_clean_str(voucher_data.get("from_account") or voucher_data.get("fromAccount") or voucher_data.get("cash_ledger") or "Cash"))
-            ledger_entries_xml.append(f"""<ALLLEDGERENTRIES.LIST>
+            raw_contra_items = (
+                voucher_data.get("particulars")
+                or voucher_data.get("ledger_entries")
+                or voucher_data.get("ledgerEntries")
+                or voucher_data.get("items")
+                or []
+            )
+            if not raw_contra_items:
+                deb_p = voucher_data.get("debit_particulars") or voucher_data.get("debitParticulars") or []
+                cred_p = voucher_data.get("credit_particulars") or voucher_data.get("creditParticulars") or []
+                if deb_p or cred_p:
+                    raw_contra_items = []
+                    if isinstance(deb_p, list):
+                        for dp in deb_p:
+                            if isinstance(dp, dict):
+                                item_dp = dict(dp)
+                                item_dp["type"] = "Debit"
+                                raw_contra_items.append(item_dp)
+                    if isinstance(cred_p, list):
+                        for cp in cred_p:
+                            if isinstance(cp, dict):
+                                item_cp = dict(cp)
+                                item_cp["type"] = "Credit"
+                                raw_contra_items.append(item_cp)
+
+            if raw_contra_items and isinstance(raw_contra_items, list):
+                for cit in raw_contra_items:
+                    cp_name = escape_xml(
+                        _clean_str(
+                            cit.get("partyName")
+                            or cit.get("party_name")
+                            or cit.get("ledgerName")
+                            or cit.get("ledger_name")
+                            or cit.get("name")
+                            or cit.get("itemName")
+                            or cit.get("ledger")
+                            or cit.get("party")
+                        )
+                    )
+                    if not cp_name:
+                        continue
+                    c_type = str(cit.get("type") or cit.get("entry_type") or "").strip().lower()
+                    is_debit = (
+                        c_type in ("debit", "dr", "by")
+                        or cit.get("isDebit") is True
+                        or cit.get("is_debit") is True
+                        or cit.get("isDeemedPositive") == "Yes"
+                    )
+                    try:
+                        c_amt = abs(float(cit.get("amount") or cit.get("amt") or 0.0))
+                    except (ValueError, TypeError):
+                        c_amt = 0.0
+                    if is_debit:
+                        ledger_entries_xml.append(f""" <ALLLEDGERENTRIES.LIST>
+                    <LEDGERNAME>{cp_name}</LEDGERNAME>
+                    <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+                    <AMOUNT>-{c_amt:.2f}</AMOUNT>
+                </ALLLEDGERENTRIES.LIST>""")
+                    else:
+                        ledger_entries_xml.append(f""" <ALLLEDGERENTRIES.LIST>
+                    <LEDGERNAME>{cp_name}</LEDGERNAME>
+                    <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+                    <AMOUNT>{c_amt:.2f}</AMOUNT>
+                </ALLLEDGERENTRIES.LIST>""")
+
+            if not ledger_entries_xml:
+                to_acc = escape_xml(_clean_str(voucher_data.get("to_account") or voucher_data.get("toAccount") or voucher_data.get("bank_ledger") or party_ledger))
+                from_acc = escape_xml(_clean_str(voucher_data.get("from_account") or voucher_data.get("fromAccount") or voucher_data.get("cash_ledger") or "Cash"))
+                ledger_entries_xml.append(f"""<ALLLEDGERENTRIES.LIST>
                     <LEDGERNAME>{to_acc}</LEDGERNAME>
                     <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
                     <AMOUNT>-{abs(total_amount):.2f}</AMOUNT>
                 </ALLLEDGERENTRIES.LIST>""")
-            ledger_entries_xml.append(f"""<ALLLEDGERENTRIES.LIST>
+                ledger_entries_xml.append(f"""<ALLLEDGERENTRIES.LIST>
                     <LEDGERNAME>{from_acc}</LEDGERNAME>
                     <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
                     <AMOUNT>{abs(total_amount):.2f}</AMOUNT>
                 </ALLLEDGERENTRIES.LIST>""")
         elif "journal" in voucher_type.lower():
-            raw_journal_items = voucher_data.get("items") or voucher_data.get("ledger_entries") or []
+            raw_journal_items = (
+                voucher_data.get("particulars")
+                or voucher_data.get("ledger_entries")
+                or voucher_data.get("ledgerEntries")
+                or voucher_data.get("items")
+                or []
+            )
+            if not raw_journal_items:
+                deb_p = voucher_data.get("debit_particulars") or voucher_data.get("debitParticulars") or []
+                cred_p = voucher_data.get("credit_particulars") or voucher_data.get("creditParticulars") or []
+                if deb_p or cred_p:
+                    raw_journal_items = []
+                    if isinstance(deb_p, list):
+                        for dp in deb_p:
+                            if isinstance(dp, dict):
+                                item_dp = dict(dp)
+                                item_dp["type"] = "Debit"
+                                raw_journal_items.append(item_dp)
+                    if isinstance(cred_p, list):
+                        for cp in cred_p:
+                            if isinstance(cp, dict):
+                                item_cp = dict(cp)
+                                item_cp["type"] = "Credit"
+                                raw_journal_items.append(item_cp)
+
             if raw_journal_items and isinstance(raw_journal_items, list):
                 for jit in raw_journal_items:
-                    jp_name = escape_xml(_clean_str(jit.get("partyName") or jit.get("party_name") or jit.get("ledgerName") or jit.get("ledger_name") or jit.get("name") or jit.get("itemName")))
+                    jp_name = escape_xml(
+                        _clean_str(
+                            jit.get("partyName")
+                            or jit.get("party_name")
+                            or jit.get("ledgerName")
+                            or jit.get("ledger_name")
+                            or jit.get("name")
+                            or jit.get("itemName")
+                            or jit.get("ledger")
+                            or jit.get("party")
+                        )
+                    )
                     if not jp_name:
                         continue
-                    j_type = str(jit.get("type") or jit.get("entry_type") or "Debit").strip().lower()
+                    j_type = str(jit.get("type") or jit.get("entry_type") or "").strip().lower()
+                    is_debit = (
+                        j_type in ("debit", "dr", "by")
+                        or jit.get("isDebit") is True
+                        or jit.get("is_debit") is True
+                        or jit.get("isDeemedPositive") == "Yes"
+                    )
                     try:
-                        j_amt = abs(float(jit.get("amount") or 0.0))
+                        j_amt = abs(float(jit.get("amount") or jit.get("amt") or 0.0))
                     except (ValueError, TypeError):
                         j_amt = 0.0
-                    if j_type == "debit":
+                    if is_debit:
                         ledger_entries_xml.append(f""" <ALLLEDGERENTRIES.LIST>
                     <LEDGERNAME>{jp_name}</LEDGERNAME>
                     <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
@@ -1163,18 +1555,68 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
     if party_state:
         buyer_tags.append(f"<PLACEOFSUPPLY>{escape_xml(party_state)}</PLACEOFSUPPLY>")
         buyer_tags.append(f"<STATENAME>{escape_xml(party_state)}</STATENAME>")
-    buyer_tags.append("<COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>")
+    party_country = _clean_str(voucher_data.get("country") or adv_settings.get("supplierCountry") or "India")
+    buyer_tags.append(f"<COUNTRYOFRESIDENCE>{escape_xml(party_country or 'India')}</COUNTRYOFRESIDENCE>")
+    if party_pincode:
+        buyer_tags.append(f"<PARTYPINCODE>{escape_xml(party_pincode)}</PARTYPINCODE>")
+
     if party_address:
         lines = [ln.strip() for ln in party_address.replace("\r", "").split("\n") if ln.strip()]
         if not lines:
             lines = [ln.strip() for ln in party_address.split(",") if ln.strip()]
         if not lines:
             lines = [party_address.strip()]
-        b_lines = "".join(f"\n <BASICBUYERADDRESS>{escape_xml(l)}</BASICBUYERADDRESS>" for l in lines[:4])
-        buyer_tags.append(f"<BASICBUYERADDRESS.LIST TYPE=\"String\">{b_lines}\n  </BASICBUYERADDRESS.LIST>")
-        a_lines = "".join(f"\n <ADDRESS>{escape_xml(l)}</ADDRESS>" for l in lines[:4])
-        buyer_tags.append(f"<ADDRESS.LIST TYPE=\"String\">{a_lines}\n </ADDRESS.LIST>")
-    buyer_details_xml = ("\n" + "\n".join(buyer_tags)) if buyer_tags else ""
+        b_lines = "".join(f"\n                        <BASICBUYERADDRESS>{escape_xml(l)}</BASICBUYERADDRESS>" for l in lines[:4])
+        buyer_tags.append(f"<BASICBUYERADDRESS.LIST TYPE=\"String\">{b_lines}\n                    </BASICBUYERADDRESS.LIST>")
+        a_lines = "".join(f"\n                        <ADDRESS>{escape_xml(l)}</ADDRESS>" for l in lines[:4])
+        buyer_tags.append(f"<ADDRESS.LIST TYPE=\"String\">{a_lines}\n                    </ADDRESS.LIST>")
+
+    # Consignee Details (Ship To)
+    if consignee_name:
+        buyer_tags.append(f"<CONSIGNEEMAILINGNAME>{escape_xml(consignee_name)}</CONSIGNEEMAILINGNAME>")
+    if consignee_state:
+        buyer_tags.append(f"<CONSIGNEESTATENAME>{escape_xml(consignee_state)}</CONSIGNEESTATENAME>")
+    if consignee_country:
+        buyer_tags.append(f"<CONSIGNEECOUNTRYNAME>{escape_xml(consignee_country)}</CONSIGNEECOUNTRYNAME>")
+    if consignee_pincode:
+        buyer_tags.append(f"<CONSIGNEEPINCODE>{escape_xml(consignee_pincode)}</CONSIGNEEPINCODE>")
+    if consignee_gstin:
+        buyer_tags.append(f"<CONSIGNEEGSTIN>{escape_xml(consignee_gstin)}</CONSIGNEEGSTIN>")
+    if consignee_address:
+        c_lines = [ln.strip() for ln in consignee_address.replace("\r", "").split("\n") if ln.strip()]
+        if not c_lines:
+            c_lines = [ln.strip() for ln in consignee_address.split(",") if ln.strip()]
+        if not c_lines:
+            c_lines = [consignee_address.strip()]
+        ca_lines = "".join(f"\n                        <CONSIGNEEADDRESS>{escape_xml(l)}</CONSIGNEEADDRESS>" for l in c_lines[:4])
+        buyer_tags.append(f"<CONSIGNEEADDRESS.LIST TYPE=\"String\">{ca_lines}\n                    </CONSIGNEEADDRESS.LIST>")
+
+    # Dispatch Details
+    if dispatch_doc_no:
+        buyer_tags.append(f"<BASICSHIPDOCUMENTNO>{escape_xml(dispatch_doc_no)}</BASICSHIPDOCUMENTNO>")
+    if dispatch_through:
+        buyer_tags.append(f"<BASICSHIPPEDBY>{escape_xml(dispatch_through)}</BASICSHIPPEDBY>")
+    if dispatch_from:
+        buyer_tags.append(f"<BASICFINALDESTINATION>{escape_xml(dispatch_from)}</BASICFINALDESTINATION>")
+    if dispatch_date_raw:
+        buyer_tags.append(f"<BASICSHIPDATE>{format_tally_date(dispatch_date_raw)}</BASICSHIPDATE>")
+    if vehicle_no:
+        buyer_tags.append(f"<VEHICLENO>{escape_xml(vehicle_no)}</VEHICLENO>")
+
+    # Order Details
+    if order_no:
+        buyer_tags.append(f"<BASICORDERREF>{escape_xml(order_no)}</BASICORDERREF>")
+        buyer_tags.append(f"<BASICPURCHASEORDERNO>{escape_xml(order_no)}</BASICPURCHASEORDERNO>")
+    if order_date_raw:
+        buyer_tags.append(f"<BASICORDERDATE>{format_tally_date(order_date_raw)}</BASICORDERDATE>")
+    if terms_of_delivery:
+        t_lines = [ln.strip() for ln in terms_of_delivery.replace("\r", "").split("\n") if ln.strip()]
+        if not t_lines:
+            t_lines = [terms_of_delivery.strip()]
+        ot_lines = "".join(f"\n                        <BASICORDERTERMS>{escape_xml(tl)}</BASICORDERTERMS>" for tl in t_lines[:4])
+        buyer_tags.append(f"<BASICORDERTERMS.LIST TYPE=\"String\">{ot_lines}\n                    </BASICORDERTERMS.LIST>")
+
+    buyer_details_xml = ("\n                        " + "\n                        ".join(buyer_tags)) if buyer_tags else ""
 
     xml_envelope = f"""<ENVELOPE>
     <HEADER>

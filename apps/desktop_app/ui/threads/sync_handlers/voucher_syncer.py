@@ -20,6 +20,10 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                 "DATE", "EFFECTIVEDATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "REFERENCE", "REFERENCEDATE",
                 "PARTYLEDGERNAME", "PARTYNAME", "BASICBUYERNAME", "PLACEOFSUPPLY", "AMOUNT", "NARRATION",
                 "GUID", "ALTERID", "ISOPTIONAL", "ISCANCELLED", "ISPOSTDATED",
+                "BASICSHIPDOCUMENTNO", "BASICSHIPPEDBY", "BASICFINALDESTINATION", "BASICSHIPDATE", "VEHICLENO",
+                "BASICORDERREF", "BASICPURCHASEORDERNO", "BASICORDERDATE", "BASICORDERTERMS.LIST",
+                "CONSIGNEEMAILINGNAME", "CONSIGNEEADDRESS.LIST", "CONSIGNEESTATENAME", "CONSIGNEECOUNTRYNAME",
+                "CONSIGNEEPINCODE", "CONSIGNEEGSTIN", "PARTYGSTIN", "ADDRESS.LIST", "STATENAME", "PINCODE",
                 "ALLLEDGERENTRIES.LIST",
                 "ALLLEDGERENTRIES.BILLALLOCATIONS.LIST",
                 "ALLLEDGERENTRIES.BILLALLOCATIONS.NAME",
@@ -77,6 +81,10 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                 "DATE", "EFFECTIVEDATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "REFERENCE", "REFERENCEDATE",
                 "PARTYLEDGERNAME", "PARTYNAME", "BASICBUYERNAME", "PLACEOFSUPPLY", "AMOUNT", "NARRATION",
                 "GUID", "ALTERID", "ISOPTIONAL", "ISCANCELLED", "ISPOSTDATED",
+                "BASICSHIPDOCUMENTNO", "BASICSHIPPEDBY", "BASICFINALDESTINATION", "BASICSHIPDATE", "VEHICLENO",
+                "BASICORDERREF", "BASICPURCHASEORDERNO", "BASICORDERDATE", "BASICORDERTERMS.LIST",
+                "CONSIGNEEMAILINGNAME", "CONSIGNEEADDRESS.LIST", "CONSIGNEESTATENAME", "CONSIGNEECOUNTRYNAME",
+                "CONSIGNEEPINCODE", "CONSIGNEEGSTIN", "PARTYGSTIN", "ADDRESS.LIST", "STATENAME", "PINCODE",
                 "ALLLEDGERENTRIES.LIST", "ALLINVENTORYENTRIES.LIST", "INVENTORYENTRIES.LIST",
                 "ALLINVENTORYENTRIES.STOCKITEMNAME", "ALLINVENTORYENTRIES.RATE", "ALLINVENTORYENTRIES.AMOUNT",
                 "ALLINVENTORYENTRIES.BILLEDQTY", "ALLINVENTORYENTRIES.GODOWNNAME"
@@ -138,10 +146,22 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                 ref_val = str(v.get("reference") or "")
                 ref_date_val = str(v.get("referenceDate") or v_date)
                 place_val = str(v.get("placeOfSupply") or "")
-                inv_entries = v.get("inventoryEntries") or []
-                led_entries = v.get("ledgerEntries") or []
+                inv_entries = v.get("inventoryEntries") or v.get("items") or []
+                led_entries = v.get("ledgerEntries") or v.get("lines") or []
                 bill_allocs = v.get("billAllocations") or []
                 bank_allocs = v.get("bankAllocations") or []
+
+                adv_settings = v.get("advancedSettings") or {}
+                dispatch_doc_no = str(adv_settings.get("dispatchDocNo") or v.get("dispatchDocNo") or "")
+                dispatched_through = str(adv_settings.get("dispatchedThrough") or v.get("dispatchedThrough") or "")
+                destination = str(adv_settings.get("destination") or v.get("destination") or "")
+                vehicle_no = str(adv_settings.get("vehicleNo") or adv_settings.get("carrier") or v.get("vehicleNo") or "")
+                order_no = str(adv_settings.get("orderNo") or v.get("orderNo") or "")
+                order_date = str(adv_settings.get("orderDate") or v.get("orderDate") or "")
+                terms_val = str(adv_settings.get("terms") or v.get("terms") or "")
+                consignee_name = str(adv_settings.get("consigneeName") or v.get("consigneeName") or "")
+                consignee_address = str(adv_settings.get("consigneeAddress") or v.get("consigneeAddress") or "")
+                consignee_gstin = str(adv_settings.get("consigneeGstin") or v.get("consigneeGstin") or "")
 
                 v_doc = {
                     "source": "TALLY",
@@ -154,6 +174,9 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                     "voucher_type": v_type,
                     "partyLedger": v_party,
                     "party_ledger": v_party,
+                    "partyName": v_party,
+                    "customerName": v_party,
+                    "customer": v_party,
                     "date": v_date,
                     "effectiveDate": eff_date,
                     "reference": ref_val,
@@ -164,18 +187,64 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                     "isOptional": bool(v.get("isOptional", False)),
                     "isCancelled": bool(v.get("isCancelled", False)),
                     "isPostDated": bool(v.get("isPostDated", False)),
-                    "ledgerEntries": led_entries,
+                    "items": inv_entries,
                     "lines": led_entries,
+                    "ledgerEntries": led_entries,
                     "inventoryEntries": inv_entries,
                     "billAllocations": bill_allocs,
+                    "bankAllocations": bank_allocs,
+                    "advancedSettings": adv_settings,
+                    "dispatchDocNo": dispatch_doc_no,
+                    "dispatchedThrough": dispatched_through,
+                    "destination": destination,
+                    "vehicleNo": vehicle_no,
+                    "orderNo": order_no,
+                    "orderDate": order_date,
+                    "terms": terms_val,
+                    "consigneeName": consignee_name,
+                    "consigneeAddress": consignee_address,
+                    "consigneeGstin": consignee_gstin,
                     "guid": guid_val,
                     "alter_id": alt_id,
                     "raw": {
                         "voucherId": ext_id,
+                        "tallyExternalId": ext_id,
                         "name": v_num,
+                        "voucherNumber": v_num,
                         "parent": v_type,
+                        "voucherType": v_type,
                         "party": v_party,
+                        "partyLedger": v_party,
+                        "customerName": v_party,
                         "date": v_date,
+                        "reference": ref_val,
+                        "referenceDate": ref_date_val,
+                        "placeOfSupply": place_val,
+                        "amount": amt_val,
+                        "narration": narr_val,
+                        "items": inv_entries,
+                        "lines": led_entries,
+                        "inventoryEntries": inv_entries,
+                        "ledgerEntries": led_entries,
+                        "billAllocations": bill_allocs,
+                        "bankAllocations": bank_allocs,
+                        "advancedSettings": adv_settings,
+                        "dispatchDetails": {
+                            "dispatchDocNo": dispatch_doc_no,
+                            "dispatchedThrough": dispatched_through,
+                            "destination": destination,
+                            "vehicleNo": vehicle_no
+                        },
+                        "orderDetails": {
+                            "orderNo": order_no,
+                            "orderDate": order_date,
+                            "terms": terms_val
+                        },
+                        "consigneeDetails": {
+                            "consigneeName": consignee_name,
+                            "consigneeAddress": consignee_address,
+                            "consigneeGstin": consignee_gstin
+                        },
                         "alterid": alt_id
                     }
                 }
@@ -199,16 +268,34 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                         "voucherId": ext_id,
                         "tallyExternalId": ext_id,
                         "invoiceNumber": v_num,
+                        "voucherNumber": v_num,
                         "invoiceType": v_type,
+                        "voucherType": v_type,
                         "invoiceDate": v_date,
+                        "date": v_date,
                         "customer": v_party,
+                        "customerName": v_party,
+                        "partyLedger": v_party,
                         "placeOfSupply": place_val,
+                        "reference": ref_val,
+                        "referenceDate": ref_date_val,
                         "amount": amt_val,
                         "items": inv_entries,
                         "inventoryEntries": inv_entries,
                         "ledgerEntries": led_entries,
                         "lines": led_entries,
                         "billAllocations": bill_allocs,
+                        "advancedSettings": adv_settings,
+                        "dispatchDocNo": dispatch_doc_no,
+                        "dispatchedThrough": dispatched_through,
+                        "destination": destination,
+                        "vehicleNo": vehicle_no,
+                        "orderNo": order_no,
+                        "orderDate": order_date,
+                        "terms": terms_val,
+                        "consigneeName": consignee_name,
+                        "consigneeAddress": consignee_address,
+                        "consigneeGstin": consignee_gstin,
                         "narration": narr_val,
                         "guid": guid_val,
                         "updated_at": now_iso
@@ -231,17 +318,34 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                         "voucherId": ext_id,
                         "tallyExternalId": ext_id,
                         "invoiceNumber": v_num,
+                        "voucherNumber": v_num,
                         "invoiceType": v_type,
+                        "voucherType": v_type,
                         "invoiceDate": v_date,
+                        "date": v_date,
                         "supplier": v_party,
+                        "partyLedger": v_party,
                         "supplierInvoiceNumber": ref_val,
+                        "reference": ref_val,
                         "supplierInvoiceDate": ref_date_val,
+                        "referenceDate": ref_date_val,
                         "amount": amt_val,
                         "items": inv_entries,
                         "inventoryEntries": inv_entries,
                         "ledgerEntries": led_entries,
                         "lines": led_entries,
                         "billAllocations": bill_allocs,
+                        "advancedSettings": adv_settings,
+                        "dispatchDocNo": dispatch_doc_no,
+                        "dispatchedThrough": dispatched_through,
+                        "destination": destination,
+                        "vehicleNo": vehicle_no,
+                        "orderNo": order_no,
+                        "orderDate": order_date,
+                        "terms": terms_val,
+                        "consigneeName": consignee_name,
+                        "consigneeAddress": consignee_address,
+                        "consigneeGstin": consignee_gstin,
                         "narration": narr_val,
                         "guid": guid_val,
                         "updated_at": now_iso

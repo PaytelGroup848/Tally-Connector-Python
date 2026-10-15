@@ -511,6 +511,86 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
             pos_elem = find_first(elem, "PLACEOFSUPPLY", "STATENAME")
             place_of_supply = pos_elem.text.strip() if pos_elem is not None and pos_elem.text else ""
 
+            # Additional / Advanced Settings (Dispatch, Order, Consignee)
+            disp_doc_elem = find_first(elem, "BASICSHIPDOCUMENTNO", "BILLOFLADINGNO", "DISPATCHDOCNO")
+            dispatch_doc_no = disp_doc_elem.text.strip() if disp_doc_elem is not None and disp_doc_elem.text else ""
+
+            disp_through_elem = find_first(elem, "BASICSHIPPEDBY", "SHIPPEDBY", "CARRIER")
+            dispatched_through = disp_through_elem.text.strip() if disp_through_elem is not None and disp_through_elem.text else ""
+
+            dest_elem = find_first(elem, "BASICFINALDESTINATION", "FINALDESTINATION", "DESTINATION")
+            destination = dest_elem.text.strip() if dest_elem is not None and dest_elem.text else ""
+
+            veh_elem = find_first(elem, "VEHICLENO", "VEHICLE_NO", "LORRYNO")
+            vehicle_no = veh_elem.text.strip() if veh_elem is not None and veh_elem.text else ""
+
+            disp_date_elem = find_first(elem, "BASICSHIPDATE", "SHIPDATE", "DISPATCHDATE")
+            dispatch_date = format_tally_date(disp_date_elem.text.strip()) if disp_date_elem is not None and disp_date_elem.text else ""
+
+            ord_elem = find_first(elem, "BASICORDERREF", "BASICPURCHASEORDERNO", "PURCHASEORDERNO", "ORDERNO")
+            order_no = ord_elem.text.strip() if ord_elem is not None and ord_elem.text else ""
+
+            ord_date_elem = find_first(elem, "BASICORDERDATE", "ORDERDATE")
+            order_date = format_tally_date(ord_date_elem.text.strip()) if ord_date_elem is not None and ord_date_elem.text else ""
+
+            terms_nodes = elem.findall(".//BASICORDERTERMS.LIST") or elem.findall(".//ORDERTERMS.LIST")
+            terms_list = []
+            for tn in terms_nodes:
+                t_term = find_first(tn, "BASICORDERTERM", "ORDERTERM", "TERM")
+                if t_term is not None and t_term.text and t_term.text.strip():
+                    terms_list.append(t_term.text.strip())
+            if not terms_list:
+                term_elem = find_first(elem, "BASICORDERTERMS", "TERMS")
+                if term_elem is not None and term_elem.text and term_elem.text.strip():
+                    terms_list.append(term_elem.text.strip())
+            terms_str = "; ".join(terms_list)
+
+            c_name_elem = find_first(elem, "CONSIGNEEMAILINGNAME", "CONSIGNEENAME", "CONSIGNEE_NAME")
+            consignee_name = c_name_elem.text.strip() if c_name_elem is not None and c_name_elem.text else ""
+
+            c_addr_nodes = elem.findall(".//CONSIGNEEADDRESS.LIST") or elem.findall(".//CONSIGNEEADDRESS")
+            c_addr_parts = []
+            for an in c_addr_nodes:
+                a_text = find_first(an, "BASICADDRESS", "ADDRESS")
+                if a_text is not None and a_text.text and a_text.text.strip():
+                    c_addr_parts.append(a_text.text.strip())
+                elif an.text and an.text.strip():
+                    c_addr_parts.append(an.text.strip())
+            consignee_address = ", ".join(c_addr_parts) if c_addr_parts else ""
+
+            c_state_elem = find_first(elem, "CONSIGNEESTATENAME", "CONSIGNEESTATE")
+            consignee_state = c_state_elem.text.strip() if c_state_elem is not None and c_state_elem.text else ""
+
+            c_country_elem = find_first(elem, "CONSIGNEECOUNTRYNAME", "CONSIGNEECOUNTRY")
+            consignee_country = c_country_elem.text.strip() if c_country_elem is not None and c_country_elem.text else ""
+
+            c_pin_elem = find_first(elem, "CONSIGNEEPINCODE", "CONSIGNEEPIN")
+            consignee_pincode = c_pin_elem.text.strip() if c_pin_elem is not None and c_pin_elem.text else ""
+
+            c_gstin_elem = find_first(elem, "CONSIGNEEGSTIN", "CONSIGNEE_GSTIN", "CONSIGNEEPARTYGSTIN")
+            consignee_gstin = c_gstin_elem.text.strip() if c_gstin_elem is not None and c_gstin_elem.text else ""
+
+            party_gstin_elem = find_first(elem, "PARTYGSTIN", "GSTIN")
+            party_gstin = party_gstin_elem.text.strip() if party_gstin_elem is not None and party_gstin_elem.text else ""
+
+            adv_settings_dict = {
+                "dispatchDocNo": dispatch_doc_no,
+                "dispatchedThrough": dispatched_through,
+                "destination": destination,
+                "carrier": vehicle_no,
+                "vehicleNo": vehicle_no,
+                "dispatchDate": dispatch_date,
+                "orderNo": order_no,
+                "orderDate": order_date,
+                "terms": terms_str,
+                "consigneeName": consignee_name,
+                "consigneeAddress": consignee_address,
+                "consigneeState": consignee_state,
+                "consigneeCountry": consignee_country,
+                "consigneePincode": consignee_pincode,
+                "consigneeGstin": consignee_gstin,
+            }
+
             opt_elem = elem.find("ISOPTIONAL")
             is_optional = (opt_elem.text.strip().lower() == "yes") if opt_elem is not None and opt_elem.text else False
             canc_elem = elem.find("ISCANCELLED")
@@ -781,6 +861,9 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                 "referenceDate": str(ref_date or parsed_date or "2023-04-01"),
                 "placeOfSupply": str(place_of_supply or ""),
                 "partyLedger": str(party_val or "Cash"),
+                "partyName": str(party_val or "Cash"),
+                "customerName": str(party_val or "Cash"),
+                "customer": str(party_val or "Cash"),
                 "amount": float(amt_val or 0.0),
                 "narration": str(narr_val or ""),
                 "isOptional": bool(is_optional),
@@ -788,16 +871,74 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> List[Dict[str, Any]
                 "isPostDated": bool(is_post_dated),
                 "guid": str(guid_val or ext_vch_id),
                 "alterid": int(alt_id or 0),
+                "items": parsed_inventory_entries,
+                "lines": parsed_ledger_entries,
                 "ledgerEntries": parsed_ledger_entries,
                 "inventoryEntries": parsed_inventory_entries,
                 "billAllocations": all_bill_allocations,
                 "bankAllocations": all_bank_allocations,
+                "advancedSettings": adv_settings_dict,
+                "dispatchDocNo": dispatch_doc_no,
+                "dispatchedThrough": dispatched_through,
+                "destination": destination,
+                "carrier": vehicle_no,
+                "vehicleNo": vehicle_no,
+                "dispatchDate": dispatch_date,
+                "orderNo": order_no,
+                "orderDate": order_date,
+                "terms": terms_str,
+                "consigneeName": consignee_name,
+                "consigneeAddress": consignee_address,
+                "consigneeState": consignee_state,
+                "consigneeCountry": consignee_country,
+                "consigneePincode": consignee_pincode,
+                "consigneeGstin": consignee_gstin,
+                "partyGstin": party_gstin,
                 "raw": {
                     "voucherId": ext_vch_id,
+                    "tallyExternalId": ext_vch_id,
                     "name": str(v_num or ""),
+                    "voucherNumber": str(v_num or ""),
                     "parent": str(v_type or "Sales"),
+                    "voucherType": str(v_type or "Sales"),
                     "party": str(party_val or "Cash"),
-                    "alterid": int(alt_id or 0)
+                    "partyLedger": str(party_val or "Cash"),
+                    "customerName": str(party_val or "Cash"),
+                    "date": str(parsed_date or eff_date or "2023-04-01"),
+                    "reference": str(ref_num or ""),
+                    "referenceDate": str(ref_date or parsed_date or "2023-04-01"),
+                    "placeOfSupply": str(place_of_supply or ""),
+                    "amount": float(amt_val or 0.0),
+                    "narration": str(narr_val or ""),
+                    "alterid": int(alt_id or 0),
+                    "items": parsed_inventory_entries,
+                    "lines": parsed_ledger_entries,
+                    "inventoryEntries": parsed_inventory_entries,
+                    "ledgerEntries": parsed_ledger_entries,
+                    "billAllocations": all_bill_allocations,
+                    "bankAllocations": all_bank_allocations,
+                    "advancedSettings": adv_settings_dict,
+                    "dispatchDetails": {
+                        "dispatchDocNo": dispatch_doc_no,
+                        "dispatchedThrough": dispatched_through,
+                        "destination": destination,
+                        "carrier": vehicle_no,
+                        "vehicleNo": vehicle_no,
+                        "dispatchDate": dispatch_date
+                    },
+                    "orderDetails": {
+                        "orderNo": order_no,
+                        "orderDate": order_date,
+                        "terms": terms_str
+                    },
+                    "consigneeDetails": {
+                        "consigneeName": consignee_name,
+                        "consigneeAddress": consignee_address,
+                        "consigneeState": consignee_state,
+                        "consigneeCountry": consignee_country,
+                        "consigneePincode": consignee_pincode,
+                        "consigneeGstin": consignee_gstin
+                    }
                 }
             })
 

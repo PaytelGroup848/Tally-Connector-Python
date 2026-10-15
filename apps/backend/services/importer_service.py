@@ -65,6 +65,21 @@ class ImporterService:
         if not party_raw:
             if voucher_type.lower() in ("stock journal", "physical stock"):
                 party = "Inventory / Stock"
+            elif voucher_type.lower() in ("journal", "contra"):
+                party = None
+                for p_key in ("particulars", "ledger_entries", "ledgerEntries", "debit_particulars", "items"):
+                    p_list = payload.get(p_key)
+                    if isinstance(p_list, list) and len(p_list) > 0:
+                        for p_first in p_list:
+                            if isinstance(p_first, dict):
+                                candidate = p_first.get("partyName") or p_first.get("party_name") or p_first.get("ledgerName") or p_first.get("name") or p_first.get("ledger")
+                                if candidate:
+                                    party = str(candidate).strip()
+                                    break
+                        if party:
+                            break
+                if not party:
+                    party = "Contra Account" if "contra" in voucher_type.lower() else "Journal Account"
             else:
                 raise ValidationError("Missing required party ledger/name in payload.")
         else:
@@ -72,6 +87,8 @@ class ImporterService:
             if not party or party.lower() in ("none", "null", "undefined"):
                 if voucher_type.lower() in ("stock journal", "physical stock"):
                     party = "Inventory / Stock"
+                elif voucher_type.lower() in ("journal", "contra"):
+                    party = "Contra Account" if "contra" in voucher_type.lower() else "Journal Account"
                 else:
                     raise ValidationError("Missing required party ledger/name in payload.")
 
@@ -84,6 +101,86 @@ class ImporterService:
                 raise ValidationError("Voucher amount cannot be negative.")
         except (ValueError, TypeError):
             amt = 0.0
+
+        if amt <= 0.0 and voucher_type.lower() in ("contra", "journal"):
+            for p_key in ("particulars", "ledger_entries", "ledgerEntries", "debit_particulars", "items"):
+                p_list = payload.get(p_key)
+                if isinstance(p_list, list) and len(p_list) > 0:
+                    d_sum = 0.0
+                    c_sum = 0.0
+                    has_l = False
+                    for p in p_list:
+                        if isinstance(p, dict):
+                            pv = float(p.get("amount") or p.get("amt") or 0.0)
+                            pt = str(p.get("type") or p.get("entry_type") or "").strip().lower()
+                            if pt in ("debit", "dr", "by") or p.get("isDebit") is True or p.get("is_debit") is True:
+                                d_sum += pv
+                                has_l = True
+                            elif pt in ("credit", "cr", "to") or p.get("isDebit") is False or p.get("is_debit") is False:
+                                c_sum += pv
+                                has_l = True
+                    if has_l:
+                        amt = round(d_sum if d_sum > 0 else c_sum, 2)
+                        break
+
+        if amt <= 0.0 and voucher_type.lower() in ("stock journal", "physical stock"):
+            raw_items_dict = payload.get("items") if isinstance(payload.get("items"), dict) else {}
+            src_calc = 0.0
+            for it_k in ("source_items", "sourceItems", "consumption_items", "consumptionItems", "items_out", "itemsOut", "outward_items", "outwardItems"):
+                for it in (payload.get(it_k) or []):
+                    if isinstance(it, dict):
+                        try:
+                            it_amt = float(it.get("amount") or it.get("taxableValue") or 0.0)
+                            if it_amt <= 0.0:
+                                q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                                r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                                it_amt = q * r
+                            src_calc += it_amt
+                        except (ValueError, TypeError):
+                            pass
+            for it in (raw_items_dict.get("source") or raw_items_dict.get("consumption") or raw_items_dict.get("items_out") or []):
+                if isinstance(it, dict):
+                    try:
+                        it_amt = float(it.get("amount") or it.get("taxableValue") or 0.0)
+                        if it_amt <= 0.0:
+                            q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                            r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                            it_amt = q * r
+                        src_calc += it_amt
+                    except (ValueError, TypeError):
+                        pass
+
+            dest_calc = 0.0
+            for it_k in ("destination_items", "destinationItems", "production_items", "productionItems", "items_in", "itemsIn", "inward_items", "inwardItems"):
+                for it in (payload.get(it_k) or []):
+                    if isinstance(it, dict):
+                        try:
+                            it_amt = float(it.get("amount") or it.get("taxableValue") or 0.0)
+                            if it_amt <= 0.0:
+                                q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                                r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                                it_amt = q * r
+                            dest_calc += it_amt
+                        except (ValueError, TypeError):
+                            pass
+            for it in (raw_items_dict.get("destination") or raw_items_dict.get("production") or raw_items_dict.get("items_in") or []):
+                if isinstance(it, dict):
+                    try:
+                        it_amt = float(it.get("amount") or it.get("taxableValue") or 0.0)
+                        if it_amt <= 0.0:
+                            q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                            r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                            it_amt = q * r
+                        dest_calc += it_amt
+                    except (ValueError, TypeError):
+                        pass
+
+            if src_calc > 0 and dest_calc > 0:
+                amt = round(max(src_calc, dest_calc), 2)
+            elif src_calc > 0:
+                amt = round(src_calc, 2)
+            elif dest_calc > 0:
+                amt = round(dest_calc, 2)
 
         clean_payload = dict(payload)
         clean_payload["target"] = target

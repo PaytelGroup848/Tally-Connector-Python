@@ -50,18 +50,27 @@ def execute_voucher_command(
         default_vtype = "Sales Order"
     elif cmd_type in ("CREATE_PURCHASE_ORDER",):
         default_vtype = "Purchase Order"
+    elif cmd_type in ("CREATE_STOCK_JOURNAL", "STOCK_JOURNAL"):
+        default_vtype = "Stock Journal"
+    elif cmd_type in ("CREATE_PHYSICAL_STOCK", "PHYSICAL_STOCK"):
+        default_vtype = "Physical Stock"
     else:
         default_vtype = "Sales"
 
     norm_payload["voucher_type"] = norm_payload.get("voucherType") or norm_payload.get("voucher_type", default_vtype)
+    v_type_check = str(norm_payload.get("voucher_type") or "").strip().lower()
+    is_pure_inventory = "stock journal" in v_type_check or "physical stock" in v_type_check
+
     norm_payload["party_ledger"] = (
-        norm_payload.get("partyLedger")
-        or norm_payload.get("party_ledger")
-        or norm_payload.get("partyName")
-        or norm_payload.get("party_name")
-        or norm_payload.get("customerName")
-        or norm_payload.get("supplierName")
-        or "Cash"
+        "Inventory / Stock" if is_pure_inventory else (
+            norm_payload.get("partyLedger")
+            or norm_payload.get("party_ledger")
+            or norm_payload.get("partyName")
+            or norm_payload.get("party_name")
+            or norm_payload.get("customerName")
+            or norm_payload.get("supplierName")
+            or "Cash"
+        )
     )
     norm_payload["sales_ledger"] = norm_payload.get("salesLedger") or norm_payload.get("sales_ledger")
     norm_payload["purchase_ledger"] = norm_payload.get("purchaseLedger") or norm_payload.get("purchase_ledger")
@@ -86,7 +95,26 @@ def execute_voucher_command(
     )
     norm_payload["to_account"] = norm_payload.get("toAccount") or norm_payload.get("to_account")
     norm_payload["from_account"] = norm_payload.get("fromAccount") or norm_payload.get("from_account")
-    norm_payload["ledger_entries"] = norm_payload.get("ledgerEntries") or norm_payload.get("ledger_entries")
+    norm_payload["particulars"] = (
+        norm_payload.get("particulars")
+        or payload.get("particulars")
+        or norm_payload.get("ledgerEntries")
+        or norm_payload.get("ledger_entries")
+    )
+    if ("journal" in v_type_check and not is_pure_inventory or "contra" in v_type_check) and not norm_payload["particulars"]:
+        c_items = norm_payload.get("items") or payload.get("items")
+        if isinstance(c_items, list) and any(
+            isinstance(x, dict) and (
+                "type" in x
+                or "isDebit" in x
+                or "is_debit" in x
+                or "partyName" in x
+                or "ledgerName" in x
+            )
+            for x in c_items
+        ):
+            norm_payload["particulars"] = c_items
+    norm_payload["ledger_entries"] = norm_payload["particulars"]
     norm_payload["bill_number"] = (
         norm_payload.get("billNumber")
         or norm_payload.get("bill_number")
@@ -95,12 +123,113 @@ def execute_voucher_command(
         or norm_payload.get("invoiceNumber")
         or norm_payload.get("invoice_number")
     )
+    adv_settings_raw = norm_payload.get("advancedSettings") or norm_payload.get("advanced_settings")
+    adv_settings: dict = {}
+    if isinstance(adv_settings_raw, dict):
+        adv_settings = dict(adv_settings_raw)
+
     norm_payload["order_no"] = (
         norm_payload.get("orderNo")
         or norm_payload.get("order_no")
         or norm_payload.get("orderNumber")
         or norm_payload.get("order_number")
+        or adv_settings.get("orderNo")
+        or adv_settings.get("order_no")
+        or adv_settings.get("orderNumber")
     )
+    norm_payload["order_date"] = (
+        norm_payload.get("orderDate")
+        or norm_payload.get("order_date")
+        or adv_settings.get("orderDate")
+        or adv_settings.get("order_date")
+    )
+    norm_payload["terms_of_delivery"] = (
+        norm_payload.get("termsOfDelivery")
+        or norm_payload.get("terms_of_delivery")
+        or adv_settings.get("termsOfDelivery")
+        or adv_settings.get("terms_of_delivery")
+    )
+    norm_payload["dispatch_doc_no"] = (
+        norm_payload.get("dispatchDocNo")
+        or norm_payload.get("dispatch_doc_no")
+        or norm_payload.get("lrNo")
+        or norm_payload.get("lrNumber")
+        or adv_settings.get("dispatchDocNo")
+        or adv_settings.get("dispatch_doc_no")
+    )
+    norm_payload["dispatch_through"] = (
+        norm_payload.get("dispatchThrough")
+        or norm_payload.get("dispatch_through")
+        or norm_payload.get("transporter")
+        or adv_settings.get("dispatchThrough")
+        or adv_settings.get("dispatch_through")
+    )
+    norm_payload["dispatch_destination"] = (
+        norm_payload.get("dispatchFrom")
+        or norm_payload.get("dispatch_from")
+        or norm_payload.get("destination")
+        or adv_settings.get("dispatchFrom")
+        or adv_settings.get("dispatch_from")
+        or adv_settings.get("destination")
+    )
+    norm_payload["dispatch_date"] = (
+        norm_payload.get("dispatchDate")
+        or norm_payload.get("dispatch_date")
+        or adv_settings.get("dispatchDate")
+        or adv_settings.get("dispatch_date")
+    )
+    norm_payload["vehicle_no"] = (
+        norm_payload.get("vehicleNo")
+        or norm_payload.get("vehicle_no")
+        or norm_payload.get("motorVehicleNo")
+        or adv_settings.get("motorVehicleNo")
+        or adv_settings.get("vehicleNo")
+    )
+
+    norm_payload["consignee_name"] = (
+        norm_payload.get("consigneeName")
+        or norm_payload.get("consignee_name")
+        or adv_settings.get("consigneeName")
+        or adv_settings.get("consignee_name")
+        or adv_settings.get("shipToName")
+    )
+    norm_payload["consignee_address"] = (
+        norm_payload.get("consigneeAddress")
+        or norm_payload.get("consignee_address")
+        or adv_settings.get("consigneeAddress")
+        or adv_settings.get("consignee_address")
+    )
+    norm_payload["consignee_state"] = (
+        norm_payload.get("consigneeState")
+        or norm_payload.get("consignee_state")
+        or adv_settings.get("consigneeState")
+        or adv_settings.get("consignee_state")
+    )
+    norm_payload["consignee_country"] = (
+        norm_payload.get("consigneeCountry")
+        or norm_payload.get("consignee_country")
+        or adv_settings.get("consigneeCountry")
+        or adv_settings.get("consignee_country")
+    )
+    norm_payload["consignee_pincode"] = (
+        norm_payload.get("consigneePostalCode")
+        or norm_payload.get("consignee_postal_code")
+        or norm_payload.get("consigneePincode")
+        or norm_payload.get("consignee_pincode")
+        or adv_settings.get("consigneePostalCode")
+        or adv_settings.get("consignee_postal_code")
+        or adv_settings.get("consigneePincode")
+    )
+    norm_payload["consignee_gstin"] = (
+        norm_payload.get("consigneeGstinUin")
+        or norm_payload.get("consignee_gstin_uin")
+        or norm_payload.get("consigneeGstin")
+        or norm_payload.get("consignee_gstin")
+        or adv_settings.get("consigneeGstinUin")
+        or adv_settings.get("consignee_gstin_uin")
+        or adv_settings.get("consigneeGstin")
+    )
+
     norm_payload["due_date"] = (
         norm_payload.get("dueDate")
         or norm_payload.get("due_date")
@@ -116,8 +245,10 @@ def execute_voucher_command(
         or norm_payload.get("gstNumber")
         or norm_payload.get("party_gstin")
         or norm_payload.get("partyGstin")
-        or norm_payload.get("consigneeGstinUin")
         or norm_payload.get("buyerGstin")
+        or adv_settings.get("gstinUin")
+        or adv_settings.get("gstin")
+        or norm_payload.get("consigneeGstinUin")
     )
     norm_payload["state"] = (
         norm_payload.get("state")
@@ -125,19 +256,66 @@ def execute_voucher_command(
         or norm_payload.get("placeOfSupply")
         or norm_payload.get("place_of_supply")
         or norm_payload.get("supplierState")
+        or adv_settings.get("supplierState")
+        or adv_settings.get("state")
     )
     norm_payload["address"] = (
         norm_payload.get("address")
         or norm_payload.get("party_address")
         or norm_payload.get("partyAddress")
+        or adv_settings.get("address")
+        or adv_settings.get("partyAddress")
         or norm_payload.get("consigneeAddress")
     )
 
-    items_preview = norm_payload.get("items") or norm_payload.get("inventory_entries") or norm_payload.get("inventoryEntries") or []
-    if isinstance(items_preview, list):
+    raw_items_val = norm_payload.get("items")
+    items_preview = []
+    if isinstance(raw_items_val, list):
+        items_preview = list(raw_items_val)
+    elif isinstance(raw_items_val, dict):
+        for sub_k in ("source", "destination", "consumption", "production", "items_out", "items_in", "outward", "inward", "items", "rows"):
+            sub_list = raw_items_val.get(sub_k)
+            if isinstance(sub_list, list):
+                items_preview.extend(sub_list)
+    else:
+        items_preview = norm_payload.get("inventory_entries") or norm_payload.get("inventoryEntries") or []
+
+    if is_pure_inventory and not items_preview:
+        inv_items = []
+        for extra_key in (
+            "source_items", "sourceItems",
+            "destination_items", "destinationItems",
+            "consumption_items", "consumptionItems",
+            "production_items", "productionItems",
+            "items_out", "itemsOut",
+            "items_in", "itemsIn",
+            "outward_items", "outwardItems",
+            "inward_items", "inwardItems",
+        ):
+            ex_list = norm_payload.get(extra_key)
+            if isinstance(ex_list, list):
+                inv_items.extend(ex_list)
+        if inv_items:
+            items_preview = inv_items
+
+    # Collect all items to enrich units and HSN
+    enrich_targets = list(items_preview) if isinstance(items_preview, list) else []
+    for extra_key in (
+        "source_items", "sourceItems",
+        "destination_items", "destinationItems",
+        "consumption_items", "consumptionItems",
+        "production_items", "productionItems",
+        "items_out", "itemsOut",
+        "items_in", "itemsIn",
+    ):
+        ex_list = norm_payload.get(extra_key)
+        if isinstance(ex_list, list):
+            enrich_targets.extend(ex_list)
+
+    if enrich_targets:
         try:
             from apps.backend.adapters.tally.tally_importer import _lookup_item_master_unit, _lookup_item_master_hsn
-            for itm in items_preview:
+            for itm in enrich_targets:
                 if isinstance(itm, dict):
                     it_name = str(itm.get("item") or itm.get("itemName") or itm.get("name") or itm.get("stock_item") or "").strip()
                     if it_name:
@@ -157,7 +335,95 @@ def execute_voucher_command(
         except Exception as itm_exc:
             logger.debug(f"Voucher item master unit/HSN enrichment notice: {itm_exc}")
 
-    norm_payload["items"] = items_preview
+    # If amt is 0 or missing, or if it was doubled from deb + cred, calculate from particulars if present
+    if norm_payload.get("particulars"):
+        parts = norm_payload["particulars"]
+        if isinstance(parts, list):
+            deb_sum = 0.0
+            cred_sum = 0.0
+            has_legs = False
+            for p in parts:
+                if isinstance(p, dict):
+                    try:
+                        p_val = abs(float(p.get("amount") or p.get("amt") or 0.0))
+                        p_typ = str(p.get("type") or p.get("entry_type") or "").strip().lower()
+                        if p_typ in ("debit", "dr", "by") or p.get("isDebit") is True or p.get("is_debit") is True:
+                            deb_sum += p_val
+                            has_legs = True
+                        elif p_typ in ("credit", "cr", "to") or p.get("isDebit") is False or p.get("is_debit") is False:
+                            cred_sum += p_val
+                            has_legs = True
+                    except (ValueError, TypeError):
+                        pass
+            if has_legs:
+                if not amt or amt <= 0.0 or (deb_sum > 0 and round(amt, 2) == round(deb_sum + cred_sum, 2)):
+                    amt = round(deb_sum if deb_sum > 0 else cred_sum, 2)
+
+    # For Journal or Contra vouchers, if party_ledger defaulted to "Cash", extract real party from particulars
+    if (norm_payload.get("party_ledger") in ("", "Cash")) and norm_payload.get("particulars"):
+        parts = norm_payload["particulars"]
+        if isinstance(parts, list):
+            for p in parts:
+                if isinstance(p, dict):
+                    p_name = str(p.get("partyName") or p.get("party_name") or p.get("ledgerName") or p.get("name") or "").strip()
+                    if p_name and p_name.lower() not in ("cash", "bank"):
+                        norm_payload["party_ledger"] = p_name
+                        break
+
+    if is_pure_inventory and (not amt or amt <= 0.0):
+        raw_items_dict: dict = {}
+        raw_items_v = norm_payload.get("items")
+        if isinstance(raw_items_v, dict):
+            raw_items_dict = dict(raw_items_v)
+        src_calc = 0.0
+        for it_k in ("source_items", "sourceItems", "consumption_items", "consumptionItems", "items_out", "itemsOut", "outward_items", "outwardItems"):
+            for it in (norm_payload.get(it_k) or []):
+                if isinstance(it, dict):
+                    try:
+                        q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                        r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                        src_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                    except (ValueError, TypeError):
+                        pass
+        for it in (raw_items_dict.get("source") or raw_items_dict.get("consumption") or raw_items_dict.get("items_out") or []):
+            if isinstance(it, dict):
+                try:
+                    q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                    r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                    src_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                except (ValueError, TypeError):
+                    pass
+
+        dest_calc = 0.0
+        for it_k in ("destination_items", "destinationItems", "production_items", "productionItems", "items_in", "itemsIn", "inward_items", "inwardItems"):
+            for it in (norm_payload.get(it_k) or []):
+                if isinstance(it, dict):
+                    try:
+                        q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                        r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                        dest_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                    except (ValueError, TypeError):
+                        pass
+        for it in (raw_items_dict.get("destination") or raw_items_dict.get("production") or raw_items_dict.get("items_in") or []):
+            if isinstance(it, dict):
+                try:
+                    q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                    r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                    dest_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                except (ValueError, TypeError):
+                    pass
+
+        if src_calc > 0 and dest_calc > 0:
+            amt = round(max(src_calc, dest_calc), 2)
+        elif src_calc > 0:
+            amt = round(src_calc, 2)
+        elif dest_calc > 0:
+            amt = round(dest_calc, 2)
+
+    if ("journal" in v_type_check and not is_pure_inventory) or "contra" in v_type_check:
+        norm_payload["items"] = []
+    else:
+        norm_payload["items"] = items_preview
     norm_payload["amount"] = amt
     logger.info(
         f"Voucher Payload: Company='{norm_payload.get('company_name')}', Type='{norm_payload.get('voucher_type')}', "

@@ -205,15 +205,132 @@ class RemoteCommandWorker(QThread):
                 except (ValueError, TypeError):
                     amt = 0.0
 
-                items_preview = (
+                raw_items_val = (
                     payload.get("items")
                     or payload.get("inventory_entries")
                     or payload.get("inventoryEntries")
                     or payload.get("stock_items")
                     or []
                 )
+                if isinstance(raw_items_val, dict):
+                    items_preview = []
+                    for subk in ("source", "destination", "consumption", "production", "items_out", "items_in", "outward", "inward", "items", "rows"):
+                        subval = raw_items_val.get(subk)
+                        if isinstance(subval, list):
+                            items_preview.extend(subval)
+                elif isinstance(raw_items_val, list):
+                    items_preview = list(raw_items_val)
+                else:
+                    items_preview = []
 
-                if amt <= 0.0 and isinstance(items_preview, list):
+                is_pure_inventory = (
+                    cmd_type in ("CREATE_STOCK_JOURNAL", "CREATE_PHYSICAL_STOCK", "STOCK_JOURNAL", "PHYSICAL_STOCK")
+                    or any(k in str(payload.get("voucher_type") or payload.get("voucherType") or "").lower() for k in ("stock journal", "physical stock"))
+                )
+
+                if is_pure_inventory and not items_preview:
+                    inv_items = []
+                    for extra_key in (
+                        "source_items", "sourceItems",
+                        "destination_items", "destinationItems",
+                        "consumption_items", "consumptionItems",
+                        "production_items", "productionItems",
+                        "items_out", "itemsOut",
+                        "items_in", "itemsIn",
+                        "outward_items", "outwardItems",
+                        "inward_items", "inwardItems",
+                    ):
+                        ex_list = payload.get(extra_key)
+                        if isinstance(ex_list, list):
+                            inv_items.extend(ex_list)
+                    if inv_items:
+                        items_preview = inv_items
+
+                if is_pure_inventory and amt <= 0.0:
+                    raw_items_dict: dict = {}
+                    raw_items_v = payload.get("items")
+                    if isinstance(raw_items_v, dict):
+                        raw_items_dict = dict(raw_items_v)
+                    src_calc = 0.0
+                    for it_k in ("source_items", "sourceItems", "consumption_items", "consumptionItems", "items_out", "itemsOut", "outward_items", "outwardItems"):
+                        for it in (payload.get(it_k) or []):
+                            if isinstance(it, dict):
+                                try:
+                                    q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                                    r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                                    src_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                                except (ValueError, TypeError):
+                                    pass
+                    for it in (raw_items_dict.get("source") or raw_items_dict.get("consumption") or raw_items_dict.get("items_out") or []):
+                        if isinstance(it, dict):
+                            try:
+                                q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                                r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                                src_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                            except (ValueError, TypeError):
+                                pass
+
+                    dest_calc = 0.0
+                    for it_k in ("destination_items", "destinationItems", "production_items", "productionItems", "items_in", "itemsIn", "inward_items", "inwardItems"):
+                        for it in (payload.get(it_k) or []):
+                            if isinstance(it, dict):
+                                try:
+                                    q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                                    r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                                    dest_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                                except (ValueError, TypeError):
+                                    pass
+                    for it in (raw_items_dict.get("destination") or raw_items_dict.get("production") or raw_items_dict.get("items_in") or []):
+                        if isinstance(it, dict):
+                            try:
+                                q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
+                                r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
+                                dest_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                            except (ValueError, TypeError):
+                                pass
+
+                    transfer_amt = max(src_calc, dest_calc)
+                    if transfer_amt > 0:
+                        amt = round(transfer_amt, 2)
+
+                is_journal_or_contra = not is_pure_inventory and (
+                    cmd_type in ("CREATE_JOURNAL", "CREATE_CONTRA")
+                    or any(k in str(payload.get("voucher_type") or payload.get("voucherType") or "").lower() for k in ("journal", "contra"))
+                )
+
+                if is_journal_or_contra:
+                    particulars_check = (
+                        payload.get("particulars")
+                        or payload.get("ledger_entries")
+                        or payload.get("ledgerEntries")
+                        or payload.get("debit_particulars")
+                        or payload.get("debitParticulars")
+                        or payload.get("items")
+                    )
+                    if isinstance(particulars_check, list) and len(particulars_check) > 0:
+                        deb_sum = 0.0
+                        cred_sum = 0.0
+                        has_leg = False
+                        for p in particulars_check:
+                            if isinstance(p, dict):
+                                try:
+                                    p_val = abs(float(p.get("amount") or p.get("amt") or 0.0))
+                                    p_typ = str(p.get("type") or p.get("entry_type") or "").strip().lower()
+                                    if p_typ in ("debit", "dr", "by") or p.get("isDebit") is True or p.get("is_debit") is True:
+                                        deb_sum += p_val
+                                        has_leg = True
+                                    elif p_typ in ("credit", "cr", "to") or p.get("isDebit") is False or p.get("is_debit") is False:
+                                        cred_sum += p_val
+                                        has_leg = True
+                                except (ValueError, TypeError):
+                                    pass
+                        if has_leg:
+                            if deb_sum > 0:
+                                amt = round(deb_sum, 2)
+                            elif cred_sum > 0:
+                                amt = round(cred_sum, 2)
+
+                if not is_journal_or_contra and not is_pure_inventory and amt <= 0.0 and isinstance(items_preview, list):
                     calc_total = 0.0
                     for it in items_preview:
                         if isinstance(it, dict):
@@ -247,6 +364,33 @@ class RemoteCommandWorker(QThread):
                     if calc_total > 0:
                         amt = round(calc_total, 2)
 
+                if amt <= 0.0:
+                    particulars_check = (
+                        payload.get("particulars")
+                        or payload.get("ledger_entries")
+                        or payload.get("ledgerEntries")
+                        or payload.get("debit_particulars")
+                        or payload.get("debitParticulars")
+                    )
+                    if isinstance(particulars_check, list):
+                        deb_sum = 0.0
+                        cred_sum = 0.0
+                        for p in particulars_check:
+                            if isinstance(p, dict):
+                                try:
+                                    p_val = abs(float(p.get("amount") or p.get("amt") or 0.0))
+                                    p_typ = str(p.get("type") or p.get("entry_type") or "").strip().lower()
+                                    if p_typ in ("debit", "dr", "by") or p.get("isDebit") is True or p.get("is_debit") is True:
+                                        deb_sum += p_val
+                                    else:
+                                        cred_sum += p_val
+                                except (ValueError, TypeError):
+                                    pass
+                        if deb_sum > 0:
+                            amt = round(deb_sum, 2)
+                        elif cred_sum > 0:
+                            amt = round(cred_sum, 2)
+
                 from shared.connection_config import resolve_active_tally_port
                 cmd_host = payload.get("host") or payload.get("tally_host") or cmd.get("host") or cmd.get("tally_host")
                 cmd_port = payload.get("port") or payload.get("tally_port") or cmd.get("port") or cmd.get("tally_port")
@@ -266,6 +410,10 @@ class RemoteCommandWorker(QThread):
                     "CREATE_CONTRA",
                     "CREATE_SALES_ORDER",
                     "CREATE_PURCHASE_ORDER",
+                    "CREATE_STOCK_JOURNAL",
+                    "CREATE_PHYSICAL_STOCK",
+                    "STOCK_JOURNAL",
+                    "PHYSICAL_STOCK",
                 ):
                     norm_payload, success, result_data, error_msg, error_details, should_continue = execute_voucher_command(
                         worker=self,

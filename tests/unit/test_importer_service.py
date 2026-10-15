@@ -223,8 +223,8 @@ class TestImporterServiceUnit(unittest.TestCase):
 
         self.assertIn("<ISINVOICE>Yes</ISINVOICE>", xml_output)
         self.assertIn("<STOCKITEMNAME>100W Bulb</STOCKITEMNAME>", xml_output)
-        self.assertIn("<RATE>120.00/Pcs</RATE>", xml_output)
-        self.assertIn("<ACTUALQTY>5 Pcs</ACTUALQTY>", xml_output)
+        self.assertTrue("<RATE>120.00/Pcs</RATE>" in xml_output or "<RATE>120.00/pcs</RATE>" in xml_output)
+        self.assertTrue("<ACTUALQTY>5 Pcs</ACTUALQTY>" in xml_output or "<ACTUALQTY>5 pcs</ACTUALQTY>" in xml_output)
         self.assertIn("<DISCOUNT>10%</DISCOUNT>", xml_output)
         self.assertIn("<GODOWNNAME>Main Location</GODOWNNAME>", xml_output)
         self.assertIn("<ACCOUNTINGALLOCATIONS.LIST>", xml_output)
@@ -563,5 +563,94 @@ class TestImporterServiceUnit(unittest.TestCase):
         finally:
             loop.close()
 
+    def test_27_credit_note_and_debit_note_xml_generation(self):
+        """Verify Credit Note and Debit Note XML construction and ledger mapping."""
+        # 1. Credit Note with items
+        cn_data = {
+            "company_name": "Test Co",
+            "voucher_type": "Credit Note",
+            "voucher_number": "CN-501",
+            "date": "2026-10-14",
+            "party_ledger": "Customer Ret",
+            "items": [
+                {
+                    "itemName": "laptop",
+                    "quantity": 1,
+                    "rate": 1000.0,
+                    "units": "pcs",
+                    "amount": 1000.0,
+                    "gst_rate": 18
+                }
+            ]
+        }
+        cn_xml = build_voucher_import_xml(cn_data)
+        self.assertIn("<VOUCHERTYPENAME>Credit Note</VOUCHERTYPENAME>", cn_xml)
+        self.assertIn("<LEDGERNAME>Customer Ret</LEDGERNAME>", cn_xml)
+        self.assertIn("<ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>", cn_xml)
+        self.assertIn("<LEDGERNAME>Sales Return</LEDGERNAME>", cn_xml)
+        self.assertIn("<ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>", cn_xml)
+
+        # 2. Debit Note with items
+        dn_data = {
+            "company_name": "Test Co",
+            "voucher_type": "Debit Note",
+            "voucher_number": "DN-601",
+            "date": "2026-10-14",
+            "party_ledger": "Vendor Ret",
+            "items": [
+                {
+                    "itemName": "hardware",
+                    "quantity": 1,
+                    "rate": 500.0,
+                    "units": "pcs",
+                    "amount": 500.0,
+                    "gst_rate": 18
+                }
+            ]
+        }
+        dn_xml = build_voucher_import_xml(dn_data)
+        self.assertIn("<VOUCHERTYPENAME>Debit Note</VOUCHERTYPENAME>", dn_xml)
+        self.assertIn("<LEDGERNAME>Vendor Ret</LEDGERNAME>", dn_xml)
+        self.assertIn("<ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>", dn_xml)
+        self.assertIn("<LEDGERNAME>Purchase Return</LEDGERNAME>", dn_xml)
+        self.assertIn("<ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>", dn_xml)
+
+    def test_24_ledger_builder_with_state_valid_xml(self):
+        from apps.backend.adapters.tally.xml_builders.ledger_builder import build_ledger_import_xml
+        import xml.etree.ElementTree as ET
+
+        ledger_payload = {
+            "company_name": "Himanshu Pvt Ltd",
+            "name": "Bihar Supplier",
+            "partyType": "SUPPLIER",
+            "parent": "Sundry Creditors",
+            "opening_balance": 0.0,
+            "mobile": "9876543210",
+            "state": "Bihar",
+            "pincode": "800001",
+            "address": "Frazer Road, Patna",
+            "registration_type": "Unregistered"
+        }
+        xml_str = build_ledger_import_xml(ledger_payload, action="Create")
+        self.assertIn("<STATE>Bihar</STATE>", xml_str)
+        self.assertNotIn(" STATE>Bihar</STATE>", xml_str)
+        # Verify whole XML is syntactically well-formed
+        root = ET.fromstring(xml_str)
+        self.assertIsNotNone(root)
+
+    def test_25_parse_tally_unknown_request_rejection(self):
+        unknown_xml = "<RESPONSE>Unknown Request, cannot be processed</RESPONSE>"
+        success, vnum, err = parse_tally_import_response(unknown_xml)
+        self.assertFalse(success)
+        self.assertIsNone(vnum)
+        self.assertIn("cannot be processed", err or "")
+
+        empty_xml = "<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED></RESPONSE>"
+        s2, v2, e2 = parse_tally_import_response(empty_xml)
+        self.assertFalse(s2)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+

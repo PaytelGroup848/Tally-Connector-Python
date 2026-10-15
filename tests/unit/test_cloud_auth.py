@@ -196,9 +196,79 @@ class TestCloudAuthService(unittest.TestCase):
         self.assertEqual(called_payload["status"], "FAILED")
         self.assertEqual(called_payload["errorMessage"], "Tally error")
 
+    @patch("httpx.Client.post")
+    def test_sync_batch_voucher_includes_advanced_settings(self, mock_post):
+        """Verifies that sync_batch formats VOUCHER records with advancedSettings, items, lines and enriched raw."""
+        self.auth_svc.access_token = "tok_test_123"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = '{"success": true, "message": "Batch synced"}'
+        mock_resp.json.return_value = {"success": True, "message": "Batch synced"}
+        mock_post.return_value = mock_resp
+
+        voucher_item = {
+            "voucherId": "74cd8431-00000034",
+            "tallyExternalId": "74cd8431-00000034",
+            "voucherNumber": "15",
+            "voucherType": "Sales",
+            "date": "2026-10-14",
+            "amount": 226.93,
+            "partyLedger": "Tarun Chaprana",
+            "customerName": "Tarun Chaprana",
+            "reference": "ADD-001",
+            "placeOfSupply": "Delhi",
+            "narration": "new Invoice with addvance",
+            "items": [{"itemName": "laptop", "quantity": 1, "rate": 192.31}],
+            "lines": [{"ledgerName": "Sales", "amount": 192.31}],
+            "advancedSettings": {
+                "dispatchDocNo": "DC-100",
+                "dispatchedThrough": "Transport",
+                "destination": "Delhi",
+                "vehicleNo": "DL-01-AB-1234",
+                "orderNo": "PO-100",
+                "orderDate": "2026-10-14",
+                "terms": "Net 30",
+                "consigneeName": "Tarun Chaprana",
+                "consigneeAddress": "Connaught Place",
+                "consigneeGstin": "07AAAAA0000A1Z5"
+            }
+        }
+
+        ok, msg, data = self.auth_svc.sync_batch("job-123", "Himanshu Pvt Ltd", "VOUCHER", [voucher_item], 1, True)
+        self.assertTrue(ok)
+        mock_post.assert_called_once()
+        sent_body = mock_post.call_args[1]["json"]
+        self.assertEqual(sent_body["entityType"], "VOUCHER")
+        records = sent_body["records"]
+        self.assertEqual(len(records), 1)
+        r = records[0]
+
+        # Verify top-level payload enrichment
+        self.assertEqual(r["voucherNumber"], "15")
+        self.assertEqual(r["customerName"], "Tarun Chaprana")
+        self.assertEqual(r["reference"], "ADD-001")
+        self.assertEqual(r["placeOfSupply"], "Delhi")
+        self.assertEqual(len(r["items"]), 1)
+        self.assertEqual(len(r["lines"]), 1)
+        self.assertIn("advancedSettings", r)
+        self.assertEqual(r["advancedSettings"]["dispatchDocNo"], "DC-100")
+        self.assertEqual(r["advancedSettings"]["vehicleNo"], "DL-01-AB-1234")
+        self.assertEqual(r["dispatchDocNo"], "DC-100")
+        self.assertEqual(r["vehicleNo"], "DL-01-AB-1234")
+
+        # Verify raw object enrichment
+        raw = r["raw"]
+        self.assertEqual(raw["reference"], "ADD-001")
+        self.assertEqual(raw["customerName"], "Tarun Chaprana")
+        self.assertIn("advancedSettings", raw)
+        self.assertEqual(raw["advancedSettings"]["dispatchDocNo"], "DC-100")
+        self.assertEqual(len(raw["items"]), 1)
+        self.assertEqual(len(raw["lines"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

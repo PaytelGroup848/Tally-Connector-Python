@@ -39,10 +39,10 @@ class TestConnectionConfig(unittest.TestCase):
         self.assertEqual(h, "127.0.0.1")
         self.assertEqual(p, 9047)
 
-    @patch("shared.connection_config.is_socket_open")
-    def test_resolve_active_tally_port_with_preferred(self, mock_socket_open):
+    @patch("shared.connection_config.test_tally_port", return_value=(True, ["Test Co"], ""))
+    @patch("shared.connection_config.is_socket_open", return_value=True)
+    def test_resolve_active_tally_port_with_preferred(self, mock_socket_open, mock_test_port):
         from shared.connection_config import resolve_active_tally_port
-        mock_socket_open.return_value = True
 
         h, p = resolve_active_tally_port(preferred_port=9088, preferred_host="127.0.0.1")
         self.assertEqual(h, "127.0.0.1")

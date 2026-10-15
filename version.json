@@ -1,11 +1,11 @@
 {
-  "version": "1.0.17",
-  "latestVersion": "1.0.17",
-  "latest_version": "1.0.17",
+  "version": "1.0.19",
+  "latestVersion": "1.0.19",
+  "latest_version": "1.0.19",
   "minVersion": "1.0.0",
-  "releaseNotes": "Fix Parties and Stock Items sync: Added GST rate %, stock group hierarchy fallback, unit details, and voucher inventory items mapping for web tax invoices.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.17.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.17.exe",
-  "sha256": "eedda3f1d518597ce3b5627d9767cf51f7a063acbd3410e7686a45384e333cad",
+  "releaseNotes": "Critical Master Creation Fix: Corrected XML state tag typo in ledger_builder and hardened parse_tally_import_response against silent rejection/unknown request responses.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.19.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.19.exe",
+  "sha256": "fa4e6154e9aa6ad3e3d69615ef4c610a14c36b07b3376e4f32575b8723785595",
   "mandatory": true
 }

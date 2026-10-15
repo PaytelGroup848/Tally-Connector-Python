@@ -76,6 +76,11 @@ def parse_tally_import_response(xml_text: str, default_voucher_number: Optional[
     except ET.ParseError as pe:
         return False, None, f"Malformed XML response from Tally Prime: {pe}"
 
+    # Check for direct rejection or error text in root element (e.g. <RESPONSE>Unknown Request, cannot be processed</RESPONSE>)
+    root_text = (root.text or "").strip()
+    if root_text and any(k in root_text.lower() for k in ("unknown request", "cannot be processed", "error", "fail", "invalid", "rejected", "not found", "does not exist", "unable to")):
+        return False, None, f"Tally rejected request: {root_text}"
+
     line_errors = []
     for line_err in root.findall(".//LINEERROR"):
         if line_err.text and line_err.text.strip():
@@ -137,6 +142,11 @@ def parse_tally_import_response(xml_text: str, default_voucher_number: Optional[
                 return False, None, "Tally rejected creation (CREATED: 0, ALTERED: 0)."
         except ValueError:
             pass
+    elif alt_count > 0:
+        return True, voucher_num or "ALTERED", None
+    elif len(root) == 0:
+        msg = root_text or "Tally returned an empty or invalid response envelope."
+        return False, None, f"Tally rejected creation: {msg}"
 
     return True, voucher_num or "SUCCESS", None
 
@@ -152,8 +162,36 @@ def diagnose_voucher_rejection(
     company_name = str(voucher_data.get("company_name") or voucher_data.get("companyName") or voucher_data.get("company") or "")
     v_date = str(voucher_data.get("date") or voucher_data.get("voucherDate") or "")
     v_type = str(voucher_data.get("voucher_type") or voucher_data.get("voucherType") or "Sales")
+    v_type_lower = v_type.lower()
+    is_pure_inventory = "stock journal" in v_type_lower or "physical stock" in v_type_lower
     raw_amt = voucher_data.get("amount")
-    items = voucher_data.get("items") or voucher_data.get("inventory_entries") or []
+    raw_items_val = voucher_data.get("items")
+    items = []
+    if isinstance(raw_items_val, list):
+        items = list(raw_items_val)
+    elif isinstance(raw_items_val, dict):
+        for sub_k in ("source", "destination", "consumption", "production", "items_out", "items_in", "outward", "inward", "items", "rows"):
+            sub_list = raw_items_val.get(sub_k)
+            if isinstance(sub_list, list):
+                items.extend(sub_list)
+    else:
+        items = voucher_data.get("inventory_entries") or []
+
+    if is_pure_inventory and not items:
+        inv_items = []
+        for extra_key in (
+            "source_items", "sourceItems",
+            "destination_items", "destinationItems",
+            "consumption_items", "consumptionItems",
+            "production_items", "productionItems",
+            "items_out", "itemsOut",
+            "items_in", "itemsIn"
+        ):
+            ex_list = voucher_data.get(extra_key)
+            if isinstance(ex_list, list):
+                inv_items.extend(ex_list)
+        if inv_items:
+            items = inv_items
 
     reasons = []
     actions = []
@@ -221,22 +259,63 @@ def diagnose_voucher_rejection(
         if total_item_amt <= 0.0:
             all_items_zero = True
 
-    if amt_val <= 0.0 and (all_items_zero or len(items) == 0):
-        reasons.append(
-            "Zero-Value Invoice: Total voucher amount is Rs. 0.00 (item quantity or rate is 0). Tally Prime standard settings do not allow zero-value invoices without explicit configuration."
-        )
-        actions.append(
-            "Enter a valid positive Quantity, Rate, and Amount for your items on the Web App before creating the invoice."
-        )
+    has_particulars = bool(
+        voucher_data.get("particulars")
+        or voucher_data.get("ledger_entries")
+        or voucher_data.get("ledgerEntries")
+        or voucher_data.get("debit_particulars")
+    )
+    if has_particulars and amt_val <= 0.0:
+        for p in (voucher_data.get("particulars") or voucher_data.get("ledger_entries") or []):
+            if isinstance(p, dict):
+                p_amt = float(p.get("amount") or p.get("amt") or 0.0)
+                if p_amt > 0:
+                    amt_val = p_amt
+                    break
 
     party_input = voucher_data.get("partyLedger") or voucher_data.get("party_ledger") or voucher_data.get("party") or ""
-    if not party_input or str(party_input).strip() == "":
-        reasons.append(
-            "Missing Customer / Party Ledger: No customer or debtor was selected in the web request (defaulted to Cash)."
-        )
-        actions.append(
-            "Select a valid Customer / Debtor ledger from the customer dropdown on the Web App."
-        )
+    if is_pure_inventory and not party_input:
+        party_input = "Inventory / Stock"
+
+    if not is_pure_inventory:
+        if amt_val <= 0.0 and (all_items_zero or len(items) == 0) and not has_particulars:
+            reasons.append(
+                "Zero-Value Invoice: Total voucher amount is Rs. 0.00 (item quantity or rate is 0). Tally Prime standard settings do not allow zero-value invoices without explicit configuration."
+            )
+            actions.append(
+                "Enter a valid positive Quantity, Rate, and Amount for your items on the Web App before creating the invoice."
+            )
+
+        if not party_input and has_particulars:
+            for p in (voucher_data.get("particulars") or voucher_data.get("ledger_entries") or []):
+                if isinstance(p, dict):
+                    p_n = p.get("partyName") or p.get("party_name") or p.get("ledgerName") or p.get("name")
+                    if p_n:
+                        party_input = str(p_n).strip()
+                        break
+
+        if not party_input or str(party_input).strip() == "":
+            reasons.append(
+                "Missing Customer / Party Ledger: No customer or debtor was selected in the web request (defaulted to Cash)."
+            )
+            actions.append(
+                "Select a valid Customer / Debtor ledger from the customer dropdown on the Web App."
+            )
+    else:
+        if len(items) == 0:
+            reasons.append(
+                "Empty Stock Journal: No source or destination items provided in the request."
+            )
+            actions.append(
+                "Add at least one Source (Consumption) or Destination (Production) item with valid Quantity and Rate on the Web App."
+            )
+        elif all_items_zero:
+            reasons.append(
+                "Zero-Value Stock Journal: Item quantity or rate is 0.00."
+            )
+            actions.append(
+                "Enter a valid positive Quantity and Rate for your Stock Journal items on the Web App."
+            )
 
     if not reasons:
         reasons.append(
@@ -990,7 +1069,7 @@ class TallyImporter:
                 party_parent = "Sundry Debtors"
             elif "CREDITOR" in party_type_hint or "SUPPLIER" in party_type_hint or "VENDOR" in party_type_hint:
                 party_parent = "Sundry Creditors"
-            elif any(k in v_type for k in ("sales", "receipt", "quotation", "quote", "estimate", "proforma")):
+            elif any(k in v_type for k in ("sales", "receipt", "quotation", "quote", "estimate", "proforma", "credit note", "credit_note", "sales return")):
                 party_parent = "Sundry Debtors"
             else:
                 party_parent = "Sundry Creditors"
@@ -1015,9 +1094,65 @@ class TallyImporter:
                 }
             )
 
+        # For Journal and Contra vouchers, ensure all non-cash/bank ledgers in particulars exist in Tally
+        if ("journal" in v_type and not is_pure_inventory) or "contra" in v_type:
+            raw_j_entries = (
+                voucher_data.get("particulars")
+                or voucher_data.get("ledger_entries")
+                or voucher_data.get("ledgerEntries")
+                or voucher_data.get("items")
+                or []
+            )
+            if isinstance(raw_j_entries, list):
+                for j_ent in raw_j_entries:
+                    if isinstance(j_ent, dict):
+                        j_name = str(
+                            j_ent.get("partyName")
+                            or j_ent.get("party_name")
+                            or j_ent.get("ledgerName")
+                            or j_ent.get("ledger_name")
+                            or j_ent.get("name")
+                            or j_ent.get("ledger")
+                            or ""
+                        ).strip()
+                        if j_name and j_name.lower() not in ("cash", "cash in hand", "cash-in-hand"):
+                            j_type = str(j_ent.get("type") or j_ent.get("entry_type") or "Debit").strip().lower()
+                            if "contra" in v_type:
+                                j_parent = "Bank Accounts"
+                            else:
+                                j_parent = "Sundry Debtors" if j_type in ("debit", "dr", "by") else "Sundry Creditors"
+                            await self.ensure_ledger(
+                                host=host,
+                                port=port,
+                                company_name=company_name,
+                                ledger_name=j_name,
+                                parent=j_parent,
+                            )
+
         items = list(_extract_items_list(voucher_data) or [])
+        if ("journal" in v_type and not is_pure_inventory) or "contra" in v_type:
+            items = []
         if is_pure_inventory:
-            for extra_key in ("source_items", "destination_items", "consumption_items", "production_items", "items_out", "items_in"):
+            raw_items_d: Dict[str, Any] = {}
+            raw_items_val_imp = voucher_data.get("items")
+            if isinstance(raw_items_val_imp, dict):
+                raw_items_d = dict(raw_items_val_imp)
+            if raw_items_d:
+                for sub_k in ("source", "destination", "consumption", "production", "items_out", "items_in", "outward", "inward"):
+                    sub_list = raw_items_d.get(sub_k)
+                    if isinstance(sub_list, list):
+                        items.extend(sub_list)
+
+            for extra_key in (
+                "source_items", "sourceItems",
+                "destination_items", "destinationItems",
+                "consumption_items", "consumptionItems",
+                "production_items", "productionItems",
+                "items_out", "itemsOut",
+                "items_in", "itemsIn",
+                "outward_items", "outwardItems",
+                "inward_items", "inwardItems",
+            ):
                 extra_list = voucher_data.get(extra_key)
                 if extra_list and isinstance(extra_list, list):
                     items.extend(extra_list)
@@ -1040,12 +1175,84 @@ class TallyImporter:
                         if mh:
                             i_hsn = mh
 
+                    i_godown = _clean_str(
+                        it.get("godown")
+                        or it.get("godownName")
+                        or it.get("godown_name")
+                        or it.get("sourceGodown")
+                        or it.get("destinationGodown")
+                        or it.get("fromGodown")
+                        or it.get("toGodown")
+                    )
+
                     await self.ensure_stock_item(
-                        host=host, port=port, company_name=company_name, item_name=i_name, unit_name=i_unit, hsn_code=i_hsn
+                        host=host, port=port, company_name=company_name, item_name=i_name, unit_name=i_unit, hsn_code=i_hsn, godown=i_godown
                     )
 
         if not is_pure_inventory:
-            if "sales" in v_type or "quotation" in v_type or "quote" in v_type:
+            if "credit note" in v_type or "sales return" in v_type:
+                cn_ledger = _clean_str(
+                    voucher_data.get("credit_note_ledger")
+                    or voucher_data.get("sales_return_ledger")
+                    or voucher_data.get("creditNoteLedger")
+                    or voucher_data.get("salesReturnLedger")
+                    or "Sales Return"
+                )
+                await self.ensure_ledger(
+                    host=host,
+                    port=port,
+                    company_name=company_name,
+                    ledger_name=cn_ledger,
+                    parent="Sales Accounts"
+                )
+                for itm in voucher_data.get("items") or []:
+                    if isinstance(itm, dict):
+                        i_cn = _clean_str(
+                            itm.get("credit_note_ledger")
+                            or itm.get("sales_return_ledger")
+                            or itm.get("creditNoteLedger")
+                            or itm.get("salesReturnLedger")
+                        )
+                        if i_cn:
+                            await self.ensure_ledger(
+                                host=host,
+                                port=port,
+                                company_name=company_name,
+                                ledger_name=i_cn,
+                                parent="Sales Accounts"
+                            )
+            elif "debit note" in v_type or "purchase return" in v_type:
+                dn_ledger = _clean_str(
+                    voucher_data.get("debit_note_ledger")
+                    or voucher_data.get("purchase_return_ledger")
+                    or voucher_data.get("debitNoteLedger")
+                    or voucher_data.get("purchaseReturnLedger")
+                    or "Purchase Return"
+                )
+                await self.ensure_ledger(
+                    host=host,
+                    port=port,
+                    company_name=company_name,
+                    ledger_name=dn_ledger,
+                    parent="Purchase Accounts"
+                )
+                for itm in voucher_data.get("items") or []:
+                    if isinstance(itm, dict):
+                        i_dn = _clean_str(
+                            itm.get("debit_note_ledger")
+                            or itm.get("purchase_return_ledger")
+                            or itm.get("debitNoteLedger")
+                            or itm.get("purchaseReturnLedger")
+                        )
+                        if i_dn:
+                            await self.ensure_ledger(
+                                host=host,
+                                port=port,
+                                company_name=company_name,
+                                ledger_name=i_dn,
+                                parent="Purchase Accounts"
+                            )
+            elif "sales" in v_type or "quotation" in v_type or "quote" in v_type:
                 sales_ledger = _clean_str(voucher_data.get("sales_ledger") or voucher_data.get("salesLedger") or "Sales")
                 await self.ensure_ledger(
                     host=host,
@@ -1108,6 +1315,7 @@ class TallyImporter:
         ok, status_code, res_text, err_msg = await self.client.send_xml_request_async(
             host=host, port=port, xml_content=xml_payload, serialize_company=company_name
         )
+        
 
         if not ok or status_code != 200:
             return {
