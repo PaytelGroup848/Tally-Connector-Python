@@ -10,7 +10,18 @@ from apps.desktop_app.ui.threads.sync_handlers.common import chunk_list, safe_bu
 
 logger = get_logger("app.threads.sync_handlers.voucher")
 
-def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) -> Tuple[List[Dict[str, Any]], int]:
+def sync_vouchers(
+    worker,
+    c_name: str,
+    port: int,
+    now_iso: str,
+    org_oid,
+    c_oid,
+    from_alter_id: Optional[int] = None,
+    base_pct: int = 0,
+    idx: int = 1,
+    total_companies: int = 1
+) -> Tuple[List[Dict[str, Any]], int]:
     extracted_vouchers: List[Dict[str, Any]] = []
     max_voucher_alter = 0
     try:
@@ -20,9 +31,9 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                 "DATE", "EFFECTIVEDATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "REFERENCE", "REFERENCEDATE",
                 "PARTYLEDGERNAME", "PARTYNAME", "BASICBUYERNAME", "PLACEOFSUPPLY", "AMOUNT", "NARRATION",
                 "GUID", "ALTERID", "ISOPTIONAL", "ISCANCELLED", "ISPOSTDATED",
-                "BASICSHIPDOCUMENTNO", "BASICSHIPPEDBY", "BASICFINALDESTINATION", "BASICSHIPDATE", "VEHICLENO",
+                "BASICSHIPDOCUMENTNO", "BILLOFLADINGNO", "BASICSHIPPEDBY", "BASICFINALDESTINATION", "BASICSHIPDATE", "BILLOFLADINGDATE", "VEHICLENO", "BASICSHIPVESSELNO",
                 "BASICORDERREF", "BASICPURCHASEORDERNO", "BASICORDERDATE", "BASICORDERTERMS.LIST",
-                "CONSIGNEEMAILINGNAME", "CONSIGNEEADDRESS.LIST", "CONSIGNEESTATENAME", "CONSIGNEECOUNTRYNAME",
+                "CONSIGNEEMAILINGNAME", "CONSIGNEEADDRESS.LIST", "BASICBUYERADDRESS.LIST", "CONSIGNEESTATENAME", "CONSIGNEECOUNTRYNAME",
                 "CONSIGNEEPINCODE", "CONSIGNEEGSTIN", "PARTYGSTIN", "ADDRESS.LIST", "STATENAME", "PINCODE",
                 "ALLLEDGERENTRIES.LIST",
                 "ALLLEDGERENTRIES.BILLALLOCATIONS.LIST",
@@ -44,24 +55,10 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                 "ALLINVENTORYENTRIES.BATCHALLOCATIONS.BATCHNAME",
                 "ALLINVENTORYENTRIES.BATCHALLOCATIONS.BILLEDQTY",
                 "ALLINVENTORYENTRIES.BATCHALLOCATIONS.AMOUNT",
-                "ALLINVENTORYENTRIES.BATCHALLOCATIONS.BATCHRATE",
-                "INVENTORYENTRIES.LIST",
-                "INVENTORYENTRIES.STOCKITEMNAME",
-                "INVENTORYENTRIES.RATE",
-                "INVENTORYENTRIES.AMOUNT",
-                "INVENTORYENTRIES.ACTUALQTY",
-                "INVENTORYENTRIES.BILLEDQTY",
-                "INVENTORYENTRIES.GODOWNNAME",
-                "INVENTORYENTRIES.BATCHALLOCATIONS.LIST",
-                "LEDGERENTRIES.LIST",
-                "LEDGERENTRIES.BILLALLOCATIONS.LIST",
-                "LEDGERENTRIES.BILLALLOCATIONS.NAME",
-                "LEDGERENTRIES.BILLALLOCATIONS.BILLTYPE",
-                "LEDGERENTRIES.BILLALLOCATIONS.AMOUNT",
-                "LEDGERENTRIES.BILLALLOCATIONS.BILLCREDITPERIOD",
-                "LEDGERENTRIES.BILLALLOCATIONS.DUEDATEOFTOTALAMOUNT"
+                "ALLINVENTORYENTRIES.BATCHALLOCATIONS.BATCHRATE"
             ],
             company_name=c_name,
+            from_alter_id=from_alter_id,
             from_date="20000101",
             to_date="20991231"
         )
@@ -75,17 +72,17 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
         else:
             logger.error(f"Voucher extraction failed for '{c_name}': {err_v or f'HTTP {code_v}'}")
 
-        if not extracted_vouchers:
+        if not extracted_vouchers and not ok_v and (from_alter_id is None or from_alter_id == 0):
             logger.info(f"Retrying voucher extraction for '{c_name}' with safe core fields fallback...")
             fallback_fields = [
                 "DATE", "EFFECTIVEDATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "REFERENCE", "REFERENCEDATE",
                 "PARTYLEDGERNAME", "PARTYNAME", "BASICBUYERNAME", "PLACEOFSUPPLY", "AMOUNT", "NARRATION",
                 "GUID", "ALTERID", "ISOPTIONAL", "ISCANCELLED", "ISPOSTDATED",
-                "BASICSHIPDOCUMENTNO", "BASICSHIPPEDBY", "BASICFINALDESTINATION", "BASICSHIPDATE", "VEHICLENO",
+                "BASICSHIPDOCUMENTNO", "BILLOFLADINGNO", "BASICSHIPPEDBY", "BASICFINALDESTINATION", "BASICSHIPDATE", "BILLOFLADINGDATE", "VEHICLENO", "BASICSHIPVESSELNO",
                 "BASICORDERREF", "BASICPURCHASEORDERNO", "BASICORDERDATE", "BASICORDERTERMS.LIST",
-                "CONSIGNEEMAILINGNAME", "CONSIGNEEADDRESS.LIST", "CONSIGNEESTATENAME", "CONSIGNEECOUNTRYNAME",
+                "CONSIGNEEMAILINGNAME", "CONSIGNEEADDRESS.LIST", "BASICBUYERADDRESS.LIST", "CONSIGNEESTATENAME", "CONSIGNEECOUNTRYNAME",
                 "CONSIGNEEPINCODE", "CONSIGNEEGSTIN", "PARTYGSTIN", "ADDRESS.LIST", "STATENAME", "PINCODE",
-                "ALLLEDGERENTRIES.LIST", "ALLINVENTORYENTRIES.LIST", "INVENTORYENTRIES.LIST",
+                "ALLLEDGERENTRIES.LIST", "ALLINVENTORYENTRIES.LIST",
                 "ALLINVENTORYENTRIES.STOCKITEMNAME", "ALLINVENTORYENTRIES.RATE", "ALLINVENTORYENTRIES.AMOUNT",
                 "ALLINVENTORYENTRIES.BILLEDQTY", "ALLINVENTORYENTRIES.GODOWNNAME"
             ]
@@ -98,7 +95,7 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                     if alt > max_voucher_alter:
                         max_voucher_alter = alt
 
-        if not extracted_vouchers:
+        if not extracted_vouchers and not ok_v and (from_alter_id is None or from_alter_id == 0):
             logger.info(f"Retrying voucher extraction for '{c_name}' with minimal raw collection fallback...")
             min_fields = [
                 "DATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "PARTYLEDGERNAME", "PARTYNAME",
@@ -115,7 +112,12 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
     except Exception as exc:
         logger.warning(f"Voucher extraction error for '{c_name}': {exc}")
 
+    if from_alter_id and from_alter_id > max_voucher_alter:
+        max_voucher_alter = from_alter_id
+
     if extracted_vouchers:
+        if getattr(worker, "progress_changed", None):
+            worker.progress_changed.emit(base_pct + 62, f"[{idx}/{total_companies}] Saving {len(extracted_vouchers)} voucher(s) locally...")
         try:
             now_dt = datetime.now(timezone.utc)
             v_col = get_collection("vouchers")
@@ -156,12 +158,15 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                 dispatched_through = str(adv_settings.get("dispatchedThrough") or v.get("dispatchedThrough") or "")
                 destination = str(adv_settings.get("destination") or v.get("destination") or "")
                 vehicle_no = str(adv_settings.get("vehicleNo") or adv_settings.get("carrier") or v.get("vehicleNo") or "")
+                dispatch_date = str(adv_settings.get("dispatchDate") or adv_settings.get("dispatch_date") or v.get("dispatchDate") or "")
                 order_no = str(adv_settings.get("orderNo") or v.get("orderNo") or "")
                 order_date = str(adv_settings.get("orderDate") or v.get("orderDate") or "")
                 terms_val = str(adv_settings.get("terms") or v.get("terms") or "")
                 consignee_name = str(adv_settings.get("consigneeName") or v.get("consigneeName") or "")
                 consignee_address = str(adv_settings.get("consigneeAddress") or v.get("consigneeAddress") or "")
                 consignee_gstin = str(adv_settings.get("consigneeGstin") or v.get("consigneeGstin") or "")
+                if not adv_settings.get("dispatchDate") and dispatch_date:
+                    adv_settings["dispatchDate"] = dispatch_date
 
                 v_doc = {
                     "source": "TALLY",
@@ -198,6 +203,7 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                     "dispatchedThrough": dispatched_through,
                     "destination": destination,
                     "vehicleNo": vehicle_no,
+                    "dispatchDate": dispatch_date,
                     "orderNo": order_no,
                     "orderDate": order_date,
                     "terms": terms_val,
@@ -290,6 +296,7 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                         "dispatchedThrough": dispatched_through,
                         "destination": destination,
                         "vehicleNo": vehicle_no,
+                        "dispatchDate": dispatch_date,
                         "orderNo": order_no,
                         "orderDate": order_date,
                         "terms": terms_val,
@@ -340,6 +347,7 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
                         "dispatchedThrough": dispatched_through,
                         "destination": destination,
                         "vehicleNo": vehicle_no,
+                        "dispatchDate": dispatch_date,
                         "orderNo": order_no,
                         "orderDate": order_date,
                         "terms": terms_val,
@@ -457,6 +465,12 @@ def sync_vouchers(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid) 
 
         except Exception as m_exc:
             logger.warning(f"MongoDB voucher persistence notice: {m_exc}")
+
+        if getattr(worker, "progress_changed", None):
+            worker.progress_changed.emit(base_pct + 67, f"[{idx}/{total_companies}] Indexed {len(extracted_vouchers)} voucher(s) locally.")
+    else:
+        if getattr(worker, "progress_changed", None):
+            worker.progress_changed.emit(base_pct + 67, f"[{idx}/{total_companies}] Vouchers up to date (0 new).")
 
     return extracted_vouchers, max_voucher_alter
 

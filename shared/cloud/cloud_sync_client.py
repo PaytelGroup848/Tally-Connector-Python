@@ -275,7 +275,7 @@ class CloudSyncClient:
                 except (ValueError, TypeError):
                     c_bal = 0.0
 
-                records_to_send.append({
+                cust_rec = {
                     "tallyExternalId": str(t_ext_id),
                     "name": str(name_val),
                     "parent": str(parent_val),
@@ -297,7 +297,11 @@ class CloudSyncClient:
                     "openingBalance": op_bal,
                     "closingBalance": c_bal,
                     "alterId": alt_id
-                })
+                }
+                b_det = r.get("bankDetails") or raw_dict.get("bankDetails")
+                if b_det and isinstance(b_det, dict):
+                    cust_rec["bankDetails"] = b_det
+                records_to_send.append(cust_rec)
         elif norm_entity == "SUPPLIER":
             for r in items:
                 if not isinstance(r, dict):
@@ -330,7 +334,7 @@ class CloudSyncClient:
                 except (ValueError, TypeError):
                     c_bal = 0.0
 
-                records_to_send.append({
+                supp_rec = {
                     "tallyExternalId": str(t_ext_id),
                     "name": str(name_val),
                     "parent": str(parent_val),
@@ -352,7 +356,11 @@ class CloudSyncClient:
                     "openingBalance": op_bal,
                     "closingBalance": c_bal,
                     "alterId": alt_id
-                })
+                }
+                b_det = r.get("bankDetails") or raw_dict.get("bankDetails")
+                if b_det and isinstance(b_det, dict):
+                    supp_rec["bankDetails"] = b_det
+                records_to_send.append(supp_rec)
         elif norm_entity == "LEDGER":
             for r in items:
                 if not isinstance(r, dict):
@@ -398,7 +406,7 @@ class CloudSyncClient:
                 credit_period_val = str(r.get("creditPeriod") or raw_dict.get("creditPeriod") or raw_dict.get("billCreditPeriod") or "")
                 alt_id = int(r.get("alter_id", 0) or r.get("alterId", 0) or raw_dict.get("alterid", 0) or 0)
 
-                records_to_send.append({
+                ledg_rec = {
                     "tallyExternalId": str(t_ext_id),
                     "name": str(name_val),
                     "parent": str(parent_val),
@@ -420,7 +428,11 @@ class CloudSyncClient:
                     "creditPeriod": credit_period_val,
                     "billCreditPeriod": credit_period_val,
                     "alterId": alt_id
-                })
+                }
+                b_det = r.get("bankDetails") or raw_dict.get("bankDetails")
+                if b_det and isinstance(b_det, dict):
+                    ledg_rec["bankDetails"] = b_det
+                records_to_send.append(ledg_rec)
         elif norm_entity == "VOUCHER":
             for r in items:
                 if not isinstance(r, dict):
@@ -459,6 +471,7 @@ class CloudSyncClient:
                 dispatched_through = str(adv_settings.get("dispatchedThrough") or r.get("dispatchedThrough") or raw_dict.get("dispatchedThrough") or "")
                 destination = str(adv_settings.get("destination") or r.get("destination") or raw_dict.get("destination") or "")
                 vehicle_no = str(adv_settings.get("vehicleNo") or adv_settings.get("carrier") or r.get("vehicleNo") or raw_dict.get("vehicleNo") or "")
+                dispatch_date = str(adv_settings.get("dispatchDate") or adv_settings.get("dispatch_date") or r.get("dispatchDate") or r.get("dispatch_date") or raw_dict.get("dispatchDate") or "")
                 order_no = str(adv_settings.get("orderNo") or r.get("orderNo") or raw_dict.get("orderNo") or "")
                 order_date = str(adv_settings.get("orderDate") or r.get("orderDate") or raw_dict.get("orderDate") or "")
                 terms_val = str(adv_settings.get("terms") or r.get("terms") or raw_dict.get("terms") or "")
@@ -475,6 +488,7 @@ class CloudSyncClient:
                     "destination": destination,
                     "carrier": vehicle_no,
                     "vehicleNo": vehicle_no,
+                    "dispatchDate": dispatch_date,
                     "orderNo": order_no,
                     "orderDate": order_date,
                     "terms": terms_val,
@@ -515,6 +529,7 @@ class CloudSyncClient:
                         "dispatchedThrough": dispatched_through,
                         "destination": destination,
                         "vehicleNo": vehicle_no,
+                        "dispatchDate": dispatch_date,
                     },
                     "orderDetails": {
                         "orderNo": order_no,
@@ -557,6 +572,7 @@ class CloudSyncClient:
                     "destination": destination,
                     "carrier": vehicle_no,
                     "vehicleNo": vehicle_no,
+                    "dispatchDate": dispatch_date,
                     "orderNo": order_no,
                     "orderDate": order_date,
                     "terms": terms_val,

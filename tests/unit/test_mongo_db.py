@@ -26,7 +26,7 @@ class TestMongoDBIntegration(unittest.TestCase):
         res = upsert_company_config("TALLY", self.test_company_name, "GUID-12345", "01-Apr-2025")
         self.assertEqual(res["company_name"], self.test_company_name)
 
-        configs = get_all_company_configs()
+        configs = get_all_company_configs(allow_all=True)
         matching = [c for c in configs if c.get("company_name") == self.test_company_name]
         self.assertTrue(len(matching) >= 1)
 

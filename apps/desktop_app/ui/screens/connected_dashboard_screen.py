@@ -599,7 +599,7 @@ class ConnectedDashboardScreen(QWidget):
         except Exception as exc:
             logger.debug(f"Error in on_company_synced_instant: {exc}")
 
-    def start_qthread_sync(self, comp_name: str, source: str, card: Optional[CompanyCardFrame] = None):
+    def start_qthread_sync(self, comp_name: str, source: str, card: Optional[CompanyCardFrame] = None, is_full_sync: bool = False):
         self._active_workers = [w for w in self._active_workers if w.isRunning()]
 
         if any(w.isRunning() and (getattr(w, "target_company", "") == comp_name or not comp_name) for w in self._active_workers):
@@ -612,7 +612,8 @@ class ConnectedDashboardScreen(QWidget):
         p_bar.setRange(0, 100)
         p_bar.setValue(10)
         p_bar.setStyleSheet("QProgressBar { height: 6px; border-radius: 3px; background: #E2E8F0; } QProgressBar::chunk { background: #00C853; }")
-        s_lbl = QLabel(f"🟡 Syncing {source}...")
+        sync_label_str = "Full Sync" if is_full_sync else "Syncing"
+        s_lbl = QLabel(f"🟡 {sync_label_str} {source}...")
         s_lbl.setStyleSheet("font-size: 11px; color: #EAB308; font-weight: bold;")
         if card is not None:
             c_lay = card.layout()
@@ -620,7 +621,7 @@ class ConnectedDashboardScreen(QWidget):
                 c_lay.addWidget(p_bar)
                 c_lay.addWidget(s_lbl)
 
-        worker = BackgroundSyncWorker(comp_name, source, parent=self)
+        worker = BackgroundSyncWorker(comp_name, source, is_full_sync=is_full_sync, parent=self)
         self._active_workers.append(worker)
 
         worker.progress_changed.connect(lambda val, txt: self.safe_update_progress(p_bar, s_lbl, val, txt))
@@ -711,14 +712,17 @@ class ConnectedDashboardScreen(QWidget):
             }
         """)
 
+        quick_sync_act = QAction("⚡  Quick Sync (Delta)", menu)
+        full_sync_act = QAction("🔄  Full Sync (All Records)", menu)
         sync_config_act = QAction("📄  Sync Tally Config", menu)
-        resync_act = QAction("🔄  Re-Sync", menu)
 
+        menu.addAction(quick_sync_act)
+        menu.addAction(full_sync_act)
         menu.addAction(sync_config_act)
-        menu.addAction(resync_act)
 
+        quick_sync_act.triggered.connect(lambda: self.start_qthread_sync(name, source, card, is_full_sync=False))
+        full_sync_act.triggered.connect(lambda: self.start_qthread_sync(name, source, card, is_full_sync=True))
         sync_config_act.triggered.connect(lambda: self.handle_sync_config(name))
-        resync_act.triggered.connect(lambda: self.start_qthread_sync(name, source, card))
 
         menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
 

@@ -1,25 +1,25 @@
 import re
-import random
-from datetime import datetime, date
-from typing import Dict, Any, Tuple, Optional, List, Set, Union
-from shared.logging_config import get_logger
+from datetime import datetime
+from typing import Any
+
 from apps.backend.adapters.tally.xml_builders.common import (
-    escape_xml,
     _clean_str,
+    escape_xml,
     format_tally_date,
 )
+from shared.logging_config import get_logger
 
 logger = get_logger("app.adapters.tally.voucher_builder")
 
 __all__ = [
-    "build_voucher_import_xml",
-    "_lookup_party_master_gstin",
-    "_lookup_item_master_unit",
-    "_lookup_item_master_hsn",
-    "_ITEM_MASTER_UNIT_CACHE",
     "_ITEM_MASTER_HSN_CACHE",
+    "_ITEM_MASTER_UNIT_CACHE",
     "_PARTY_MASTER_GSTIN_CACHE",
     "_balance_double_entry_accounting",
+    "_lookup_item_master_hsn",
+    "_lookup_item_master_unit",
+    "_lookup_party_master_gstin",
+    "build_voucher_import_xml",
 ]
 
 def _parse_float(value: Any, default: float = 0.0) -> float:
@@ -66,7 +66,7 @@ def _extract_item_name(item: Any) -> str:
 
     return ""
 
-def _extract_items_list(voucher_data: Dict[str, Any]) -> list:
+def _extract_items_list(voucher_data: dict[str, Any]) -> list:
     """Finds the items list from various incoming payload keys."""
     raw_items = voucher_data.get("items")
     if isinstance(raw_items, dict):
@@ -112,46 +112,82 @@ def _extract_items_list(voucher_data: Dict[str, Any]) -> list:
 
     return []
 
-def _extract_party_ledger(voucher_data: Dict[str, Any]) -> str:
-    """Extracts party ledger name from payload."""
+def _extract_party_ledger(voucher_data: dict[str, Any]) -> str:
+    """Extracts party ledger name from payload, prioritizing specific party names over generic 'Cash'/'Bank'."""
+    candidates = []
     for key in (
         "party_ledger", "partyLedger", "party_name", "partyName",
         "party", "customer", "customer_name", "customerName",
-        "ledger_name", "ledgerName", "party_ledger_name", "debtor"
+        "supplier", "supplier_name", "supplierName",
+        "vendor", "vendor_name", "vendorName",
+        "received_from", "receivedFrom", "paid_to", "paidTo",
+        "ledger_name", "ledgerName", "party_ledger_name", "debtor", "creditor", "ledger"
+    ):
+        val = voucher_data.get(key)
+        if isinstance(val, str) and _clean_str(val):
+            candidates.append(_clean_str(val))
+        elif isinstance(val, dict):
+            sub = val.get("name") or val.get("ledgerName") or val.get("customerName") or val.get("partyName")
+            if sub and _clean_str(sub):
+                candidates.append(_clean_str(sub))
+
+    raw = voucher_data.get("raw")
+    if isinstance(raw, dict):
+        for key in ("partyLedger", "party_ledger", "party", "party_name", "customer", "customerName", "supplier", "supplierName", "ledger"):
+            val = raw.get(key)
+            if isinstance(val, str) and _clean_str(val):
+                candidates.append(_clean_str(val))
+
+    # Check particulars or ledger_entries for first party
+    for p_key in ("particulars", "ledger_entries", "ledgerEntries", "debit_particulars", "credit_particulars", "items"):
+        parts = voucher_data.get(p_key)
+        if isinstance(parts, list):
+            for p in parts:
+                if isinstance(p, dict):
+                    p_name = _clean_str(
+                        p.get("partyName") or p.get("party_name")
+                        or p.get("ledgerName") or p.get("ledger_name")
+                        or p.get("name") or p.get("ledger") or p.get("party")
+                        or p.get("customer") or p.get("customerName")
+                        or p.get("supplier") or p.get("supplierName")
+                    )
+                    if p_name:
+                        candidates.append(p_name)
+
+    # First look for a non-cash, non-bank candidate
+    for cand in candidates:
+        if cand and cand.lower() not in ("cash", "bank", "contra account", "journal account"):
+            return cand
+
+    # Fallback to first non-empty candidate if only Cash/Bank exists
+    for cand in candidates:
+        if cand:
+            return cand
+
+    return "Cash"
+
+
+def _extract_bank_ledger(voucher_data: dict[str, Any]) -> str:
+    """Extracts bank/cash ledger name from payload, supporting transactionType as smart fallback."""
+    for key in (
+        "bank_ledger", "bankLedger", "cash_bank_ledger", "cashBankLedger",
+        "account", "accountName", "account_name", "bank_account", "bankAccount"
     ):
         val = voucher_data.get(key)
         if isinstance(val, str) and _clean_str(val):
             return _clean_str(val)
         elif isinstance(val, dict):
-            sub = val.get("name") or val.get("ledgerName") or val.get("customerName")
+            sub = val.get("name") or val.get("ledgerName") or val.get("accountName")
             if sub and _clean_str(sub):
                 return _clean_str(sub)
 
-    raw = voucher_data.get("raw")
-    if isinstance(raw, dict):
-        for key in ("partyLedger", "party_ledger", "party", "party_name"):
-            val = raw.get(key)
-            if isinstance(val, str) and _clean_str(val):
-                return _clean_str(val)
-
-    # Check particulars or ledger_entries for first party
-    for p_key in ("particulars", "ledger_entries", "ledgerEntries", "debit_particulars", "items"):
-        parts = voucher_data.get(p_key)
-        if isinstance(parts, list):
-            first_found = None
-            for p in parts:
-                if isinstance(p, dict):
-                    p_name = _clean_str(p.get("partyName") or p.get("party_name") or p.get("ledgerName") or p.get("ledger_name") or p.get("name") or p.get("ledger") or p.get("party"))
-                    if p_name and p_name.lower() not in ("cash", "bank"):
-                        return p_name
-                    elif p_name and not first_found:
-                        first_found = p_name
-            if first_found:
-                return first_found
+    raw_txn = _clean_str(voucher_data.get("transactionType") or voucher_data.get("transaction_type"))
+    if raw_txn:
+        return "Cash" if raw_txn.upper() in ("CASH", "CASH_IN_HAND", "CASH-IN-HAND") else raw_txn
 
     return "Cash"
 
-def _extract_company_name(voucher_data: Dict[str, Any]) -> str:
+def _extract_company_name(voucher_data: dict[str, Any]) -> str:
     """Extracts cleaned company name from payload, with companyId database lookup fallback."""
     for key in ("company_name", "companyName", "company", "current_company"):
         val = voucher_data.get(key)
@@ -162,16 +198,26 @@ def _extract_company_name(voucher_data: Dict[str, Any]) -> str:
     comp_id = voucher_data.get("companyId") or voucher_data.get("company_id") or voucher_data.get("company_guid")
     if comp_id:
         try:
-            from shared.db.mongo_client import get_mongo_db
             from bson import ObjectId
+
+            from shared.db.mongo_client import get_mongo_db
             db = get_mongo_db()
             c_doc = None
+            name_filter = {
+                "$or": [
+                    {"company_name": {"$exists": True, "$nin": [None, "", "None"]}},
+                    {"name": {"$exists": True, "$nin": [None, "", "None"]}},
+                    {"tallyCompanyName": {"$exists": True, "$nin": [None, "", "None"]}}
+                ]
+            }
             if ObjectId.is_valid(str(comp_id)):
-                c_doc = db.companies.find_one({"_id": ObjectId(str(comp_id))})
-            if not c_doc:
-                c_doc = db.companies.find_one({"cloud_company_id": str(comp_id)})
-            if not c_doc:
-                c_doc = db.companies.find_one({"id": str(comp_id)})
+                c_doc = db.companies.find_one({"_id": ObjectId(str(comp_id)), **name_filter})
+                if not c_doc:
+                    c_doc = db.companies.find_one({"_id": ObjectId(str(comp_id))})
+            if not c_doc or not (c_doc.get("company_name") or c_doc.get("name") or c_doc.get("tallyCompanyName")):
+                c_doc = db.companies.find_one({"cloud_company_id": str(comp_id), **name_filter})
+            if not c_doc or not (c_doc.get("company_name") or c_doc.get("name") or c_doc.get("tallyCompanyName")):
+                c_doc = db.companies.find_one({"id": str(comp_id), **name_filter})
             if c_doc:
                 return _clean_str(c_doc.get("company_name") or c_doc.get("name") or c_doc.get("tallyCompanyName"))
         except Exception as exc:
@@ -179,7 +225,7 @@ def _extract_company_name(voucher_data: Dict[str, Any]) -> str:
 
     return ""
 
-GST_STATE_CODES: Dict[str, str] = {
+GST_STATE_CODES: dict[str, str] = {
     "01": "Jammu and Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
     "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan",
     "09": "Uttar Pradesh", "10": "Bihar", "11": "Sikkim", "12": "Arunachal Pradesh",
@@ -192,9 +238,9 @@ GST_STATE_CODES: Dict[str, str] = {
     "36": "Telangana", "37": "Andhra Pradesh", "38": "Ladakh"
 }
 
-_PARTY_MASTER_GSTIN_CACHE: Dict[Tuple[str, str], Tuple[Optional[str], Optional[str], Optional[str]]] = {}
+_PARTY_MASTER_GSTIN_CACHE: dict[tuple[str, str], tuple[str | None, str | None, str | None]] = {}
 
-def _lookup_party_master_gstin(company_name: str, party_name: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def _lookup_party_master_gstin(company_name: str, party_name: str) -> tuple[str | None, str | None, str | None]:
     """
     Looks up the GSTIN, State, and Address for a Party from MongoDB customers, suppliers, or ledgers.
     """
@@ -233,9 +279,280 @@ def _lookup_party_master_gstin(company_name: str, party_name: str) -> Tuple[Opti
     _PARTY_MASTER_GSTIN_CACHE[key] = (None, None, None)
     return None, None, None
 
-_ITEM_MASTER_UNIT_CACHE: Dict[Tuple[str, str], Optional[str]] = {}
+_COMPANY_MASTER_GST_CACHE: dict[str, tuple[str | None, str | None]] = {}
 
-def _lookup_item_master_unit(company_name: str, item_name: str) -> Optional[str]:
+def _lookup_company_gstin_and_state(company_name: str) -> tuple[str | None, str | None]:
+    """
+    Looks up the registered State and GSTIN for the Company from MongoDB / GSP credentials / cache.
+    """
+    if not company_name:
+        return None, None
+    key = company_name.strip().lower()
+    if key in _COMPANY_MASTER_GST_CACHE:
+        return _COMPANY_MASTER_GST_CACHE[key]
+
+    try:
+        from shared.db.mongo_client import get_mongo_db
+        db = get_mongo_db()
+        clean_name = company_name.strip()
+        comp_rgx = re.compile(f"^{re.escape(clean_name)}$", re.IGNORECASE)
+
+        # 1. Check companies collection
+        col = db["companies"]
+        doc = col.find_one({"$or": [{"name": comp_rgx}, {"company_name": comp_rgx}, {"name": clean_name}, {"company_name": clean_name}]})
+        if doc:
+            g = _clean_str(doc.get("gstin") or (doc.get("raw") or {}).get("gstin"))
+            s = _clean_str(doc.get("state") or (doc.get("raw") or {}).get("state") or doc.get("stateName"))
+            if g or s:
+                res = (g or None, s or None)
+                _COMPANY_MASTER_GST_CACHE[key] = res
+                return res
+
+        # 2. Check organizationgspcredentials
+        gsp_col = db["organizationgspcredentials"]
+        gsp_doc = gsp_col.find_one()
+        if gsp_doc:
+            g = _clean_str(gsp_doc.get("gstin"))
+            s = _clean_str(gsp_doc.get("state"))
+            if g or s:
+                res = (g or None, s or None)
+                _COMPANY_MASTER_GST_CACHE[key] = res
+                return res
+
+        # 3. Check organizations
+        org_col = db["organizations"]
+        org_doc = org_col.find_one()
+        if org_doc:
+            g = _clean_str(org_doc.get("gstin"))
+            s = _clean_str(org_doc.get("state"))
+            if g or s:
+                res = (g or None, s or None)
+                _COMPANY_MASTER_GST_CACHE[key] = res
+                return res
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Company master lookup notice: {exc}")
+
+    _COMPANY_MASTER_GST_CACHE[key] = (None, None)
+    return None, None
+
+GST_STATE_CODES: dict[str, str] = {
+    "01": "Jammu and Kashmir",
+    "02": "Himachal Pradesh",
+    "03": "Punjab",
+    "04": "Chandigarh",
+    "05": "Uttarakhand",
+    "06": "Haryana",
+    "07": "Delhi",
+    "08": "Rajasthan",
+    "09": "Uttar Pradesh",
+    "10": "Bihar",
+    "11": "Sikkim",
+    "12": "Arunachal Pradesh",
+    "13": "Nagaland",
+    "14": "Manipur",
+    "15": "Mizoram",
+    "16": "Tripura",
+    "17": "Meghalaya",
+    "18": "Assam",
+    "19": "West Bengal",
+    "20": "Jharkhand",
+    "21": "Odisha",
+    "22": "Chhattisgarh",
+    "23": "Madhya Pradesh",
+    "24": "Gujarat",
+    "26": "Dadra and Nagar Haveli and Daman and Diu",
+    "27": "Maharashtra",
+    "28": "Andhra Pradesh",
+    "29": "Karnataka",
+    "30": "Goa",
+    "31": "Lakshadweep",
+    "32": "Kerala",
+    "33": "Tamil Nadu",
+    "34": "Puducherry",
+    "35": "Andaman and Nicobar Islands",
+    "36": "Telangana",
+    "37": "Andhra Pradesh",
+    "38": "Ladakh",
+    "97": "Other Territory",
+    "99": "Centre Jurisdiction",
+}
+
+def normalize_state_name(state: str | None) -> str:
+    if not state:
+        return ""
+    clean = re.sub(r"[^a-zA-Z0-9\s]", "", str(state)).strip().lower()
+    clean = re.sub(r"\s+", " ", clean)
+    if clean in ("new delhi", "delhi ncr", "delhi", "dl"):
+        return "delhi"
+    if clean in ("up", "uttar pradesh"):
+        return "uttar pradesh"
+    if clean in ("uk", "uttarakhand", "uttaranchal"):
+        return "uttarakhand"
+    if clean in ("mh", "maharashtra"):
+        return "maharashtra"
+    if clean in ("tn", "tamil nadu", "tamilnadu"):
+        return "tamil nadu"
+    if clean in ("ka", "karnataka"):
+        return "karnataka"
+    if clean in ("gj", "gujarat"):
+        return "gujarat"
+    if clean in ("wb", "west bengal"):
+        return "west bengal"
+    if clean in ("hr", "haryana"):
+        return "haryana"
+    if clean in ("pb", "punjab"):
+        return "punjab"
+    if clean in ("rj", "rajasthan"):
+        return "rajasthan"
+    if clean in ("br", "bihar"):
+        return "bihar"
+    if clean in ("mp", "madhya pradesh"):
+        return "madhya pradesh"
+    if clean in ("ap", "andhra pradesh"):
+        return "andhra pradesh"
+    if clean in ("ts", "tg", "telangana"):
+        return "telangana"
+    if clean in ("kl", "kerala"):
+        return "kerala"
+    return clean
+
+def get_state_code_from_gstin(gstin: str | None) -> str | None:
+    if not gstin:
+        return None
+    clean = re.sub(r"[^A-Za-z0-9]", "", str(gstin)).strip()
+    if len(clean) >= 2 and clean[:2].isdigit():
+        code = clean[:2]
+        if code in GST_STATE_CODES:
+            return code
+    return None
+
+def _is_inter_state_transaction(voucher_data: dict[str, Any]) -> bool:
+    """
+    Determines whether a transaction is Inter-State (IGST) or Intra-State (CGST + SGST).
+    Adheres strictly to the Indian GST Act:
+    - Intra-State (Same State): CGST + SGST
+    - Inter-State (Different State): IGST
+    """
+    # 1. Explicit override flag
+    if "is_inter_state" in voucher_data and voucher_data["is_inter_state"] is not None:
+        return bool(voucher_data["is_inter_state"])
+    if "isInterState" in voucher_data and voucher_data["isInterState"] is not None:
+        return bool(voucher_data["isInterState"])
+
+    # 1b. Explicit gstType indicator from web portal (e.g. ctrlbooks.com)
+    gst_type = str(voucher_data.get("gstType") or voucher_data.get("gst_type") or "").strip().upper()
+    if gst_type in ("CGST_SGST", "INTRA_STATE", "INTRASTATE", "LOCAL"):
+        return False
+    if gst_type in ("IGST", "INTER_STATE", "INTERSTATE", "CENTRAL"):
+        return True
+
+    # 1c. Item-level tax indicators from web portal items
+    raw_items = voucher_data.get("items") or voucher_data.get("inventory_entries") or []
+    if isinstance(raw_items, list) and raw_items:
+        has_cgst_sgst = False
+        has_igst = False
+        for it in raw_items:
+            if isinstance(it, dict):
+                cgst_a = _parse_float(it.get("cgstAmount") or it.get("cgst_amount"), 0.0)
+                sgst_a = _parse_float(it.get("sgstAmount") or it.get("sgst_amount"), 0.0)
+                igst_a = _parse_float(it.get("igstAmount") or it.get("igst_amount"), 0.0)
+                if (cgst_a > 0 or sgst_a > 0) and igst_a == 0:
+                    has_cgst_sgst = True
+                elif igst_a > 0 and cgst_a == 0 and sgst_a == 0:
+                    has_igst = True
+        if has_cgst_sgst and not has_igst:
+            return False
+        if has_igst and not has_cgst_sgst:
+            return True
+
+    company_name = _clean_str(voucher_data.get("company_name") or voucher_data.get("company"))
+    party_name = _clean_str(voucher_data.get("party_ledger") or voucher_data.get("party") or voucher_data.get("customer") or voucher_data.get("vendor"))
+
+    # Resolve Company GSTIN & State
+    comp_gstin = _clean_str(
+        voucher_data.get("company_gstin")
+        or voucher_data.get("companyGstin")
+        or voucher_data.get("supplier_gstin")
+        or voucher_data.get("supplierGstin")
+    )
+    comp_state = _clean_str(
+        voucher_data.get("company_state")
+        or voucher_data.get("companyState")
+        or voucher_data.get("supplier_state")
+        or voucher_data.get("supplierState")
+    )
+    if not comp_gstin or not comp_state:
+        lk_gst, lk_st = _lookup_company_gstin_and_state(company_name)
+        if not comp_gstin and lk_gst:
+            comp_gstin = lk_gst
+        if not comp_state and lk_st:
+            comp_state = lk_st
+
+    # Resolve Party GSTIN & State
+    party_gstin = _clean_str(
+        voucher_data.get("gstin")
+        or voucher_data.get("party_gstin")
+        or voucher_data.get("partyGstin")
+        or voucher_data.get("buyer_gstin")
+        or voucher_data.get("buyerGstin")
+        or voucher_data.get("consignee_gstin")
+        or voucher_data.get("consigneeGstin")
+    )
+    party_state = _clean_str(
+        voucher_data.get("place_of_supply")
+        or voucher_data.get("placeOfSupply")
+        or voucher_data.get("state")
+        or voucher_data.get("party_state")
+        or voucher_data.get("partyState")
+        or voucher_data.get("buyer_state")
+        or voucher_data.get("buyerState")
+        or voucher_data.get("customer_state")
+        or voucher_data.get("consignee_state")
+        or voucher_data.get("consigneeState")
+    )
+    if not party_gstin or not party_state:
+        lk_pgst, lk_pst, _ = _lookup_party_master_gstin(company_name, party_name)
+        if not party_gstin and lk_pgst:
+            party_gstin = lk_pgst
+        if not party_state and lk_pst:
+            party_state = lk_pst
+
+    # 2. Compare GSTIN state codes (first 2 digits)
+    c_code = get_state_code_from_gstin(comp_gstin)
+    p_code = get_state_code_from_gstin(party_gstin)
+
+    if c_code and p_code:
+        return c_code != p_code
+
+    # 3. Compare state names
+    c_norm = normalize_state_name(comp_state) if comp_state else ""
+    if not c_norm and c_code:
+        c_norm = normalize_state_name(GST_STATE_CODES.get(c_code, ""))
+
+    p_norm = normalize_state_name(party_state) if party_state else ""
+    if not p_norm and p_code:
+        p_norm = normalize_state_name(GST_STATE_CODES.get(p_code, ""))
+
+    if c_norm and p_norm:
+        return c_norm != p_norm
+
+    # 4. Compare one code and one name
+    if c_code and p_norm:
+        c_state_from_code = normalize_state_name(GST_STATE_CODES.get(c_code, ""))
+        if c_state_from_code:
+            return c_state_from_code != p_norm
+    if p_code and c_norm:
+        p_state_from_code = normalize_state_name(GST_STATE_CODES.get(p_code, ""))
+        if p_state_from_code:
+            return c_norm != p_state_from_code
+
+    # 5. Ledger hints (Central Sales / Interstate) or default Intra-State fallback
+    p_lower = party_name.lower()
+    return any(k in p_lower for k in ("interstate", "inter-state", "outstation", "ogs", "central sales"))
+
+_ITEM_MASTER_UNIT_CACHE: dict[tuple[str, str], str | None] = {}
+
+def _lookup_item_master_unit(company_name: str, item_name: str) -> str | None:
     """
     Looks up the registered Base Unit of Measure (UOM) for the Stock Item from MongoDB.
     Ensures that Tally receives the exact unit expected by its master database,
@@ -283,9 +600,9 @@ def _lookup_item_master_unit(company_name: str, item_name: str) -> Optional[str]
     _ITEM_MASTER_UNIT_CACHE[key] = None
     return None
 
-_ITEM_MASTER_HSN_CACHE: Dict[Tuple[str, str], Optional[str]] = {}
+_ITEM_MASTER_HSN_CACHE: dict[tuple[str, str], str | None] = {}
 
-def _lookup_item_master_hsn(company_name: str, item_name: str) -> Optional[str]:
+def _lookup_item_master_hsn(company_name: str, item_name: str) -> str | None:
     """
     Looks up the registered HSN/SAC Code for the Stock Item from MongoDB collections.
     Falls back to parent Stock Group's HSN if not on the item directly.
@@ -350,7 +667,7 @@ def _balance_double_entry_accounting(
     ledger_entries_xml: list,
     inventory_entries_xml: list,
     has_valid_items: bool,
-    voucher_data: Dict[str, Any]
+    voucher_data: dict[str, Any]
 ) -> None:
     """
     Guarantees that total Debits + total Credits sum to 0.00 down to the exact paisa.
@@ -398,7 +715,7 @@ def _balance_double_entry_accounting(
         else:
             logger.warning(f"Significant accounting imbalance of {diff:.2f} detected in voucher #{voucher_data.get('voucher_number')}")
 
-def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
+def build_voucher_import_xml(voucher_data: dict[str, Any]) -> str:
     """
     Constructs a valid Tally XML Import envelope with ACTION="Create" to insert a VOUCHER
     (Sales Invoice, Item Sales Invoice, Receipt, Payment, etc.) into Tally Prime via HTTP interface (port 9000).
@@ -446,7 +763,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
     party_ledger = escape_xml(_extract_party_ledger(voucher_data))
 
     adv_settings_raw = voucher_data.get("advancedSettings") or voucher_data.get("advanced_settings")
-    adv_settings: Dict[str, Any] = {}
+    adv_settings: dict[str, Any] = {}
     if isinstance(adv_settings_raw, dict):
         adv_settings = dict(adv_settings_raw)
 
@@ -704,7 +1021,7 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
 </ENVELOPE>"""
 
     if is_stock_journal:
-        raw_items_dict: Dict[str, Any] = {}
+        raw_items_dict: dict[str, Any] = {}
         raw_items_val = voucher_data.get("items")
         if isinstance(raw_items_val, dict):
             raw_items_dict = dict(raw_items_val)
@@ -1094,35 +1411,64 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
 
     tax_entries = []
     explicit_taxes = voucher_data.get("taxes") or voucher_data.get("additional_ledgers")
+    gst_rate = _parse_float(voucher_data.get("gst_rate") or voucher_data.get("tax_rate") or voucher_data.get("gstRate") or voucher_data.get("taxRate"), 0.0)
+    if gst_rate <= 0:
+        for it in items:
+            it_tax = _parse_float(it.get("gst_rate") or it.get("tax_rate") or it.get("gstRate"), 0.0)
+            if it_tax > 0:
+                gst_rate = it_tax
+                break
+
+    base_val = calculated_items_total if has_valid_items else total_amount
+    is_inter_state = _is_inter_state_transaction(voucher_data)
+    voucher_data["_is_inter_state"] = is_inter_state
+
     if explicit_taxes and isinstance(explicit_taxes, list):
         for extra in explicit_taxes:
             el_name = escape_xml(_clean_str(extra.get("ledger_name") or extra.get("name") or extra.get("tax_name")))
             el_amt = _parse_float(extra.get("amount") or extra.get("tax_amount"), 0.0)
             if el_name and el_amt != 0.0:
                 tax_entries.append({"name": el_name, "amount": el_amt})
-    else:
-        gst_rate = _parse_float(voucher_data.get("gst_rate") or voucher_data.get("tax_rate") or voucher_data.get("gstRate") or voucher_data.get("taxRate"), 0.0)
-        if gst_rate <= 0:
-            for it in items:
-                it_tax = _parse_float(it.get("gst_rate") or it.get("tax_rate") or it.get("gstRate"), 0.0)
-                if it_tax > 0:
-                    gst_rate = it_tax
-                    break
 
-        base_val = calculated_items_total if has_valid_items else total_amount
-        if gst_rate > 0 and base_val > 0:
-            party_state = _clean_str(voucher_data.get("state") or voucher_data.get("party_state")).lower()
-            comp_state = _clean_str(voucher_data.get("company_state")).lower()
-            is_inter_state = bool(party_state and comp_state and party_state != comp_state)
-            
-            total_tax = round(base_val * (gst_rate / 100.0), 2)
-            if is_inter_state:
-                tax_entries.append({"name": f"IGST {gst_rate:g}%" if f"{gst_rate:g}" not in "0" else "IGST", "amount": total_tax})
+    # If no explicit taxes were passed, auto-generate tax entries based on gst_rate and inter_state detection
+    if not tax_entries and gst_rate > 0 and base_val > 0:
+        total_tax = round(base_val * (gst_rate / 100.0), 2)
+        if is_inter_state:
+            sum_igst = sum(_parse_float(it.get("igstAmount") or it.get("igst_amount"), 0.0) for it in items if isinstance(it, dict))
+            igst_amt = round(sum_igst, 2) if sum_igst > 0 else total_tax
+            tax_entries.append({"name": f"IGST {gst_rate:g}%" if f"{gst_rate:g}" not in "0" else "IGST", "amount": igst_amt})
+        else:
+            half_rate = gst_rate / 2.0
+            sum_cgst = sum(_parse_float(it.get("cgstAmount") or it.get("cgst_amount"), 0.0) for it in items if isinstance(it, dict))
+            sum_sgst = sum(_parse_float(it.get("sgstAmount") or it.get("sgst_amount"), 0.0) for it in items if isinstance(it, dict))
+            if sum_cgst > 0 and sum_sgst > 0:
+                half_tax = round(sum_cgst, 2)
+                sgst_tax = round(sum_sgst, 2)
             else:
-                half_rate = gst_rate / 2.0
                 half_tax = round(total_tax / 2.0, 2)
-                tax_entries.append({"name": f"CGST {half_rate:g}%" if f"{half_rate:g}" not in "0" else "CGST", "amount": half_tax})
-                tax_entries.append({"name": f"SGST {half_rate:g}%" if f"{half_rate:g}" not in "0" else "SGST", "amount": half_tax})
+                sgst_tax = round(total_tax - half_tax, 2)
+            tax_entries.append({"name": f"CGST {half_rate:g}%" if f"{half_rate:g}" not in "0" else "CGST", "amount": half_tax})
+            tax_entries.append({"name": f"SGST {half_rate:g}%" if f"{half_rate:g}" not in "0" else "SGST", "amount": sgst_tax})
+    elif tax_entries:
+        # Check if explicit_taxes contained generic "GST" or mismatched heads
+        has_generic = any(t["name"].lower() in ("gst", "tax", "output gst", "input gst") or bool(re.match(r"^gst\s*\d+", t["name"].lower())) for t in tax_entries)
+        if has_generic:
+            norm_taxes = []
+            for t in tax_entries:
+                t_low = t["name"].lower()
+                if t_low in ("gst", "tax", "output gst", "input gst") or bool(re.match(r"^gst\s*\d+", t_low)):
+                    t_amt = t["amount"]
+                    rate_str = f" {gst_rate:g}%" if gst_rate > 0 else ""
+                    if is_inter_state:
+                        norm_taxes.append({"name": f"IGST{rate_str}" if rate_str else "IGST", "amount": t_amt})
+                    else:
+                        h_amt = round(t_amt / 2.0, 2)
+                        h_rate = f" {gst_rate/2.0:g}%" if gst_rate > 0 else ""
+                        norm_taxes.append({"name": f"CGST{h_rate}" if h_rate else "CGST", "amount": h_amt})
+                        norm_taxes.append({"name": f"SGST{h_rate}" if h_rate else "SGST", "amount": round(t_amt - h_amt, 2)})
+                else:
+                    norm_taxes.append(t)
+            tax_entries = norm_taxes
 
     voucher_data["_calculated_tax_entries"] = tax_entries
     tax_total = sum(t["amount"] for t in tax_entries)
@@ -1157,6 +1503,9 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
             provided_entries = cand_items
 
     if provided_entries and isinstance(provided_entries, list) and not has_valid_items:
+        has_debit_leg = False
+        has_credit_leg = False
+        parsed_entries_count = 0
         for entry in provided_entries:
             if not isinstance(entry, dict):
                 continue
@@ -1182,6 +1531,10 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                 or entry_type in ("DR", "DEBIT", "BY")
                 or (entry.get("isDeemedPositive") == "Yes")
             )
+            if is_debit:
+                has_debit_leg = True
+            else:
+                has_credit_leg = True
             is_deemed_pos = "Yes" if is_debit else "No"
             tally_amt = -abs(amt) if is_debit else abs(amt)
 
@@ -1189,6 +1542,25 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                     <LEDGERNAME>{l_name}</LEDGERNAME>
                     <ISDEEMEDPOSITIVE>{is_deemed_pos}</ISDEEMEDPOSITIVE>
                     <AMOUNT>{tally_amt:.2f}</AMOUNT>
+                </ALLLEDGERENTRIES.LIST>""")
+            parsed_entries_count += 1
+
+        # For Receipt vouchers: if particulars only supplied the Credit (Party) side, automatically append Bank/Cash debit leg
+        if "receipt" in voucher_type.lower() and parsed_entries_count > 0 and not has_debit_leg:
+            bank_ledger_auto = escape_xml(_extract_bank_ledger(voucher_data))
+            ledger_entries_xml.append(f"""<ALLLEDGERENTRIES.LIST>
+                    <LEDGERNAME>{bank_ledger_auto}</LEDGERNAME>
+                    <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+                    <AMOUNT>-{abs(total_amount):.2f}</AMOUNT>
+                </ALLLEDGERENTRIES.LIST>""")
+
+        # For Payment vouchers: if particulars only supplied the Debit (Party) side, automatically append Bank/Cash credit leg
+        elif "payment" in voucher_type.lower() and parsed_entries_count > 0 and not has_credit_leg:
+            bank_ledger_auto = escape_xml(_extract_bank_ledger(voucher_data))
+            ledger_entries_xml.append(f"""<ALLLEDGERENTRIES.LIST>
+                    <LEDGERNAME>{bank_ledger_auto}</LEDGERNAME>
+                    <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+                    <AMOUNT>{abs(total_amount):.2f}</AMOUNT>
                 </ALLLEDGERENTRIES.LIST>""")
     if not ledger_entries_xml and has_valid_items:
         is_purchase_or_cn = "purchase" in voucher_type.lower() or "credit note" in voucher_type.lower() or "sales return" in voucher_type.lower()
@@ -1224,16 +1596,12 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                     <AMOUNT>{abs(total_amount):.2f}</AMOUNT>
                 </ALLLEDGERENTRIES.LIST>""")
         elif "receipt" in voucher_type.lower():
-            bank_ledger = escape_xml(
-                _clean_str(
-                    voucher_data.get("bank_ledger")
-                    or voucher_data.get("bankLedger")
-                    or voucher_data.get("cash_bank_ledger")
-                    or voucher_data.get("account")
-                    or voucher_data.get("bank_account")
-                    or "Cash"
-                )
-            )
+            bank_ledger = escape_xml(_extract_bank_ledger(voucher_data))
+            if party_ledger.lower() == bank_ledger.lower():
+                alt_party = _extract_party_ledger(voucher_data)
+                if alt_party and alt_party.lower() != bank_ledger.lower():
+                    party_ledger = escape_xml(alt_party)
+
             bill_num = escape_xml(
                 _clean_str(
                     voucher_data.get("bill_number")
@@ -1269,16 +1637,12 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
                     <AMOUNT>{abs(total_amount):.2f}</AMOUNT>{bill_alloc_xml}
                 </ALLLEDGERENTRIES.LIST>""")
         elif "payment" in voucher_type.lower():
-            bank_ledger = escape_xml(
-                _clean_str(
-                    voucher_data.get("bank_ledger")
-                    or voucher_data.get("bankLedger")
-                    or voucher_data.get("cash_bank_ledger")
-                    or voucher_data.get("account")
-                    or voucher_data.get("bank_account")
-                    or "Cash"
-                )
-            )
+            bank_ledger = escape_xml(_extract_bank_ledger(voucher_data))
+            if party_ledger.lower() == bank_ledger.lower():
+                alt_party = _extract_party_ledger(voucher_data)
+                if alt_party and alt_party.lower() != bank_ledger.lower():
+                    party_ledger = escape_xml(alt_party)
+
             bill_num = escape_xml(
                 _clean_str(
                     voucher_data.get("bill_number")
@@ -1594,13 +1958,17 @@ def build_voucher_import_xml(voucher_data: Dict[str, Any]) -> str:
     # Dispatch Details
     if dispatch_doc_no:
         buyer_tags.append(f"<BASICSHIPDOCUMENTNO>{escape_xml(dispatch_doc_no)}</BASICSHIPDOCUMENTNO>")
+        buyer_tags.append(f"<BILLOFLADINGNO>{escape_xml(dispatch_doc_no)}</BILLOFLADINGNO>")
     if dispatch_through:
         buyer_tags.append(f"<BASICSHIPPEDBY>{escape_xml(dispatch_through)}</BASICSHIPPEDBY>")
     if dispatch_from:
         buyer_tags.append(f"<BASICFINALDESTINATION>{escape_xml(dispatch_from)}</BASICFINALDESTINATION>")
     if dispatch_date_raw:
-        buyer_tags.append(f"<BASICSHIPDATE>{format_tally_date(dispatch_date_raw)}</BASICSHIPDATE>")
+        formatted_disp_date = format_tally_date(dispatch_date_raw)
+        buyer_tags.append(f"<BASICSHIPDATE>{formatted_disp_date}</BASICSHIPDATE>")
+        buyer_tags.append(f"<BILLOFLADINGDATE>{formatted_disp_date}</BILLOFLADINGDATE>")
     if vehicle_no:
+        buyer_tags.append(f"<BASICSHIPVESSELNO>{escape_xml(vehicle_no)}</BASICSHIPVESSELNO>")
         buyer_tags.append(f"<VEHICLENO>{escape_xml(vehicle_no)}</VEHICLENO>")
 
     # Order Details

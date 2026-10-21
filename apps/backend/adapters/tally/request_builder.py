@@ -1,13 +1,11 @@
 
 
-from typing import List, Optional
-from apps.backend.adapters.tally.xml_builders.common import escape_xml
 
 
 METADATA_TYPE_MAP = {
     "companies": ("Company", ["NAME", "GUID", "BOOKSFROM", "STARTINGFROM", "ADDRESS.LIST", "STATENAME", "COUNTRYNAME", "PINCODE", "PHONENUMBER", "EMAIL", "GSTREGISTRATIONNUMBER", "INCOMETAXNUMBER", "CIN", "BASECURRENCYNAME"]),
     "groups": ("Group", ["NAME", "PARENT", "GUID", "ALTERID", "ISADDABLE", "ISSUBLEDGER", "NATUREOFGROUP"]),
-    "ledgers": ("Ledger", ["NAME", "PARENT", "CLOSINGBALANCE", "OPENINGBALANCE", "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM", "OPENINGBALANCEDATE", "PARTYGSTIN", "GSTIN", "LEDGERCLASSIFICATION", "GUID", "ALTERID", "EMAIL", "LEDGERPHONE", "LEDGERMOBILE", "ADDRESS.LIST", "INCOMETAXNUMBER", "BILLCREDITPERIOD", "CREDITLIMIT", "ISBILLWISEON", "LEDGERGSTREGISTRATIONDETAILS.LIST", "LEDGSTREGDETAILS.*", "LEDMAILINGDETAILS.*", "STATENAME", "COUNTRYNAME", "PINCODE"]),
+    "ledgers": ("Ledger", ["NAME", "PARENT", "CLOSINGBALANCE", "OPENINGBALANCE", "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM", "OPENINGBALANCEDATE", "PARTYGSTIN", "GSTIN", "LEDGERCLASSIFICATION", "GUID", "ALTERID", "EMAIL", "LEDGERPHONE", "LEDGERMOBILE", "ADDRESS.LIST", "INCOMETAXNUMBER", "BILLCREDITPERIOD", "CREDITLIMIT", "ISBILLWISEON", "LEDGERGSTREGISTRATIONDETAILS.LIST", "LEDGSTREGDETAILS.*", "LEDMAILINGDETAILS.*", "STATENAME", "COUNTRYNAME", "PINCODE", "BANKDETAILS", "BANKACCOUNTNUMBER", "ACCOUNTNUMBER", "IFSCODE", "BANKNAME", "BRANCHNAME", "ACCOUNTHOLDERNAME", "SWIFTCODE", "PAYMENTDETAILS.LIST", "PAYMENTDETAILS.*", "BANKDETAILS.LIST", "BANKDETAILS.*"]),
     "voucher_types": ("VoucherType", ["NAME", "PARENT", "GUID", "ALTERID"]),
     "cost_centres": ("CostCentre", ["NAME", "CATEGORY", "GUID", "ALTERID"]),
     "godowns": ("Godown", ["NAME", "PARENT", "GUID", "ALTERID", "ADDRESS.LIST"]),
@@ -31,16 +29,19 @@ METADATA_TYPE_MAP = {
 ALLOWED_METADATA_TYPES = list(METADATA_TYPE_MAP.keys())
 
 def build_company_list_xml() -> str:
-    """Builds a lightweight XML query to fetch list of open companies from Tally."""
-    return build_collection_xml(collection_type="Company", fetch_fields=["NAME", "GUID", "BOOKSFROM"])
+    """Builds a lightweight XML query to fetch list of open companies from Tally with state & GST details."""
+    return build_collection_xml(
+        collection_type="Company",
+        fetch_fields=["NAME", "GUID", "BOOKSFROM", "STATENAME", "GSTIN", "COUNTRYNAME", "PINCODE"],
+    )
 
 def build_collection_xml(
     collection_type: str,
-    fetch_fields: List[str],
-    company_name: Optional[str] = None,
-    from_alter_id: Optional[int] = None,
-    from_date: Optional[str] = None,
-    to_date: Optional[str] = None
+    fetch_fields: list[str],
+    company_name: str | None = None,
+    from_alter_id: int | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None
 ) -> str:
     """
     Constructs a valid TDL Envelope for Tally Export request.
@@ -106,9 +107,9 @@ def build_collection_xml(
 </ENVELOPE>"""
 
 def build_daybook_export_xml(
-    company_name: Optional[str] = None,
-    from_date: Optional[str] = "20000101",
-    to_date: Optional[str] = "20991231"
+    company_name: str | None = None,
+    from_date: str | None = "20000101",
+    to_date: str | None = "20991231"
 ) -> str:
     """Builds a native Day Book report export request XML to extract all vouchers for any company period."""
     clean_company = (company_name or "").strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

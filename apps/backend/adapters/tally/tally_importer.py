@@ -2,62 +2,63 @@
 
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime, date
-from typing import Dict, Any, Tuple, Optional, List, Set, Union
-from shared.logging_config import get_logger
+from typing import Any
+
 from apps.backend.adapters.tally.tally_client import TallyClient
+from shared.logging_config import get_logger
 
 logger = get_logger("app.adapters.tally.importer")
 
 
 __all__ = [
-    "format_tally_date",
-    "escape_xml",
+    "_ITEM_MASTER_HSN_CACHE",
+    "_ITEM_MASTER_UNIT_CACHE",
+    "_PARTY_MASTER_GSTIN_CACHE",
+    "TallyImporter",
+    "_balance_double_entry_accounting",
     "_clean_str",
+    "_lookup_item_master_hsn",
+    "_lookup_item_master_unit",
+    "_lookup_party_master_gstin",
     "build_ledger_import_xml",
-    "build_unit_import_xml",
-    "build_stock_item_import_xml",
     "build_stock_item_alter_xml",
+    "build_stock_item_import_xml",
+    "build_unit_import_xml",
+    "build_voucher_import_xml",
     "build_voucher_type_import_xml",
     "determine_voucher_type_parent",
-    "build_voucher_import_xml",
-    "_lookup_party_master_gstin",
-    "_lookup_item_master_unit",
-    "_lookup_item_master_hsn",
-    "_ITEM_MASTER_UNIT_CACHE",
-    "_ITEM_MASTER_HSN_CACHE",
-    "_PARTY_MASTER_GSTIN_CACHE",
-    "_balance_double_entry_accounting",
-    "parse_tally_import_response",
     "diagnose_voucher_rejection",
-    "TallyImporter",
+    "escape_xml",
+    "format_tally_date",
+    "parse_tally_import_response",
 ]
 
 from apps.backend.adapters.tally.xml_builders import (
-    escape_xml,
-    _clean_str,
-    format_tally_date,
-    build_ledger_import_xml,
-    build_unit_import_xml,
-    build_stock_item_import_xml,
-    build_stock_item_alter_xml,
-    build_voucher_type_import_xml,
-    determine_voucher_type_parent,
-    build_voucher_import_xml,
-    _lookup_party_master_gstin,
-    _lookup_item_master_unit,
-    _lookup_item_master_hsn,
-    _ITEM_MASTER_UNIT_CACHE,
     _ITEM_MASTER_HSN_CACHE,
+    _ITEM_MASTER_UNIT_CACHE,
     _PARTY_MASTER_GSTIN_CACHE,
     _balance_double_entry_accounting,
+    _clean_str,
+    _lookup_item_master_hsn,
+    _lookup_item_master_unit,
+    _lookup_party_master_gstin,
+    build_ledger_import_xml,
+    build_stock_item_alter_xml,
+    build_stock_item_import_xml,
+    build_unit_import_xml,
+    build_voucher_import_xml,
+    build_voucher_type_import_xml,
+    determine_voucher_type_parent,
+    escape_xml,
+    format_tally_date,
 )
 from apps.backend.adapters.tally.xml_builders.voucher_builder import (
-    _extract_items_list,
     _extract_item_name,
+    _extract_items_list,
 )
 
-def parse_tally_import_response(xml_text: str, default_voucher_number: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
+
+def parse_tally_import_response(xml_text: str, default_voucher_number: str | None = None) -> tuple[bool, str | None, str | None]:
   
     if not xml_text or not xml_text.strip():
         return False, None, "Empty response received from Tally Prime server."
@@ -151,10 +152,10 @@ def parse_tally_import_response(xml_text: str, default_voucher_number: Optional[
     return True, voucher_num or "SUCCESS", None
 
 def diagnose_voucher_rejection(
-    voucher_data: Dict[str, Any],
+    voucher_data: dict[str, Any],
     tally_response_text: str = "",
-    parse_error: Optional[str] = ""
-) -> Dict[str, Any]:
+    parse_error: str | None = ""
+) -> dict[str, Any]:
     """
     Intelligently diagnoses why Tally Prime rejected a voucher import request
     and provides human-readable English explanations (Root Cause) and Actionable Steps.
@@ -343,22 +344,26 @@ def diagnose_voucher_rejection(
     }
 
 class TallyImporter:
-    def __init__(self, client: Optional[TallyClient] = None):
+    def __init__(self, client: TallyClient | None = None):
         self.client = client or TallyClient()
-        self._voucher_types_cache: Dict[str, Dict[str, str]] = {}
-        self._known_ledgers: Dict[str, set] = {}
-        self._known_units: Dict[str, set] = {}
-        self._known_stock_items: Dict[str, set] = {}
+        self._voucher_types_cache: dict[str, dict[str, str]] = {}
+        self._known_ledgers: dict[str, set] = {}
+        self._known_units: dict[str, set] = {}
+        self._known_stock_items: dict[str, set] = {}
+        self._company_states: dict[str, str] = {}
+        self._company_gstins: dict[str, str] = {}
 
     async def check_tally_company_status(
         self, host: str, port: int, company_name: str
-    ) -> Tuple[bool, bool, List[str]]:
+    ) -> tuple[bool, bool, list[str]]:
         """
         Checks if Tally Prime is running and if company_name is currently opened in Tally.
         Returns (is_tally_online: bool, is_company_loaded: bool, open_companies: List[str]).
         """
         try:
-            from apps.backend.adapters.tally.request_builder import build_company_list_xml
+            from apps.backend.adapters.tally.request_builder import (
+                build_company_list_xml,
+            )
             from apps.backend.adapters.tally.response_parser import parse_company_list
             xml_req = build_company_list_xml()
             ok, status, resp_txt, err = await self.client.send_xml_request_async(
@@ -372,6 +377,14 @@ class TallyImporter:
                 return False, False, []
 
             companies = parse_company_list(resp_txt)
+            for c in companies:
+                c_n = str(c.get("name") or c.get("company_name", "")).strip().lower()
+                if c_n:
+                    if c.get("state"):
+                        self._company_states[c_n] = str(c["state"]).strip()
+                    if c.get("gstin"):
+                        self._company_gstins[c_n] = str(c["gstin"]).strip()
+
             open_names = [str(c.get("name") or c.get("company_name", "")).strip() for c in companies if c.get("name") or c.get("company_name")]
             if not company_name or not company_name.strip():
                 return True, len(open_names) > 0, open_names
@@ -390,7 +403,7 @@ class TallyImporter:
         company_name: str,
         ledger_name: str,
         parent: str = "Sundry Debtors",
-        extra_info: Optional[Dict[str, Any]] = None
+        extra_info: dict[str, Any] | None = None
     ) -> bool:
         """
         Auto-Creates the ledger in Tally if it does not already exist.
@@ -469,7 +482,9 @@ class TallyImporter:
         clean_gname = godown_name.strip() if godown_name else ""
         if not clean_gname or clean_gname.lower() in ("main location", "primary", "default", "none"):
             return True
-        from apps.backend.adapters.tally.xml_builders.stock_builder import build_godown_import_xml
+        from apps.backend.adapters.tally.xml_builders.stock_builder import (
+            build_godown_import_xml,
+        )
         g_xml = build_godown_import_xml(clean_gname, company_name)
         try:
             ok, status, _, _ = await self.client.send_xml_request_async(
@@ -489,12 +504,12 @@ class TallyImporter:
         unit_name: str = "Pcs",
         hsn_code: str = "",
         hsn_desc: str = "",
-        gst_rate: Optional[Any] = None,
-        quantity: Optional[Any] = None,
-        rate: Optional[Any] = None,
-        value: Optional[Any] = None,
-        godown: Optional[str] = None,
-        batch: Optional[str] = None,
+        gst_rate: Any | None = None,
+        quantity: Any | None = None,
+        rate: Any | None = None,
+        value: Any | None = None,
+        godown: str | None = None,
+        batch: str | None = None,
     ) -> bool:
         """
         Auto-Creates the Stock Item in Tally if it does not already exist with opening stock & GST details.
@@ -606,8 +621,8 @@ class TallyImporter:
         return False
 
     async def alter_stock_item(
-        self, host: str, port: int, company_name: str, item_data: Dict[str, Any]
-    ) -> Tuple[bool, Optional[str]]:
+        self, host: str, port: int, company_name: str, item_data: dict[str, Any]
+    ) -> tuple[bool, str | None]:
         """Alters/updates an existing Stock Item in Tally Prime."""
         clean_name = str(item_data.get("name") or item_data.get("itemName") or "").strip()
         if not clean_name:
@@ -677,8 +692,8 @@ class TallyImporter:
             return False, str(exc)
 
     async def ensure_voucher_type(
-        self, host: str, port: int, company_name: str, voucher_type_name: str, parent: Optional[str] = None
-    ) -> Tuple[bool, str]:
+        self, host: str, port: int, company_name: str, voucher_type_name: str, parent: str | None = None
+    ) -> tuple[bool, str]:
         """
         Auto-Checks if the Voucher Type exists in Tally Prime.
         If it does not exist, searches for smart aliases (e.g. 'Quotation' -> 'Quotation Voucher' / 'Sales Quotation')
@@ -774,7 +789,7 @@ class TallyImporter:
         cached[v_lower] = resolved_parent
         return True, resolved_parent
 
-    async def fetch_ledger_guid(self, host: str, port: int, company_name: str, ledger_name: str) -> Optional[str]:
+    async def fetch_ledger_guid(self, host: str, port: int, company_name: str, ledger_name: str) -> str | None:
         """Queries Tally Prime HTTP interface for a Ledger's GUID / Master ID."""
         if not ledger_name or not str(ledger_name).strip():
             return None
@@ -824,7 +839,7 @@ class TallyImporter:
             logger.debug(f"fetch_ledger_guid notice: {exc}")
         return None
 
-    async def fetch_stock_item_guid(self, host: str, port: int, company_name: str, item_name: str) -> Optional[str]:
+    async def fetch_stock_item_guid(self, host: str, port: int, company_name: str, item_name: str) -> str | None:
         """Queries Tally Prime HTTP interface for a Stock Item's GUID / Master ID."""
         if not item_name or not str(item_name).strip():
             return None
@@ -875,8 +890,8 @@ class TallyImporter:
         return None
 
     async def fetch_voucher_guid(
-        self, host: str, port: int, company_name: str, voucher_number: str, voucher_date: Optional[str] = None
-    ) -> Optional[str]:
+        self, host: str, port: int, company_name: str, voucher_number: str, voucher_date: str | None = None
+    ) -> str | None:
         """Queries Tally Prime HTTP interface for a Voucher's GUID / Master ID by voucher number."""
         if not voucher_number or not str(voucher_number).strip():
             return None
@@ -939,7 +954,7 @@ class TallyImporter:
             logger.debug(f"fetch_voucher_guid notice: {exc}")
         return None
 
-    async def import_ledger(self, host: str, port: int, ledger_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def import_ledger(self, host: str, port: int, ledger_data: dict[str, Any]) -> dict[str, Any]:
         """Explicitly creates a Ledger in Tally Prime and retrieves its tallyExternalId immediately."""
         ledger_name = str(ledger_data.get("name") or ledger_data.get("party_ledger") or ledger_data.get("partyName") or ledger_data.get("party_name") or "").strip()
         comp_name = str(ledger_data.get("company_name") or "")
@@ -1007,7 +1022,7 @@ class TallyImporter:
             "guid": tally_guid or f"TALLY-{ledger_name}",
         }
 
-    async def import_voucher(self, host: str, port: int, voucher_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def import_voucher(self, host: str, port: int, voucher_data: dict[str, Any]) -> dict[str, Any]:
         company_name = voucher_data.get("company_name", "")
 
         # Guard: Check Tally connectivity & verify if target company is open in Tally Prime
@@ -1037,6 +1052,12 @@ class TallyImporter:
                 "action": f"Open '{company_name}' inside Tally Prime (Gateway of Tally). Voucher will auto-post.",
             }
 
+        comp_key = (company_name or "").strip().lower()
+        if not voucher_data.get("company_state") and comp_key in self._company_states:
+            voucher_data["company_state"] = self._company_states[comp_key]
+        if not voucher_data.get("company_gstin") and comp_key in self._company_gstins:
+            voucher_data["company_gstin"] = self._company_gstins[comp_key]
+
         raw_vtype = _clean_str(
             voucher_data.get("voucher_type")
             or voucher_data.get("voucherType")
@@ -1054,7 +1075,13 @@ class TallyImporter:
         else:
             v_type = (voucher_data.get("voucher_type") or "Sales").lower()
 
-        party_ledger = voucher_data.get("party_ledger") or voucher_data.get("party_name", "")
+        party_ledger = (
+            voucher_data.get("party_ledger")
+            or voucher_data.get("party_name")
+            or voucher_data.get("partyLedger")
+            or voucher_data.get("ledger")
+            or ""
+        )
         explicit_parent = (
             voucher_data.get("party_parent")
             or voucher_data.get("partyParent")
@@ -1094,8 +1121,35 @@ class TallyImporter:
                 }
             )
 
-        # For Journal and Contra vouchers, ensure all non-cash/bank ledgers in particulars exist in Tally
-        if ("journal" in v_type and not is_pure_inventory) or "contra" in v_type:
+        raw_txn_type = _clean_str(voucher_data.get("transactionType") or voucher_data.get("transaction_type"))
+        bank_ledger_to_ensure = _clean_str(
+            voucher_data.get("bank_ledger")
+            or voucher_data.get("bankLedger")
+            or voucher_data.get("cash_bank_ledger")
+            or voucher_data.get("cashBankLedger")
+            or voucher_data.get("account")
+            or voucher_data.get("accountName")
+            or voucher_data.get("account_name")
+            or voucher_data.get("bank_account")
+            or voucher_data.get("bankAccount")
+            or (
+                "Cash"
+                if raw_txn_type and raw_txn_type.upper() in ("CASH", "CASH_IN_HAND", "CASH-IN-HAND")
+                else raw_txn_type
+            )
+            or ""
+        )
+        if bank_ledger_to_ensure and bank_ledger_to_ensure.lower() not in ("cash", "cash in hand", "cash-in-hand"):
+            await self.ensure_ledger(
+                host=host,
+                port=port,
+                company_name=company_name,
+                ledger_name=bank_ledger_to_ensure,
+                parent="Bank Accounts"
+            )
+
+        # For Journal, Contra, Receipt, and Payment vouchers, ensure all non-cash/bank ledgers in particulars exist in Tally
+        if ("journal" in v_type and not is_pure_inventory) or "contra" in v_type or "receipt" in v_type or "payment" in v_type:
             raw_j_entries = (
                 voucher_data.get("particulars")
                 or voucher_data.get("ledger_entries")
@@ -1113,12 +1167,19 @@ class TallyImporter:
                             or j_ent.get("ledger_name")
                             or j_ent.get("name")
                             or j_ent.get("ledger")
+                            or j_ent.get("party")
+                            or j_ent.get("customer")
+                            or j_ent.get("supplier")
                             or ""
                         ).strip()
                         if j_name and j_name.lower() not in ("cash", "cash in hand", "cash-in-hand"):
                             j_type = str(j_ent.get("type") or j_ent.get("entry_type") or "Debit").strip().lower()
                             if "contra" in v_type:
                                 j_parent = "Bank Accounts"
+                            elif "receipt" in v_type:
+                                j_parent = "Sundry Debtors"
+                            elif "payment" in v_type:
+                                j_parent = "Sundry Creditors"
                             else:
                                 j_parent = "Sundry Debtors" if j_type in ("debit", "dr", "by") else "Sundry Creditors"
                             await self.ensure_ledger(
@@ -1130,10 +1191,10 @@ class TallyImporter:
                             )
 
         items = list(_extract_items_list(voucher_data) or [])
-        if ("journal" in v_type and not is_pure_inventory) or "contra" in v_type:
+        if ("journal" in v_type and not is_pure_inventory) or "contra" in v_type or "receipt" in v_type or "payment" in v_type:
             items = []
         if is_pure_inventory:
-            raw_items_d: Dict[str, Any] = {}
+            raw_items_d: dict[str, Any] = {}
             raw_items_val_imp = voucher_data.get("items")
             if isinstance(raw_items_val_imp, dict):
                 raw_items_d = dict(raw_items_val_imp)

@@ -57,9 +57,11 @@ class TestInvoiceAdvancedSettings(unittest.TestCase):
 
         # Dispatch verification
         self.assertIn("<BASICSHIPDOCUMENTNO>LR-887766</BASICSHIPDOCUMENTNO>", xml)
+        self.assertIn("<BILLOFLADINGNO>LR-887766</BILLOFLADINGNO>", xml)
         self.assertIn("<BASICSHIPPEDBY>SafeXpress / Road</BASICSHIPPEDBY>", xml)
         self.assertIn("<BASICFINALDESTINATION>New Delhi Hub</BASICFINALDESTINATION>", xml)
         self.assertIn("<BASICSHIPDATE>20261014</BASICSHIPDATE>", xml)
+        self.assertIn("<BILLOFLADINGDATE>20261014</BILLOFLADINGDATE>", xml)
         self.assertIn("<VEHICLENO>DL01AB1234</VEHICLENO>", xml)
 
         # Order verification
@@ -135,6 +137,9 @@ class TestInvoiceAdvancedSettings(unittest.TestCase):
                             <REFERENCEDATE>20261014</REFERENCEDATE>
                             <PLACEOFSUPPLY>Delhi</PLACEOFSUPPLY>
                             <BASICSHIPDOCUMENTNO>DC-999</BASICSHIPDOCUMENTNO>
+                            <BILLOFLADINGNO>DC-999</BILLOFLADINGNO>
+                            <BASICSHIPDATE>20261014</BASICSHIPDATE>
+                            <BILLOFLADINGDATE>20261014</BILLOFLADINGDATE>
                             <BASICSHIPPEDBY>BlueDart</BASICSHIPPEDBY>
                             <BASICFINALDESTINATION>Gurugram</BASICFINALDESTINATION>
                             <VEHICLENO>DL-01-XX-9999</VEHICLENO>
@@ -196,6 +201,7 @@ class TestInvoiceAdvancedSettings(unittest.TestCase):
         self.assertEqual(adv["dispatchedThrough"], "BlueDart")
         self.assertEqual(adv["destination"], "Gurugram")
         self.assertEqual(adv["vehicleNo"], "DL-01-XX-9999")
+        self.assertEqual(adv["dispatchDate"], "2026-10-14")
         self.assertEqual(adv["orderNo"], "PO-888")
         self.assertEqual(adv["orderDate"], "2026-10-13")
         self.assertEqual(adv["terms"], "Payment on Delivery")

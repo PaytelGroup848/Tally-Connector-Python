@@ -22,6 +22,15 @@ from apps.desktop_app.ui.threads.command_handlers import (
 
 logger = get_logger("app.threads.command_worker")
 
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 class RemoteCommandWorker(QThread):
     command_received = Signal(str, str)
     command_processed = Signal(str, str, bool, str, dict)
@@ -151,12 +160,21 @@ class RemoteCommandWorker(QThread):
                         from shared.db.mongo_client import get_mongo_db
                         db = get_mongo_db()
                         c_doc = None
+                        name_filter = {
+                            "$or": [
+                                {"company_name": {"$exists": True, "$nin": [None, "", "None"]}},
+                                {"name": {"$exists": True, "$nin": [None, "", "None"]}},
+                                {"tallyCompanyName": {"$exists": True, "$nin": [None, "", "None"]}}
+                            ]
+                        }
                         if ObjectId.is_valid(str(comp_id)):
-                            c_doc = db.companies.find_one({"_id": ObjectId(str(comp_id))})
-                        if not c_doc:
-                            c_doc = db.companies.find_one({"cloud_company_id": str(comp_id)})
-                        if not c_doc:
-                            c_doc = db.companies.find_one({"id": str(comp_id)})
+                            c_doc = db.companies.find_one({"_id": ObjectId(str(comp_id)), **name_filter})
+                            if not c_doc:
+                                c_doc = db.companies.find_one({"_id": ObjectId(str(comp_id))})
+                        if not c_doc or not (c_doc.get("company_name") or c_doc.get("name") or c_doc.get("tallyCompanyName")):
+                            c_doc = db.companies.find_one({"cloud_company_id": str(comp_id), **name_filter})
+                        if not c_doc or not (c_doc.get("company_name") or c_doc.get("name") or c_doc.get("tallyCompanyName")):
+                            c_doc = db.companies.find_one({"id": str(comp_id), **name_filter})
                         if c_doc:
                             resolved_company = str(c_doc.get("company_name") or c_doc.get("name") or c_doc.get("tallyCompanyName") or "").strip()
                     except Exception as exc:
@@ -171,7 +189,22 @@ class RemoteCommandWorker(QThread):
                             email=curr_email
                         )
                         if tenant_companies:
-                            resolved_company = str(tenant_companies[0].get("company_name") or tenant_companies[0].get("name", "")).strip()
+                            active_comp_found = False
+                            try:
+                                from shared.connection_config import test_tally_port
+                                _, open_names, _ = test_tally_port(active_host, active_port)
+                                if open_names:
+                                    open_lower = {str(o).strip().lower() for o in open_names if o}
+                                    for tc_item in tenant_companies:
+                                        tc_name = str(tc_item.get("company_name") or tc_item.get("name", "")).strip()
+                                        if tc_name.lower() in open_lower:
+                                            resolved_company = tc_name
+                                            active_comp_found = True
+                                            break
+                            except Exception:
+                                pass
+                            if not active_comp_found:
+                                resolved_company = str(tenant_companies[0].get("company_name") or tenant_companies[0].get("name", "")).strip()
                     except Exception:
                         pass
 
@@ -256,17 +289,17 @@ class RemoteCommandWorker(QThread):
                         for it in (payload.get(it_k) or []):
                             if isinstance(it, dict):
                                 try:
-                                    q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                                    r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                                    src_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                                    q = _safe_float(it.get("quantity") if it.get("quantity") is not None else it.get("qty"))
+                                    r = _safe_float(it.get("rate") if it.get("rate") is not None else it.get("price"))
+                                    src_calc += _safe_float(it.get("amount") or it.get("taxableValue") or (q * r))
                                 except (ValueError, TypeError):
                                     pass
                     for it in (raw_items_dict.get("source") or raw_items_dict.get("consumption") or raw_items_dict.get("items_out") or []):
                         if isinstance(it, dict):
                             try:
-                                q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                                r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                                src_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                                q = _safe_float(it.get("quantity") if it.get("quantity") is not None else it.get("qty"))
+                                r = _safe_float(it.get("rate") if it.get("rate") is not None else it.get("price"))
+                                src_calc += _safe_float(it.get("amount") or it.get("taxableValue") or (q * r))
                             except (ValueError, TypeError):
                                 pass
 
@@ -275,17 +308,17 @@ class RemoteCommandWorker(QThread):
                         for it in (payload.get(it_k) or []):
                             if isinstance(it, dict):
                                 try:
-                                    q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                                    r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                                    dest_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                                    q = _safe_float(it.get("quantity") if it.get("quantity") is not None else it.get("qty"))
+                                    r = _safe_float(it.get("rate") if it.get("rate") is not None else it.get("price"))
+                                    dest_calc += _safe_float(it.get("amount") or it.get("taxableValue") or (q * r))
                                 except (ValueError, TypeError):
                                     pass
                     for it in (raw_items_dict.get("destination") or raw_items_dict.get("production") or raw_items_dict.get("items_in") or []):
                         if isinstance(it, dict):
                             try:
-                                q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                                r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                                dest_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
+                                q = _safe_float(it.get("quantity") if it.get("quantity") is not None else it.get("qty"))
+                                r = _safe_float(it.get("rate") if it.get("rate") is not None else it.get("price"))
+                                dest_calc += _safe_float(it.get("amount") or it.get("taxableValue") or (q * r))
                             except (ValueError, TypeError):
                                 pass
 
@@ -314,7 +347,7 @@ class RemoteCommandWorker(QThread):
                         for p in particulars_check:
                             if isinstance(p, dict):
                                 try:
-                                    p_val = abs(float(p.get("amount") or p.get("amt") or 0.0))
+                                    p_val = abs(_safe_float(p.get("amount") or p.get("amt")))
                                     p_typ = str(p.get("type") or p.get("entry_type") or "").strip().lower()
                                     if p_typ in ("debit", "dr", "by") or p.get("isDebit") is True or p.get("is_debit") is True:
                                         deb_sum += p_val
@@ -339,12 +372,12 @@ class RemoteCommandWorker(QThread):
                             raw_disc = it.get("discount") or it.get("discount_pct")
                             if raw_disc is not None:
                                 try:
-                                    disc = float(raw_disc)
+                                    disc = _safe_float(raw_disc)
                                 except (ValueError, TypeError):
                                     disc = 0.0
                             if it_amt is not None:
                                 try:
-                                    val = float(it_amt)
+                                    val = _safe_float(it_amt)
                                     if disc > 0 and not it.get("taxInclusive"):
                                         val = val - (val * disc / 100.0)
                                     calc_total += val
@@ -353,9 +386,9 @@ class RemoteCommandWorker(QThread):
                                     pass
                             try:
                                 raw_qty = it.get("quantity") if it.get("quantity") is not None else it.get("qty")
-                                q = float(raw_qty) if raw_qty is not None else 1.0
+                                q = _safe_float(raw_qty, 1.0)
                                 raw_rate = it.get("rate") if it.get("rate") is not None else it.get("price")
-                                r = float(raw_rate) if raw_rate is not None else 0.0
+                                r = _safe_float(raw_rate, 0.0)
                                 gross = q * r
                                 net = gross - (gross * disc / 100.0) if disc > 0 else gross
                                 calc_total += net
@@ -378,7 +411,7 @@ class RemoteCommandWorker(QThread):
                         for p in particulars_check:
                             if isinstance(p, dict):
                                 try:
-                                    p_val = abs(float(p.get("amount") or p.get("amt") or 0.0))
+                                    p_val = abs(_safe_float(p.get("amount") or p.get("amt")))
                                     p_typ = str(p.get("type") or p.get("entry_type") or "").strip().lower()
                                     if p_typ in ("debit", "dr", "by") or p.get("isDebit") is True or p.get("is_debit") is True:
                                         deb_sum += p_val

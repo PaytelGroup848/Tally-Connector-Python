@@ -37,10 +37,11 @@ class BackgroundSyncWorker(QThread):
     sync_completed = Signal(str)
     sync_failed = Signal(str)
 
-    def __init__(self, target_company: str = "", source: str = "TALLY", parent=None):
+    def __init__(self, target_company: str = "", source: str = "TALLY", is_full_sync: bool = False, parent=None):
         super().__init__(parent)
         self.target_company = target_company
         self.source = source.upper()
+        self.is_full_sync = is_full_sync
         self._is_cancelled = False
         self.tally_client = TallyClient(connect_timeout=5.0, read_timeout=120.0)
         self.tally_host = "127.0.0.1"
@@ -153,8 +154,30 @@ class BackgroundSyncWorker(QThread):
     def _sync_stock_items(self, c_name: str, port: int, now_iso: str, org_oid, c_oid) -> Tuple[List[Dict[str, Any]], int]:
         return sync_stock_items(self, c_name, port, now_iso, org_oid, c_oid)
 
-    def _sync_vouchers(self, c_name: str, port: int, now_iso: str, org_oid, c_oid) -> Tuple[List[Dict[str, Any]], int]:
-        return sync_vouchers(self, c_name, port, now_iso, org_oid, c_oid)
+    def _sync_vouchers(
+        self,
+        c_name: str,
+        port: int,
+        now_iso: str,
+        org_oid,
+        c_oid,
+        from_alter_id: Optional[int] = None,
+        base_pct: int = 0,
+        idx: int = 1,
+        total_companies: int = 1
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        return sync_vouchers(
+            self,
+            c_name,
+            port,
+            now_iso,
+            org_oid,
+            c_oid,
+            from_alter_id=from_alter_id,
+            base_pct=base_pct,
+            idx=idx,
+            total_companies=total_companies
+        )
 
     def _push_cloud_sync(
         self,
@@ -166,7 +189,8 @@ class BackgroundSyncWorker(QThread):
         last_alter_id: int,
         base_pct: int,
         idx: int,
-        total_companies: int
+        total_companies: int,
+        is_incremental: bool = False
     ):
         return push_cloud_sync(
             self,
@@ -178,7 +202,8 @@ class BackgroundSyncWorker(QThread):
             last_alter_id,
             base_pct,
             idx,
-            total_companies
+            total_companies,
+            is_incremental=is_incremental
         )
 
 
@@ -265,14 +290,37 @@ class BackgroundSyncWorker(QThread):
         if self._is_cancelled:
             return False, "Cancelled"
 
-        self.progress_changed.emit(base_pct + 60, f"[{idx}/{total_companies}] Extracting '{c_name}' Vouchers & Invoices...")
-        extracted_vouchers, max_voucher_alter = self._sync_vouchers(c_name, tally_port, now_iso, org_oid, c_oid)
+        # Determine if incremental sync can be used
+        from_alter_id: Optional[int] = None
+        if not self.is_full_sync:
+            try:
+                comp_doc = get_collection("companies").find_one({
+                    "$or": [{"company_name": c_name}, {"name": c_name}, {"tallyCompanyName": c_name}]
+                })
+                if comp_doc:
+                    raw_alt = comp_doc.get("last_voucher_alter_id") or comp_doc.get("last_alter_id")
+                    if raw_alt is not None:
+                        try:
+                            from_alter_id = int(raw_alt)
+                        except (ValueError, TypeError):
+                            from_alter_id = None
+            except Exception as e_alt:
+                logger.debug(f"Could not load last_alter_id for '{c_name}': {e_alt}")
 
-        last_alter_id = max(max_ledger_alter, max_stock_alter, max_voucher_alter)
+        sync_label = f"Delta > {from_alter_id}" if from_alter_id else "Full"
+        self.progress_changed.emit(base_pct + 60, f"[{idx}/{total_companies}] Extracting '{c_name}' Vouchers ({sync_label})...")
+        extracted_vouchers, max_voucher_alter = self._sync_vouchers(
+            c_name, tally_port, now_iso, org_oid, c_oid,
+            from_alter_id=from_alter_id, base_pct=base_pct, idx=idx, total_companies=total_companies
+        )
+
+        last_alter_id = max(max_ledger_alter, max_stock_alter, max_voucher_alter, from_alter_id or 0)
+        is_incremental = bool(from_alter_id and from_alter_id > 0)
 
         self._push_cloud_sync(
             c_name, c_guid, extracted_ledgers, extracted_stock_items,
-            extracted_vouchers, last_alter_id, base_pct, idx, total_companies
+            extracted_vouchers, last_alter_id, base_pct, idx, total_companies,
+            is_incremental=is_incremental
         )
 
         # Auto-reconcile pending 'SENT' commands for parties/items/vouchers already confirmed in Tally
@@ -280,10 +328,17 @@ class BackgroundSyncWorker(QThread):
             c_name, org_oid, c_oid, extracted_ledgers, extracted_stock_items, extracted_vouchers
         )
 
-        # Immediately persist stats to MongoDB 'companies' collection so UI and DB read it instantly
+        # Count total vouchers in MongoDB so UI card chip displays total historical count
+        total_voucher_count = len(extracted_vouchers)
+        try:
+            col_v = get_collection("vouchers")
+            total_voucher_count = col_v.count_documents({"company_name": c_name})
+        except Exception:
+            pass
+
         stats_dict = {
             "ledgers": len(extracted_ledgers),
-            "vouchers": len(extracted_vouchers),
+            "vouchers": total_voucher_count,
             "items": len(extracted_stock_items)
         }
         try:
@@ -293,10 +348,14 @@ class BackgroundSyncWorker(QThread):
                 {"$set": {
                     "status": "SYNCED",
                     "last_sync_at": now_iso,
+                    "last_alter_id": last_alter_id,
+                    "last_voucher_alter_id": max_voucher_alter,
                     "stats": stats_dict
                 }},
                 upsert=True
             )
+            from shared.repositories.company_repository import update_company_last_alter_id
+            update_company_last_alter_id("TALLY", c_name, last_alter_id)
         except Exception as e_s:
             logger.debug(f"Could not persist company stats to MongoDB: {e_s}")
 

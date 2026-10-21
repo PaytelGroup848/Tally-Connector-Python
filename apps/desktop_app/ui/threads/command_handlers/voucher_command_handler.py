@@ -1,25 +1,35 @@
 import asyncio
-from typing import Dict, Any, Tuple, Optional
-from shared.logging_config import get_logger
+from typing import Any
+
 from shared.auth.cloud_auth_service import cloud_auth_service
+from shared.logging_config import get_logger
 
 logger = get_logger("app.threads.command_handlers.voucher")
 
 
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def execute_voucher_command(
     worker: Any,
-    payload: Dict[str, Any],
-    cmd: Dict[str, Any],
+    payload: dict[str, Any],
+    cmd: dict[str, Any],
     cmd_id: str,
     cmd_type: str,
-    comp_id: Optional[str],
+    comp_id: str | None,
     resolved_company: str,
     active_host: str,
     active_port: int,
     amt: float,
-    curr_email: Optional[str],
-    curr_org: Optional[str],
-) -> Tuple[Dict[str, Any], bool, Dict[str, Any], Optional[str], Dict[str, Any], bool]:
+    curr_email: str | None,
+    curr_org: str | None,
+) -> tuple[dict[str, Any], bool, dict[str, Any], str | None, dict[str, Any], bool]:
     """
     Handles CREATE_VOUCHER, UPDATE_VOUCHER, CREATE_RECEIPT, CREATE_PAYMENT, CREATE_PURCHASE, etc.
     Returns: (norm_payload, success, result_data, error_msg, error_details, should_continue)
@@ -31,6 +41,8 @@ def execute_voucher_command(
     norm_payload["tally_host"] = active_host
     norm_payload["tally_port"] = active_port
     norm_payload["companyId"] = comp_id or cmd.get("companyId") or cmd.get("company_id") or payload.get("companyId")
+    norm_payload["command_id"] = cmd_id
+    norm_payload["cmd_id"] = cmd_id
 
     if cmd_type in ("CREATE_RECEIPT", "PAYMENT_RECEIVED"):
         default_vtype = "Receipt"
@@ -61,17 +73,106 @@ def execute_voucher_command(
     v_type_check = str(norm_payload.get("voucher_type") or "").strip().lower()
     is_pure_inventory = "stock journal" in v_type_check or "physical stock" in v_type_check
 
-    norm_payload["party_ledger"] = (
-        "Inventory / Stock" if is_pure_inventory else (
-            norm_payload.get("partyLedger")
-            or norm_payload.get("party_ledger")
-            or norm_payload.get("partyName")
-            or norm_payload.get("party_name")
-            or norm_payload.get("customerName")
-            or norm_payload.get("supplierName")
-            or "Cash"
-        )
+    norm_payload["bank_ledger"] = (
+        norm_payload.get("bankLedger")
+        or norm_payload.get("bank_ledger")
+        or norm_payload.get("cash_bank_ledger")
+        or norm_payload.get("cashBankLedger")
+        or norm_payload.get("account")
+        or norm_payload.get("accountName")
+        or norm_payload.get("account_name")
+        or norm_payload.get("bank_account")
+        or norm_payload.get("bankAccount")
     )
+    if not norm_payload["bank_ledger"]:
+        raw_txn = str(norm_payload.get("transactionType") or norm_payload.get("transaction_type") or "").strip()
+        if raw_txn:
+            norm_payload["bank_ledger"] = "Cash" if raw_txn.upper() in ("CASH", "CASH_IN_HAND", "CASH-IN-HAND") else raw_txn
+    norm_payload["to_account"] = norm_payload.get("toAccount") or norm_payload.get("to_account")
+    norm_payload["from_account"] = norm_payload.get("fromAccount") or norm_payload.get("from_account")
+    norm_payload["particulars"] = (
+        norm_payload.get("particulars")
+        or payload.get("particulars")
+        or norm_payload.get("ledgerEntries")
+        or norm_payload.get("ledger_entries")
+        or payload.get("ledgerEntries")
+        or payload.get("ledger_entries")
+    )
+    if not norm_payload["particulars"]:
+        c_items = norm_payload.get("items") or payload.get("items")
+        if isinstance(c_items, list) and any(
+            isinstance(x, dict) and (
+                "type" in x
+                or "isDebit" in x
+                or "is_debit" in x
+                or "partyName" in x
+                or "party_name" in x
+                or "ledgerName" in x
+                or "ledger_name" in x
+                or "name" in x
+                or "party" in x
+                or "customer" in x
+                or "supplier" in x
+                or "ledger" in x
+            )
+            for x in c_items
+        ):
+            norm_payload["particulars"] = c_items
+    norm_payload["ledger_entries"] = norm_payload["particulars"]
+
+    # Candidate search for party ledger
+    party_cand = (
+        norm_payload.get("partyLedger")
+        or norm_payload.get("party_ledger")
+        or norm_payload.get("partyName")
+        or norm_payload.get("party_name")
+        or norm_payload.get("party")
+        or norm_payload.get("customerName")
+        or norm_payload.get("customer_name")
+        or norm_payload.get("customer")
+        or norm_payload.get("supplierName")
+        or norm_payload.get("supplier_name")
+        or norm_payload.get("supplier")
+        or norm_payload.get("vendorName")
+        or norm_payload.get("vendor_name")
+        or norm_payload.get("vendor")
+        or norm_payload.get("receivedFrom")
+        or norm_payload.get("received_from")
+        or norm_payload.get("paidTo")
+        or norm_payload.get("paid_to")
+        or norm_payload.get("ledgerName")
+        or norm_payload.get("ledger_name")
+        or norm_payload.get("ledger")
+    )
+    if isinstance(party_cand, dict):
+        party_cand = party_cand.get("name") or party_cand.get("ledgerName") or party_cand.get("customerName") or party_cand.get("partyName")
+
+    # If party_cand is empty or equals bank_ledger (or is "Cash" when bank is "Cash"), extract from particulars / items
+    bank_clean = str(norm_payload.get("bank_ledger") or "").strip().lower()
+    if (not party_cand or str(party_cand).strip().lower() in ("", "cash", bank_clean)) and norm_payload.get("particulars"):
+        parts = norm_payload["particulars"]
+        if isinstance(parts, list):
+            for p in parts:
+                if isinstance(p, dict):
+                    p_name = str(
+                        p.get("partyName") or p.get("party_name")
+                        or p.get("ledgerName") or p.get("ledger_name")
+                        or p.get("name") or p.get("party")
+                        or p.get("customer") or p.get("customerName")
+                        or p.get("supplier") or p.get("supplierName")
+                        or p.get("ledger") or ""
+                    ).strip()
+                    if p_name and p_name.lower() not in ("cash", "bank", bank_clean):
+                        party_cand = p_name
+                        break
+
+    if is_pure_inventory:
+        norm_payload["party_ledger"] = "Inventory / Stock"
+    elif party_cand:
+        norm_payload["party_ledger"] = str(party_cand).strip()
+    else:
+        norm_payload["party_ledger"] = "Cash"
+
     norm_payload["sales_ledger"] = norm_payload.get("salesLedger") or norm_payload.get("sales_ledger")
     norm_payload["purchase_ledger"] = norm_payload.get("purchaseLedger") or norm_payload.get("purchase_ledger")
     norm_payload["credit_note_ledger"] = (
@@ -86,35 +187,6 @@ def execute_voucher_command(
         or norm_payload.get("purchaseReturnLedger")
         or norm_payload.get("purchase_return_ledger")
     )
-    norm_payload["bank_ledger"] = (
-        norm_payload.get("bankLedger")
-        or norm_payload.get("bank_ledger")
-        or norm_payload.get("cash_bank_ledger")
-        or norm_payload.get("account")
-        or norm_payload.get("bank_account")
-    )
-    norm_payload["to_account"] = norm_payload.get("toAccount") or norm_payload.get("to_account")
-    norm_payload["from_account"] = norm_payload.get("fromAccount") or norm_payload.get("from_account")
-    norm_payload["particulars"] = (
-        norm_payload.get("particulars")
-        or payload.get("particulars")
-        or norm_payload.get("ledgerEntries")
-        or norm_payload.get("ledger_entries")
-    )
-    if ("journal" in v_type_check and not is_pure_inventory or "contra" in v_type_check) and not norm_payload["particulars"]:
-        c_items = norm_payload.get("items") or payload.get("items")
-        if isinstance(c_items, list) and any(
-            isinstance(x, dict) and (
-                "type" in x
-                or "isDebit" in x
-                or "is_debit" in x
-                or "partyName" in x
-                or "ledgerName" in x
-            )
-            for x in c_items
-        ):
-            norm_payload["particulars"] = c_items
-    norm_payload["ledger_entries"] = norm_payload["particulars"]
     norm_payload["bill_number"] = (
         norm_payload.get("billNumber")
         or norm_payload.get("bill_number")
@@ -236,9 +308,24 @@ def execute_voucher_command(
         or norm_payload.get("orderDueDate")
         or norm_payload.get("deliveryDate")
     )
-    norm_payload["company_name"] = norm_payload.get("companyName") or norm_payload.get("company_name") or resolved_company
     norm_payload["company_name"] = resolved_company
     norm_payload["date"] = norm_payload.get("date") or norm_payload.get("voucherDate")
+    norm_payload["company_state"] = (
+        norm_payload.get("company_state")
+        or norm_payload.get("companyState")
+        or norm_payload.get("supplierState")
+        or norm_payload.get("supplier_state")
+        or adv_settings.get("supplierState")
+        or adv_settings.get("supplier_state")
+    )
+    norm_payload["company_gstin"] = (
+        norm_payload.get("company_gstin")
+        or norm_payload.get("companyGstin")
+        or norm_payload.get("supplierGstin")
+        or norm_payload.get("supplier_gstin")
+        or adv_settings.get("supplierGstin")
+        or adv_settings.get("supplier_gstin")
+    )
     norm_payload["gstin"] = (
         norm_payload.get("gstin")
         or norm_payload.get("gstinUin")
@@ -253,12 +340,34 @@ def execute_voucher_command(
     norm_payload["state"] = (
         norm_payload.get("state")
         or norm_payload.get("party_state")
+        or norm_payload.get("partyState")
+        or norm_payload.get("buyerState")
+        or norm_payload.get("buyer_state")
+        or norm_payload.get("customerState")
+        or norm_payload.get("customer_state")
         or norm_payload.get("placeOfSupply")
         or norm_payload.get("place_of_supply")
-        or norm_payload.get("supplierState")
-        or adv_settings.get("supplierState")
+        or adv_settings.get("buyerState")
+        or adv_settings.get("buyer_state")
+        or adv_settings.get("placeOfSupply")
         or adv_settings.get("state")
     )
+    norm_payload["place_of_supply"] = (
+        norm_payload.get("placeOfSupply")
+        or norm_payload.get("place_of_supply")
+        or adv_settings.get("placeOfSupply")
+        or adv_settings.get("place_of_supply")
+        or norm_payload.get("state")
+    )
+
+    # Smart GST Detection from web portal flags (ctrlbooks.com)
+    gst_type_raw = str(norm_payload.get("gstType") or norm_payload.get("gst_type") or "").strip().upper()
+    if gst_type_raw in ("CGST_SGST", "INTRA_STATE", "INTRASTATE", "LOCAL"):
+        norm_payload["is_inter_state"] = False
+        norm_payload["isInterState"] = False
+    elif gst_type_raw in ("IGST", "INTER_STATE", "INTERSTATE", "CENTRAL"):
+        norm_payload["is_inter_state"] = True
+        norm_payload["isInterState"] = True
     norm_payload["address"] = (
         norm_payload.get("address")
         or norm_payload.get("party_address")
@@ -314,7 +423,10 @@ def execute_voucher_command(
 
     if enrich_targets:
         try:
-            from apps.backend.adapters.tally.tally_importer import _lookup_item_master_unit, _lookup_item_master_hsn
+            from apps.backend.adapters.tally.tally_importer import (
+                _lookup_item_master_hsn,
+                _lookup_item_master_unit,
+            )
             for itm in enrich_targets:
                 if isinstance(itm, dict):
                     it_name = str(itm.get("item") or itm.get("itemName") or itm.get("name") or itm.get("stock_item") or "").strip()
@@ -332,7 +444,7 @@ def execute_voucher_command(
                                 itm["hsn_code"] = mh
                                 itm["hsnCode"] = mh
                                 itm["hsn"] = mh
-        except Exception as itm_exc:
+        except Exception as itm_exc:  # noqa: BLE001
             logger.debug(f"Voucher item master unit/HSN enrichment notice: {itm_exc}")
 
     # If amt is 0 or missing, or if it was doubled from deb + cred, calculate from particulars if present
@@ -355,63 +467,86 @@ def execute_voucher_command(
                             has_legs = True
                     except (ValueError, TypeError):
                         pass
-            if has_legs:
-                if not amt or amt <= 0.0 or (deb_sum > 0 and round(amt, 2) == round(deb_sum + cred_sum, 2)):
-                    amt = round(deb_sum if deb_sum > 0 else cred_sum, 2)
+            if has_legs and (not amt or amt <= 0.0 or (deb_sum > 0 and round(amt, 2) == round(deb_sum + cred_sum, 2))):
+                amt = round(deb_sum if deb_sum > 0 else cred_sum, 2)
 
-    # For Journal or Contra vouchers, if party_ledger defaulted to "Cash", extract real party from particulars
-    if (norm_payload.get("party_ledger") in ("", "Cash")) and norm_payload.get("particulars"):
+    # If party_ledger defaulted to "Cash" or equals bank_ledger, extract real party from particulars
+    bank_chk = str(norm_payload.get("bank_ledger") or "").strip().lower()
+    if (norm_payload.get("party_ledger") in ("", "Cash", bank_chk)) and norm_payload.get("particulars"):
         parts = norm_payload["particulars"]
         if isinstance(parts, list):
             for p in parts:
                 if isinstance(p, dict):
-                    p_name = str(p.get("partyName") or p.get("party_name") or p.get("ledgerName") or p.get("name") or "").strip()
-                    if p_name and p_name.lower() not in ("cash", "bank"):
+                    p_name = str(
+                        p.get("partyName") or p.get("party_name")
+                        or p.get("ledgerName") or p.get("ledger_name")
+                        or p.get("name") or p.get("party")
+                        or p.get("customer") or p.get("customerName")
+                        or p.get("supplier") or p.get("supplierName")
+                        or p.get("ledger") or ""
+                    ).strip()
+                    if p_name and p_name.lower() not in ("cash", "bank", bank_chk):
                         norm_payload["party_ledger"] = p_name
                         break
 
     if is_pure_inventory and (not amt or amt <= 0.0):
-        raw_items_dict: dict = {}
+        raw_items_dict: dict[str, Any] = {}
         raw_items_v = norm_payload.get("items")
         if isinstance(raw_items_v, dict):
             raw_items_dict = dict(raw_items_v)
         src_calc = 0.0
         for it_k in ("source_items", "sourceItems", "consumption_items", "consumptionItems", "items_out", "itemsOut", "outward_items", "outwardItems"):
-            for it in (norm_payload.get(it_k) or []):
+            items_list = norm_payload.get(it_k)
+            if isinstance(items_list, list):
+                for it in items_list:
+                    if isinstance(it, dict):
+                        q_val = it.get("quantity") if it.get("quantity") is not None else it.get("qty")
+                        r_val = it.get("rate") if it.get("rate") is not None else it.get("price")
+                        q = _safe_float(q_val)
+                        r = _safe_float(r_val)
+                        it_amt = _safe_float(it.get("amount") or it.get("taxableValue"))
+                        if it_amt <= 0.0:
+                            it_amt = q * r
+                        src_calc += it_amt
+        source_list = raw_items_dict.get("source") or raw_items_dict.get("consumption") or raw_items_dict.get("items_out")
+        if isinstance(source_list, list):
+            for it in source_list:
                 if isinstance(it, dict):
-                    try:
-                        q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                        r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                        src_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
-                    except (ValueError, TypeError):
-                        pass
-        for it in (raw_items_dict.get("source") or raw_items_dict.get("consumption") or raw_items_dict.get("items_out") or []):
-            if isinstance(it, dict):
-                try:
-                    q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                    r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                    src_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
-                except (ValueError, TypeError):
-                    pass
+                    q_val = it.get("quantity") if it.get("quantity") is not None else it.get("qty")
+                    r_val = it.get("rate") if it.get("rate") is not None else it.get("price")
+                    q = _safe_float(q_val)
+                    r = _safe_float(r_val)
+                    it_amt = _safe_float(it.get("amount") or it.get("taxableValue"))
+                    if it_amt <= 0.0:
+                        it_amt = q * r
+                    src_calc += it_amt
 
         dest_calc = 0.0
         for it_k in ("destination_items", "destinationItems", "production_items", "productionItems", "items_in", "itemsIn", "inward_items", "inwardItems"):
-            for it in (norm_payload.get(it_k) or []):
+            items_list = norm_payload.get(it_k)
+            if isinstance(items_list, list):
+                for it in items_list:
+                    if isinstance(it, dict):
+                        q_val = it.get("quantity") if it.get("quantity") is not None else it.get("qty")
+                        r_val = it.get("rate") if it.get("rate") is not None else it.get("price")
+                        q = _safe_float(q_val)
+                        r = _safe_float(r_val)
+                        it_amt = _safe_float(it.get("amount") or it.get("taxableValue"))
+                        if it_amt <= 0.0:
+                            it_amt = q * r
+                        dest_calc += it_amt
+        dest_list = raw_items_dict.get("destination") or raw_items_dict.get("production") or raw_items_dict.get("items_in")
+        if isinstance(dest_list, list):
+            for it in dest_list:
                 if isinstance(it, dict):
-                    try:
-                        q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                        r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                        dest_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
-                    except (ValueError, TypeError):
-                        pass
-        for it in (raw_items_dict.get("destination") or raw_items_dict.get("production") or raw_items_dict.get("items_in") or []):
-            if isinstance(it, dict):
-                try:
-                    q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                    r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                    dest_calc += float(it.get("amount") or it.get("taxableValue") or (q * r))
-                except (ValueError, TypeError):
-                    pass
+                    q_val = it.get("quantity") if it.get("quantity") is not None else it.get("qty")
+                    r_val = it.get("rate") if it.get("rate") is not None else it.get("price")
+                    q = _safe_float(q_val)
+                    r = _safe_float(r_val)
+                    it_amt = _safe_float(it.get("amount") or it.get("taxableValue"))
+                    if it_amt <= 0.0:
+                        it_amt = q * r
+                    dest_calc += it_amt
 
         if src_calc > 0 and dest_calc > 0:
             amt = round(max(src_calc, dest_calc), 2)

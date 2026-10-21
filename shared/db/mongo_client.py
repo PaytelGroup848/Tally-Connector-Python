@@ -88,9 +88,15 @@ def ensure_indexes(db: Database) -> None:
             db.incoming_commands_history.create_index([("user_email", pymongo.ASCENDING), ("timestamp", pymongo.DESCENDING)], background=True)
 
             _indexes_initialized = True
-            logger.info(f"MongoDB collection indexes verified on database '{db.name}'.")
-        except Exception as exc:
-            logger.warning(f"Non-fatal MongoDB index setup error: {exc}")
+            try:
+                logger.info(f"MongoDB collection indexes verified on database '{db.name}'.")
+            except (ValueError, OSError):
+                pass
+        except Exception as exc:  # noqa: BLE001
+            try:
+                logger.warning(f"Non-fatal MongoDB index setup error: {exc}")
+            except (ValueError, OSError):
+                pass
 
     threading.Thread(target=_create_indexes_task, daemon=True, name="MongoIndexInitializer").start()
 

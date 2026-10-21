@@ -15,7 +15,7 @@ def sync_ledgers(worker, c_name: str, port: int, now_iso: str, now_dt: datetime,
     try:
         l_xml = build_collection_xml(
             "Ledger",
-            ["NAME", "PARENT", "CLOSINGBALANCE", "OPENINGBALANCE", "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM", "OPENINGBALANCEDATE", "PARTYGSTIN", "GSTIN", "LEDGERCLASSIFICATION", "GUID", "ALTERID", "EMAIL", "LEDGERPHONE", "LEDGERMOBILE", "ADDRESS.LIST", "BILLCREDITPERIOD", "CREDITLIMIT", "ISBILLWISEON", "LEDGERGSTREGISTRATIONDETAILS.LIST", "LEDGSTREGDETAILS.*", "LEDMAILINGDETAILS.*", "STATENAME", "COUNTRYNAME", "PINCODE"],
+            ["NAME", "PARENT", "CLOSINGBALANCE", "OPENINGBALANCE", "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM", "OPENINGBALANCEDATE", "PARTYGSTIN", "GSTIN", "LEDGERCLASSIFICATION", "GUID", "ALTERID", "EMAIL", "LEDGERPHONE", "LEDGERMOBILE", "ADDRESS.LIST", "BILLCREDITPERIOD", "CREDITLIMIT", "ISBILLWISEON", "LEDGERGSTREGISTRATIONDETAILS.LIST", "LEDGSTREGDETAILS.*", "LEDMAILINGDETAILS.*", "STATENAME", "COUNTRYNAME", "PINCODE", "BANKDETAILS", "BANKACCOUNTNUMBER", "ACCOUNTNUMBER", "IFSCODE", "BANKNAME", "BRANCHNAME", "ACCOUNTHOLDERNAME", "SWIFTCODE", "PAYMENTDETAILS.*", "BANKDETAILS.*"],
             company_name=c_name
         )
         ok_l, code_l, text_l, err_l = worker.tally_client.send_xml_request(worker.tally_host, port, l_xml, timeout=60.0)
@@ -116,6 +116,10 @@ def sync_ledgers(worker, c_name: str, port: int, now_iso: str, now_dt: datetime,
                     "raw": l.get("raw") or l,
                     "updated_at": now_iso
                 }
+                if l.get("bankDetails"):
+                    if not l["bankDetails"].get("accountHolderName") and c_name:
+                        l["bankDetails"]["accountHolderName"] = c_name
+                    l_doc["bankDetails"] = l["bankDetails"]
                 if org_oid:
                     l_doc["organizationId"] = org_oid
                 if c_oid:

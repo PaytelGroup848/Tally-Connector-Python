@@ -1,30 +1,41 @@
 
 
 from collections import OrderedDict
-from typing import Dict, Any, Optional, Tuple
+from typing import Any
+
+from apps.backend.adapters.tally.tally_importer import TallyImporter
+from shared.connection_config import resolve_active_tally_port
 from shared.exceptions import ValidationError
 from shared.logging_config import get_logger
-from shared.connection_config import resolve_active_tally_port
-from apps.backend.adapters.tally.tally_importer import TallyImporter
 
 logger = get_logger("app.services.importer")
+
+
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
 
 class ImporterService:
     def __init__(
         self,
-        tally_importer: Optional[TallyImporter] = None,
+        tally_importer: TallyImporter | None = None,
     ):
         self.tally_importer: TallyImporter = tally_importer if tally_importer is not None else TallyImporter()
-        self._idempotency_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._idempotency_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._max_cache_size: int = 1000
 
-    def _resolve_connection_endpoint(self, payload: Dict[str, Any]) -> Tuple[str, int]:
+    def _resolve_connection_endpoint(self, payload: dict[str, Any]) -> tuple[str, int]:
         """Resolves target Tally host and port dynamically without hardcoded fallback."""
         raw_port = payload.get("port") or payload.get("tally_port")
         raw_host = payload.get("host") or payload.get("tally_host")
         return resolve_active_tally_port(preferred_port=raw_port, preferred_host=raw_host)
 
-    def validate_import_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_import_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
         Validates the structure and required fields of incoming voucher payload.
         Returns normalized payload dict or raises ValidationError.
@@ -57,29 +68,52 @@ class ImporterService:
             or payload.get("customer")
             or payload.get("customer_name")
             or payload.get("customerName")
+            or payload.get("supplier")
+            or payload.get("supplier_name")
+            or payload.get("supplierName")
+            or payload.get("vendor")
+            or payload.get("vendor_name")
+            or payload.get("vendorName")
+            or payload.get("received_from")
+            or payload.get("receivedFrom")
+            or payload.get("paid_to")
+            or payload.get("paidTo")
             or payload.get("ledger_name")
             or payload.get("ledgerName")
         )
         if isinstance(party_raw, dict):
-            party_raw = party_raw.get("name") or party_raw.get("ledgerName") or party_raw.get("customerName")
+            party_raw = party_raw.get("name") or party_raw.get("ledgerName") or party_raw.get("customerName") or party_raw.get("partyName")
         if not party_raw:
             if voucher_type.lower() in ("stock journal", "physical stock"):
                 party = "Inventory / Stock"
-            elif voucher_type.lower() in ("journal", "contra"):
+            elif voucher_type.lower() in ("journal", "contra", "receipt", "payment"):
                 party = None
-                for p_key in ("particulars", "ledger_entries", "ledgerEntries", "debit_particulars", "items"):
+                for p_key in ("particulars", "ledger_entries", "ledgerEntries", "debit_particulars", "credit_particulars", "items"):
                     p_list = payload.get(p_key)
                     if isinstance(p_list, list) and len(p_list) > 0:
                         for p_first in p_list:
                             if isinstance(p_first, dict):
-                                candidate = p_first.get("partyName") or p_first.get("party_name") or p_first.get("ledgerName") or p_first.get("name") or p_first.get("ledger")
-                                if candidate:
+                                candidate = (
+                                    p_first.get("partyName") or p_first.get("party_name")
+                                    or p_first.get("ledgerName") or p_first.get("ledger_name")
+                                    or p_first.get("name") or p_first.get("ledger")
+                                    or p_first.get("party") or p_first.get("customer")
+                                    or p_first.get("supplier") or p_first.get("vendor")
+                                )
+                                if candidate and str(candidate).strip().lower() not in ("cash", "bank"):
                                     party = str(candidate).strip()
                                     break
+                                elif candidate and not party:
+                                    party = str(candidate).strip()
                         if party:
                             break
                 if not party:
-                    party = "Contra Account" if "contra" in voucher_type.lower() else "Journal Account"
+                    if voucher_type.lower() in ("receipt", "payment"):
+                        party = "Cash"
+                    elif "contra" in voucher_type.lower():
+                        party = "Contra Account"
+                    else:
+                        party = "Journal Account"
             else:
                 raise ValidationError("Missing required party ledger/name in payload.")
         else:
@@ -90,7 +124,7 @@ class ImporterService:
                 elif voucher_type.lower() in ("journal", "contra"):
                     party = "Contra Account" if "contra" in voucher_type.lower() else "Journal Account"
                 else:
-                    raise ValidationError("Missing required party ledger/name in payload.")
+                    party = "Cash"
 
         try:
             raw_amt = payload.get("amount")
@@ -124,56 +158,53 @@ class ImporterService:
                         break
 
         if amt <= 0.0 and voucher_type.lower() in ("stock journal", "physical stock"):
-            raw_items_dict = payload.get("items") if isinstance(payload.get("items"), dict) else {}
+            raw_items_val = payload.get("items")
+            raw_items_dict: dict[str, Any] = dict(raw_items_val) if isinstance(raw_items_val, dict) else {}
             src_calc = 0.0
             for it_k in ("source_items", "sourceItems", "consumption_items", "consumptionItems", "items_out", "itemsOut", "outward_items", "outwardItems"):
-                for it in (payload.get(it_k) or []):
-                    if isinstance(it, dict):
-                        try:
-                            it_amt = float(it.get("amount") or it.get("taxableValue") or 0.0)
+                items_list = payload.get(it_k)
+                if isinstance(items_list, list):
+                    for it in items_list:
+                        if isinstance(it, dict):
+                            it_amt = _safe_float(it.get("amount") or it.get("taxableValue"))
                             if it_amt <= 0.0:
-                                q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                                r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                                it_amt = q * r
+                                q_val = it.get("quantity") if it.get("quantity") is not None else it.get("qty")
+                                r_val = it.get("rate") if it.get("rate") is not None else it.get("price")
+                                it_amt = _safe_float(q_val) * _safe_float(r_val)
                             src_calc += it_amt
-                        except (ValueError, TypeError):
-                            pass
-            for it in (raw_items_dict.get("source") or raw_items_dict.get("consumption") or raw_items_dict.get("items_out") or []):
-                if isinstance(it, dict):
-                    try:
-                        it_amt = float(it.get("amount") or it.get("taxableValue") or 0.0)
+            source_list = raw_items_dict.get("source") or raw_items_dict.get("consumption") or raw_items_dict.get("items_out")
+            if isinstance(source_list, list):
+                for it in source_list:
+                    if isinstance(it, dict):
+                        it_amt = _safe_float(it.get("amount") or it.get("taxableValue"))
                         if it_amt <= 0.0:
-                            q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                            r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                            it_amt = q * r
+                            q_val = it.get("quantity") if it.get("quantity") is not None else it.get("qty")
+                            r_val = it.get("rate") if it.get("rate") is not None else it.get("price")
+                            it_amt = _safe_float(q_val) * _safe_float(r_val)
                         src_calc += it_amt
-                    except (ValueError, TypeError):
-                        pass
 
             dest_calc = 0.0
             for it_k in ("destination_items", "destinationItems", "production_items", "productionItems", "items_in", "itemsIn", "inward_items", "inwardItems"):
-                for it in (payload.get(it_k) or []):
-                    if isinstance(it, dict):
-                        try:
-                            it_amt = float(it.get("amount") or it.get("taxableValue") or 0.0)
+                items_list = payload.get(it_k)
+                if isinstance(items_list, list):
+                    for it in items_list:
+                        if isinstance(it, dict):
+                            it_amt = _safe_float(it.get("amount") or it.get("taxableValue"))
                             if it_amt <= 0.0:
-                                q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                                r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                                it_amt = q * r
+                                q_val = it.get("quantity") if it.get("quantity") is not None else it.get("qty")
+                                r_val = it.get("rate") if it.get("rate") is not None else it.get("price")
+                                it_amt = _safe_float(q_val) * _safe_float(r_val)
                             dest_calc += it_amt
-                        except (ValueError, TypeError):
-                            pass
-            for it in (raw_items_dict.get("destination") or raw_items_dict.get("production") or raw_items_dict.get("items_in") or []):
-                if isinstance(it, dict):
-                    try:
-                        it_amt = float(it.get("amount") or it.get("taxableValue") or 0.0)
+            dest_list = raw_items_dict.get("destination") or raw_items_dict.get("production") or raw_items_dict.get("items_in")
+            if isinstance(dest_list, list):
+                for it in dest_list:
+                    if isinstance(it, dict):
+                        it_amt = _safe_float(it.get("amount") or it.get("taxableValue"))
                         if it_amt <= 0.0:
-                            q = float(it.get("quantity") if it.get("quantity") is not None else it.get("qty", 0.0))
-                            r = float(it.get("rate") if it.get("rate") is not None else it.get("price", 0.0))
-                            it_amt = q * r
+                            q_val = it.get("quantity") if it.get("quantity") is not None else it.get("qty")
+                            r_val = it.get("rate") if it.get("rate") is not None else it.get("price")
+                            it_amt = _safe_float(q_val) * _safe_float(r_val)
                         dest_calc += it_amt
-                    except (ValueError, TypeError):
-                        pass
 
             if src_calc > 0 and dest_calc > 0:
                 amt = round(max(src_calc, dest_calc), 2)
@@ -189,7 +220,7 @@ class ImporterService:
         clean_payload["amount"] = amt
         return clean_payload
 
-    async def import_voucher(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def import_voucher(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
         Main entrypoint for importing pending sales invoices and receipts into accounting software.
         Routes to Tally Prime HTTP interface (port 9000).
@@ -209,13 +240,30 @@ class ImporterService:
         comp_name_raw = str(validated_payload.get("company_name") or validated_payload.get("company") or "").strip()
         v_type_raw = str(validated_payload.get("voucher_type") or "Sales").strip()
 
+        cmd_id = (
+            validated_payload.get("command_id")
+            or validated_payload.get("cmd_id")
+            or validated_payload.get("commandId")
+            or validated_payload.get("id")
+        )
+        party_str = str(validated_payload.get("party_ledger") or validated_payload.get("party") or "").strip().lower()
+        amt_val = round(float(validated_payload.get("amount") or 0.0), 2)
+        v_num_str = str(v_num_raw or "").strip().lower()
+
         idemp_key = None
-        if v_num_raw and not str(v_num_raw).startswith("WEB-"):
-            idemp_key = f"{comp_name_raw.lower()}:{v_type_raw.lower()}:{str(v_num_raw).strip().lower()}"
-            if idemp_key in self._idempotency_cache:
-                logger.info(f"Idempotent hit: Voucher '{v_num_raw}' for company '{comp_name_raw}' already posted. Returning cached confirmation.")
-                self._idempotency_cache.move_to_end(idemp_key)
-                return self._idempotency_cache[idemp_key]
+        if cmd_id:
+            idemp_key = f"cmd:{cmd_id}"
+        elif v_num_str and not v_num_str.startswith("web-"):
+            is_generic_num = v_type_raw.lower() in ("receipt", "payment") and v_num_str.isdigit()
+            if is_generic_num:
+                idemp_key = f"{comp_name_raw.lower()}:{v_type_raw.lower()}:{v_num_str}:{party_str}:{amt_val}"
+            else:
+                idemp_key = f"{comp_name_raw.lower()}:{v_type_raw.lower()}:{v_num_str}"
+
+        if idemp_key and idemp_key in self._idempotency_cache:
+            logger.info(f"Idempotent hit for key '{idemp_key}'. Returning cached confirmation.")
+            self._idempotency_cache.move_to_end(idemp_key)
+            return self._idempotency_cache[idemp_key]
 
         host, port = self._resolve_connection_endpoint(payload)
 
@@ -257,8 +305,9 @@ class ImporterService:
                 if len(self._idempotency_cache) > self._max_cache_size:
                     self._idempotency_cache.popitem(last=False)
                 try:
-                    from shared.db.mongo_client import get_collection
                     from datetime import datetime, timezone
+
+                    from shared.db.mongo_client import get_collection
                     col = get_collection("imported_vouchers_idempotency")
                     col.update_one(
                         {"idempotency_key": idemp_key},
@@ -273,14 +322,14 @@ class ImporterService:
                         }},
                         upsert=True
                     )
-                except Exception as ex:
+                except Exception as ex:  # noqa: BLE001
                     logger.debug(f"Idempotency persistence notice: {ex}")
         else:
             logger.error(f"Voucher import failed for {target}: {result.get('error')}")
 
         return response
 
-    async def create_ledger(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_ledger(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Creates a new customer/debtor ledger explicitly in Tally Prime."""
         clean_payload = dict(payload)
         clean_payload["target"] = "TALLY"
@@ -288,6 +337,8 @@ class ImporterService:
 
         ledger_name = (
             clean_payload.get("name")
+            or clean_payload.get("ledgerName")
+            or clean_payload.get("ledger_name")
             or clean_payload.get("partyName")
             or clean_payload.get("party_name")
             or clean_payload.get("party_ledger")
@@ -311,7 +362,7 @@ class ImporterService:
             "error": result.get("error")
         }
 
-    async def create_stock_item(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_stock_item(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Creates a new stock item explicitly in Tally Prime with base unit."""
         clean_payload = dict(payload)
         host, port = self._resolve_connection_endpoint(clean_payload)
@@ -360,7 +411,7 @@ class ImporterService:
             "error": None if ok else f"Failed to ensure stock item '{item_name}'"
         }
 
-    async def update_stock_item(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def update_stock_item(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Updates/alters an existing stock item explicitly in Tally Prime."""
         clean_payload = dict(payload)
         host, port = self._resolve_connection_endpoint(clean_payload)
@@ -382,7 +433,7 @@ class ImporterService:
             "error": err if not ok else None
         }
 
-    async def create_unit(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_unit(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Creates a new unit of measurement explicitly in Tally Prime."""
         clean_payload = dict(payload)
         host, port = self._resolve_connection_endpoint(clean_payload)

@@ -13,6 +13,9 @@ from apps.desktop_app.ui.screens.connection_settings_screen import ConnectionSet
 from apps.desktop_app.ui.screens.system_requirement_screen import SystemRequirementScreen
 from apps.desktop_app.ui.screens.activity_history_screen import ActivityHistoryScreen
 from apps.desktop_app.ui.tray_icon import ConnectorSystemTray
+from shared.logging_config import get_logger
+
+logger = get_logger("apps.desktop_app.ui.main_window")
 
 
 class BackgroundUpdateCheckThread(QThread):
@@ -40,6 +43,8 @@ class ConnectorMainWindow(QMainWindow):
         self.is_force_exit = False
         self.update_dialog = None
         self.update_check_thread = None
+        self._update_prompt_shown_this_session = False
+        self._pending_update_info = None
 
         from apps.desktop_app.ui.asset_helper import get_asset_path
         icon_path = get_asset_path("app_icon.ico")
@@ -154,11 +159,14 @@ class ConnectorMainWindow(QMainWindow):
 
         company_id = None
         c_name = (company_name or "").strip()
+        try:
+            from shared.db.mongo_client import get_collection
+        except Exception:
+            get_collection = None
 
         # 1. Look up company_id from MongoDB 'companies' collection
-        if c_name:
+        if c_name and get_collection:
             try:
-                from shared.db.mongo_client import get_collection
                 col = get_collection("companies")
                 doc = col.find_one({
                     "$or": [
@@ -186,12 +194,15 @@ class ConnectorMainWindow(QMainWindow):
                         item_name = item.get("tallyCompanyName") or item.get("name") or ""
                         if item_name.lower().strip() == c_name.lower().strip():
                             company_id = item.get("id") or item.get("_id")
-                            if company_id:
+                            if company_id and get_collection:
                                 try:
                                     col = get_collection("companies")
                                     col.update_one(
                                         {"$or": [{"name": c_name}, {"company_name": c_name}, {"tallyCompanyName": c_name}]},
-                                        {"$set": {"cloud_company_id": str(company_id)}},
+                                        {
+                                            "$set": {"cloud_company_id": str(company_id)},
+                                            "$setOnInsert": {"company_name": c_name, "name": c_name}
+                                        },
                                         upsert=True
                                     )
                                 except Exception:
@@ -252,6 +263,13 @@ class ConnectorMainWindow(QMainWindow):
         self.tray_icon.toggle_pause_requested.connect(self.on_toggle_pause_sync)
         self.tray_icon.check_updates_requested.connect(self.check_for_updates_interactive)
         self.tray_icon.exit_requested.connect(self.force_exit_app)
+        self.tray_icon.messageClicked.connect(self.on_tray_message_clicked)
+
+    def on_tray_message_clicked(self):
+        if self._pending_update_info and self._pending_update_info.get("update_available"):
+            self.show_update_dialog(self._pending_update_info)
+        else:
+            self.restore_window()
 
     def check_for_updates_background(self):
         self._trigger_update_check(interactive=False)
@@ -272,14 +290,27 @@ class ConnectorMainWindow(QMainWindow):
 
     def on_update_check_completed(self, result: dict, interactive: bool):
         if result.get("update_available"):
+            self._pending_update_info = result
             latest = result.get("latest_version")
-            if hasattr(self, "tray_icon"):
-                self.tray_icon.show_toast(
-                    "CtrlBooks Update",
-                    f"A new version (v{latest}) is available to install.",
-                    QSystemTrayIcon.MessageIcon.Information
-                )
-            self.show_update_dialog(result)
+            mandatory = bool(result.get("mandatory", False))
+
+            if interactive:
+                # Explicit user-requested check -> always display dialog
+                self._update_prompt_shown_this_session = True
+                self.show_update_dialog(result)
+            elif not self._update_prompt_shown_this_session:
+                # First time detected in background -> non-intrusive notification, no aggressive popup
+                self._update_prompt_shown_this_session = True
+                if hasattr(self, "tray_icon"):
+                    self.tray_icon.show_toast(
+                        "CtrlBooks Update Available",
+                        f"Version v{latest} is available. Click here or check tray menu to install.",
+                        QSystemTrayIcon.MessageIcon.Information
+                    )
+                # Only pop modal if vendor explicitly marked release as mandatory
+                if mandatory:
+                    self.show_update_dialog(result)
+            # If already shown this session and background check, suppress repeated popups
         elif interactive:
             curr = result.get("current_version", "1.0.0")
             err = result.get("error")
@@ -305,7 +336,10 @@ class ConnectorMainWindow(QMainWindow):
         from apps.desktop_app.ui.widgets.update_dialog import UpdateAvailableDialog
         self.restore_window()
         self.update_dialog = UpdateAvailableDialog(update_info, parent=self)
-        self.update_dialog.exec()
+        try:
+            self.update_dialog.exec()
+        finally:
+            self.update_dialog = None
 
     def restore_window(self):
         self.showNormal()

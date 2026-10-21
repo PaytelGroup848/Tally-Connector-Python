@@ -105,6 +105,69 @@ CANONICAL_FIELD_REGISTRY: Dict[str, Dict[str, Dict[str, Any]]] = {
             "aliases": ["is_active", "active", "status", "enabled"],
             "source_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED},
             "target_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED}
+        },
+        "bank_details": {
+            "canonical_name": "bank_details",
+            "data_type": "STRING",
+            "requirement_level": FIELD_REQUIREMENT_OPTIONAL,
+            "description": "Bank account details structure",
+            "aliases": ["bank_details", "bankdetails", "bank_info"],
+            "source_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED},
+            "target_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED}
+        },
+        "account_holder_name": {
+            "canonical_name": "account_holder_name",
+            "data_type": "STRING",
+            "requirement_level": FIELD_REQUIREMENT_OPTIONAL,
+            "description": "Bank account holder name",
+            "aliases": ["account_holder_name", "accountholdername", "holder_name", "account_holder"],
+            "source_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED},
+            "target_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED}
+        },
+        "account_number": {
+            "canonical_name": "account_number",
+            "data_type": "STRING",
+            "requirement_level": FIELD_REQUIREMENT_OPTIONAL,
+            "description": "Bank account number",
+            "aliases": ["account_number", "accountnumber", "bank_account_number", "bankaccountnumber", "acc_no"],
+            "source_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED},
+            "target_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED}
+        },
+        "ifsc_code": {
+            "canonical_name": "ifsc_code",
+            "data_type": "STRING",
+            "requirement_level": FIELD_REQUIREMENT_OPTIONAL,
+            "description": "Bank branch IFSC routing code",
+            "aliases": ["ifsc_code", "ifsccode", "ifsc", "ifsc_number"],
+            "source_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED},
+            "target_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED}
+        },
+        "swift_code": {
+            "canonical_name": "swift_code",
+            "data_type": "STRING",
+            "requirement_level": FIELD_REQUIREMENT_OPTIONAL,
+            "description": "International SWIFT / BIC code",
+            "aliases": ["swift_code", "swiftcode", "swift", "bic"],
+            "source_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED},
+            "target_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED}
+        },
+        "branch_name": {
+            "canonical_name": "branch_name",
+            "data_type": "STRING",
+            "requirement_level": FIELD_REQUIREMENT_OPTIONAL,
+            "description": "Bank branch location name",
+            "aliases": ["branch_name", "branchname", "branch", "bank_branch"],
+            "source_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED},
+            "target_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED}
+        },
+        "bank_name": {
+            "canonical_name": "bank_name",
+            "data_type": "STRING",
+            "requirement_level": FIELD_REQUIREMENT_OPTIONAL,
+            "description": "Financial institution / Bank name",
+            "aliases": ["bank_name", "bankname", "bank", "financial_institution"],
+            "source_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED},
+            "target_capability": {"TALLY": FIELD_REQUIREMENT_SUPPORTED}
         }
     },
     "STOCK_ITEM": {

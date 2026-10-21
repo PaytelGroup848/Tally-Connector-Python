@@ -19,17 +19,23 @@ def push_cloud_sync(
     last_alter_id: int,
     base_pct: int,
     idx: int,
-    total_companies: int
+    total_companies: int,
+    is_incremental: bool = False
 ):
     if not cloud_auth_service.access_token:
         return
 
     total_records = len(extracted_ledgers) + len(extracted_stock_items) + len(extracted_vouchers)
-    worker.progress_changed.emit(base_pct + 70, f"[{idx}/{total_companies}] Initiating Cloud Sync Session...")
+    if is_incremental and total_records == 0:
+        worker.progress_changed.emit(base_pct + 90, f"[{idx}/{total_companies}] All cloud records up-to-date.")
+        return
+
+    sync_type_str = "INCREMENTAL" if is_incremental else "FULL"
+    worker.progress_changed.emit(base_pct + 70, f"[{idx}/{total_companies}] Initiating Cloud Sync ({sync_type_str})...")
     sync_ok, sync_msg, s_data = cloud_auth_service.sync_start(
         company_name=c_name,
         company_guid=c_guid,
-        sync_type="FULL",
+        sync_type=sync_type_str,
         total_records=total_records,
         metadata={
             "totalLedgers": len(extracted_ledgers),

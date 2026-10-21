@@ -37,21 +37,27 @@ def execute_party_command(
         norm_payload.get("partyName")
         or norm_payload.get("party_name")
         or norm_payload.get("name")
+        or norm_payload.get("ledgerName")
+        or norm_payload.get("ledger_name")
         or norm_payload.get("party_ledger")
         or norm_payload.get("customerName")
     )
     norm_payload["name"] = party_name
     norm_payload["party_ledger"] = party_name
 
-    p_type = str(norm_payload.get("partyType") or norm_payload.get("party_type") or norm_payload.get("type") or "").strip().upper()
+    p_type = str(norm_payload.get("partyType") or norm_payload.get("party_type") or norm_payload.get("ledgerType") or norm_payload.get("ledger_type") or norm_payload.get("type") or "").strip().upper()
     if "SUPPLIER" in p_type or "VENDOR" in p_type or "CREDITOR" in p_type:
         default_parent = "Sundry Creditors"
         norm_payload["voucher_type"] = "Supplier Master"
+    elif "BANK" in p_type:
+        default_parent = "Bank Accounts"
+        norm_payload["voucher_type"] = "Bank Master"
     else:
         default_parent = "Sundry Debtors"
         norm_payload["voucher_type"] = "Customer Master"
 
     norm_payload["parent"] = norm_payload.get("parent") or default_parent
+    norm_payload["bankDetails"] = norm_payload.get("bankDetails") or norm_payload.get("bank_details")
     norm_payload["mobile"] = (
         norm_payload.get("contactNumber")
         or norm_payload.get("mobile")

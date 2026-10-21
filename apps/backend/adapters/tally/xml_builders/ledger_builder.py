@@ -14,6 +14,8 @@ def build_ledger_import_xml(ledger_data: Dict[str, Any], action: str = "Create")
 
     ledger_name = escape_xml(
         ledger_data.get("name")
+        or ledger_data.get("ledgerName")
+        or ledger_data.get("ledger_name")
         or ledger_data.get("party_ledger")
         or ledger_data.get("partyName")
         or ledger_data.get("party_name")
@@ -140,6 +142,34 @@ def build_ledger_import_xml(ledger_data: Dict[str, Any], action: str = "Create")
                         <TAXTYPE>GST</TAXTYPE>
                         <GSTDUTYHEAD>{head_val}</GSTDUTYHEAD>"""
 
+    # Bank Details (for Bank Accounts)
+    raw_bank_details = ledger_data.get("bankDetails") or ledger_data.get("bank_details") or {}
+    if not isinstance(raw_bank_details, dict):
+        raw_bank_details = {}
+
+    acc_num = escape_xml(str(raw_bank_details.get("accountNumber") or ledger_data.get("accountNumber") or ledger_data.get("account_number") or "").strip())
+    ifsc = escape_xml(str(raw_bank_details.get("ifscCode") or ledger_data.get("ifscCode") or ledger_data.get("ifsc") or "").strip())
+    b_name = escape_xml(str(raw_bank_details.get("bankName") or ledger_data.get("bankName") or ledger_data.get("bank_name") or "").strip())
+    branch = escape_xml(str(raw_bank_details.get("branchName") or ledger_data.get("branchName") or ledger_data.get("branch") or "").strip())
+    holder = escape_xml(str(raw_bank_details.get("accountHolderName") or ledger_data.get("accountHolderName") or ledger_data.get("account_holder_name") or "").strip())
+
+    bank_tags = ""
+    if acc_num or ifsc or b_name or branch or holder:
+        acc_tag = f"\n                        <BANKACCOUNTNUMBER>{acc_num}</BANKACCOUNTNUMBER>" if acc_num else ""
+        ifsc_tag = f"\n                        <IFSCODE>{ifsc}</IFSCODE>" if ifsc else ""
+        bname_tag = f"\n                        <BANKNAME>{b_name}</BANKNAME>" if b_name else ""
+        branch_tag = f"\n                        <BRANCHNAME>{branch}</BRANCHNAME>" if branch else ""
+        holder_tag = f"\n                        <ACCOUNTHOLDERNAME>{holder}</ACCOUNTHOLDERNAME>" if holder else ""
+        bank_list_acc = f"\n                            <ACCOUNTNUMBER>{acc_num}</ACCOUNTNUMBER>" if acc_num else ""
+        bank_list_ifsc = f"\n                            <IFSCODE>{ifsc}</IFSCODE>" if ifsc else ""
+        bank_list_bname = f"\n                            <BANKNAME>{b_name}</BANKNAME>" if b_name else ""
+        bank_list_branch = f"\n                            <BRANCHNAME>{branch}</BRANCHNAME>" if branch else ""
+
+        bank_tags = f"""{acc_tag}{ifsc_tag}{bname_tag}{branch_tag}{holder_tag}
+                        <BANKDETAILS.LIST>
+{bank_list_acc}{bank_list_ifsc}{bank_list_bname}{bank_list_branch}
+                        </BANKDETAILS.LIST>"""
+
     action_attr = escape_xml(action or "Create")
 
     optional_blocks = [
@@ -152,6 +182,7 @@ def build_ledger_import_xml(ledger_data: Dict[str, Any], action: str = "Create")
         contact_tags,
         gst_tags,
         tax_tags,
+        bank_tags,
     ]
     rendered_blocks = "\n".join([b for b in optional_blocks if b])
 

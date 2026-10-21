@@ -649,6 +649,181 @@ class TestImporterServiceUnit(unittest.TestCase):
         s2, v2, e2 = parse_tally_import_response(empty_xml)
         self.assertFalse(s2)
 
+    def test_28_receipt_voucher_party_mapping_not_cash_to_cash(self):
+        """Verify that Receipt with account='Cash' and party='TVS Motors' does NOT become Cash to Cash."""
+        receipt_data = {
+            "company_name": "Apna Ganesh Pvt Ltd",
+            "voucher_type": "Receipt",
+            "voucher_number": "1",
+            "date": "2026-10-17",
+            "account": "Cash",
+            "party": "TVS Motors",
+            "amount": 50000.0,
+            "narration": "Amount Receiving from tvs motors"
+        }
+        xml_out = build_voucher_import_xml(receipt_data)
+        self.assertIn("<LEDGERNAME>Cash</LEDGERNAME>", xml_out)
+        self.assertIn("<ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>", xml_out)
+        self.assertIn("<AMOUNT>-50000.00</AMOUNT>", xml_out)
+        self.assertIn("<LEDGERNAME>TVS Motors</LEDGERNAME>", xml_out)
+        self.assertIn("<ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>", xml_out)
+        self.assertIn("<AMOUNT>50000.00</AMOUNT>", xml_out)
+
+        # Also test with particulars / items
+        receipt_data_particulars = {
+            "company_name": "Apna Ganesh Pvt Ltd",
+            "voucher_type": "Receipt",
+            "voucher_number": "2",
+            "date": "2026-10-17",
+            "account": "Cash",
+            "particulars": [{"name": "TVS Motors", "amount": 50000.0}],
+            "amount": 50000.0
+        }
+        xml_out2 = build_voucher_import_xml(receipt_data_particulars)
+        self.assertIn("<LEDGERNAME>TVS Motors</LEDGERNAME>", xml_out2)
+        self.assertIn("<LEDGERNAME>Cash</LEDGERNAME>", xml_out2)
+
+    def test_29_command_idempotency_does_not_block_new_commands_with_same_voucher_num(self):
+        """Verify that two distinct cloud commands with same voucher number '1' do not collide."""
+        service = ImporterService()
+        mock_importer = MagicMock()
+        mock_importer.import_voucher = AsyncMock(return_value={
+            "success": True,
+            "voucher_number": "1",
+            "tallyExternalId": "GUID-001",
+            "amount": 50000.0
+        })
+        service.tally_importer = mock_importer
+
+        loop = asyncio.new_event_loop()
+        try:
+            # Command 1
+            cmd1_payload = {
+                "target": "TALLY",
+                "command_id": "6ad325ce6aa7c42b40eb2d25",
+                "company_name": "Apna Ganesh Pvt Ltd",
+                "voucher_type": "Receipt",
+                "voucher_number": "1",
+                "party": "TVS Motors",
+                "account": "Cash",
+                "amount": 50000.0
+            }
+            res1 = loop.run_until_complete(service.import_voucher(cmd1_payload))
+            self.assertEqual(res1["status"], "SUCCESS")
+            self.assertEqual(mock_importer.import_voucher.call_count, 1)
+
+            # Retry of Command 1 should hit cache without calling importer again
+            res1_retry = loop.run_until_complete(service.import_voucher(cmd1_payload))
+            self.assertEqual(res1_retry["status"], "SUCCESS")
+            self.assertEqual(mock_importer.import_voucher.call_count, 1)
+
+            # Command 2 (Different command ID, same voucher number '1') MUST proceed and call importer
+            cmd2_payload = {
+                "target": "TALLY",
+                "command_id": "6ad326626aa7c42b40eb31a4",
+                "company_name": "Apna Ganesh Pvt Ltd",
+                "voucher_type": "Receipt",
+                "voucher_number": "1",
+                "party": "TVS Motors",
+                "account": "Cash",
+                "amount": 50000.0,
+            }
+            res2 = loop.run_until_complete(service.import_voucher(cmd2_payload))
+            self.assertEqual(res2["status"], "SUCCESS")
+            self.assertEqual(mock_importer.import_voucher.call_count, 2)
+        finally:
+            loop.close()
+
+    def test_30_gst_inter_state_detected_from_gstin_codes(self):
+        """Inter-state (IGST) is accurately detected when Company GSTIN (07 Delhi) != Party GSTIN (27 Maharashtra)."""
+        payload = {
+            "company_name": "Delhi Supplier Corp",
+            "company_gstin": "07AAAAA0000A1Z5",
+            "voucher_type": "Sales",
+            "party_ledger": "Mumbai Buyer Ltd",
+            "gstin": "27BBBBB0000B1Z6",
+            "items": [
+                {
+                    "itemName": "Steel Wire",
+                    "quantity": 10,
+                    "rate": 1000.0,
+                    "gst_rate": 18,
+                }
+            ],
+        }
+        xml = build_voucher_import_xml(payload)
+        self.assertIn("<LEDGERNAME>IGST 18%</LEDGERNAME>", xml)
+        self.assertNotIn("CGST", xml)
+        self.assertNotIn("SGST", xml)
+        self.assertIn("<AMOUNT>1800.00</AMOUNT>", xml)
+        self.assertIn("<AMOUNT>-11800.00</AMOUNT>", xml)
+
+    def test_31_gst_intra_state_detected_from_gstin_codes(self):
+        """Intra-state (CGST + SGST) is accurately detected when Company GSTIN (07) == Party GSTIN (07)."""
+        payload = {
+            "company_name": "Delhi Supplier Corp",
+            "company_gstin": "07AAAAA0000A1Z5",
+            "voucher_type": "Sales",
+            "party_ledger": "Delhi Retailer",
+            "gstin": "07CCCCC0000C1Z7",
+            "items": [
+                {
+                    "itemName": "Steel Wire",
+                    "quantity": 10,
+                    "rate": 1000.0,
+                    "gst_rate": 18,
+                }
+            ],
+        }
+        xml = build_voucher_import_xml(payload)
+        self.assertIn("<LEDGERNAME>CGST 9%</LEDGERNAME>", xml)
+        self.assertIn("<LEDGERNAME>SGST 9%</LEDGERNAME>", xml)
+        self.assertNotIn("IGST", xml)
+        self.assertIn("<AMOUNT>900.00</AMOUNT>", xml)
+        self.assertIn("<AMOUNT>-11800.00</AMOUNT>", xml)
+
+    def test_32_gst_inter_state_detected_from_place_of_supply(self):
+        """Inter-state (IGST) is accurately detected from Place of Supply when Supplier State is different."""
+        payload = {
+            "company_name": "Delhi Supplier Corp",
+            "company_state": "Delhi",
+            "voucher_type": "Sales",
+            "party_ledger": "Rajasthan Customer",
+            "place_of_supply": "Rajasthan",
+            "items": [
+                {
+                    "itemName": "Copper Coil",
+                    "quantity": 5,
+                    "rate": 2000.0,
+                    "gst_rate": 18,
+                }
+            ],
+        }
+        xml = build_voucher_import_xml(payload)
+        self.assertIn("<LEDGERNAME>IGST 18%</LEDGERNAME>", xml)
+        self.assertNotIn("CGST", xml)
+        self.assertNotIn("SGST", xml)
+        self.assertIn("<AMOUNT>1800.00</AMOUNT>", xml)
+        self.assertIn("<AMOUNT>-11800.00</AMOUNT>", xml)
+
+    def test_33_generic_gst_explicit_tax_normalized(self):
+        """Generic 'GST 18%' explicit tax entry is automatically split into CGST + SGST for same-state transaction."""
+        payload = {
+            "company_name": "Haryana Manufacturer",
+            "company_state": "Haryana",
+            "party_state": "Haryana",
+            "voucher_type": "Sales",
+            "party_ledger": "Local Dealer",
+            "items": [{"itemName": "Pipes", "quantity": 1, "rate": 1000.0}],
+            "gst_rate": 18,
+            "taxes": [{"name": "GST 18%", "amount": 180.0}],
+        }
+        xml = build_voucher_import_xml(payload)
+        self.assertIn("<LEDGERNAME>CGST 9%</LEDGERNAME>", xml)
+        self.assertIn("<LEDGERNAME>SGST 9%</LEDGERNAME>", xml)
+        self.assertNotIn("<LEDGERNAME>GST 18%</LEDGERNAME>", xml)
+        self.assertIn("<AMOUNT>90.00</AMOUNT>", xml)
+
 
 if __name__ == "__main__":
     unittest.main()

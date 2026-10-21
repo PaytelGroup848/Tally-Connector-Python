@@ -1,11 +1,11 @@
 {
-  "version": "1.0.19",
-  "latestVersion": "1.0.19",
-  "latest_version": "1.0.19",
+  "version": "1.0.21",
+  "latestVersion": "1.0.21",
+  "latest_version": "1.0.21",
   "minVersion": "1.0.0",
-  "releaseNotes": "Critical Master Creation Fix: Corrected XML state tag typo in ledger_builder and hardened parse_tally_import_response against silent rejection/unknown request responses.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.19.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.19.exe",
-  "sha256": "fa4e6154e9aa6ad3e3d69615ef4c610a14c36b07b3376e4f32575b8723785595",
-  "mandatory": true
+  "releaseNotes": "Fix dynamic Bank/Party mapping for Receipts & Payments, eliminate 60% sync freeze with superfast Tally AlterID incremental sync, smart company resolution, and clean Pylance float parsing.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.21.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.21.exe",
+  "sha256": "66c061c5bc4024f7d876b72d61d6268a55197c5d6b3436c6d9522428e4ae5c2e",
+  "mandatory": false
 }
