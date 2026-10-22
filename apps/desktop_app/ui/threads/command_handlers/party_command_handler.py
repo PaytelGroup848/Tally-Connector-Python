@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Tuple, Optional
 from shared.logging_config import get_logger
 from shared.db.mongo_client import get_collection
+from apps.backend.adapters.tally.xml_builders.common import is_bank_ledger_name, classify_safe_ledger_parent
 
 logger = get_logger("app.threads.command_handlers.party")
 
@@ -46,17 +47,18 @@ def execute_party_command(
     norm_payload["party_ledger"] = party_name
 
     p_type = str(norm_payload.get("partyType") or norm_payload.get("party_type") or norm_payload.get("ledgerType") or norm_payload.get("ledger_type") or norm_payload.get("type") or "").strip().upper()
-    if "SUPPLIER" in p_type or "VENDOR" in p_type or "CREDITOR" in p_type:
-        default_parent = "Sundry Creditors"
-        norm_payload["voucher_type"] = "Supplier Master"
-    elif "BANK" in p_type:
+    if is_bank_ledger_name(party_name) or "BANK" in p_type:
         default_parent = "Bank Accounts"
         norm_payload["voucher_type"] = "Bank Master"
+    elif "SUPPLIER" in p_type or "VENDOR" in p_type or "CREDITOR" in p_type:
+        default_parent = "Sundry Creditors"
+        norm_payload["voucher_type"] = "Supplier Master"
     else:
         default_parent = "Sundry Debtors"
         norm_payload["voucher_type"] = "Customer Master"
 
-    norm_payload["parent"] = norm_payload.get("parent") or default_parent
+    raw_parent = norm_payload.get("parent") or default_parent
+    norm_payload["parent"] = classify_safe_ledger_parent(party_name, raw_parent)
     norm_payload["bankDetails"] = norm_payload.get("bankDetails") or norm_payload.get("bank_details")
     norm_payload["mobile"] = (
         norm_payload.get("contactNumber")

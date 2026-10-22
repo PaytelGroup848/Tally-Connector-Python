@@ -3,6 +3,7 @@ from typing import Any
 
 from shared.auth.cloud_auth_service import cloud_auth_service
 from shared.logging_config import get_logger
+from apps.backend.adapters.tally.xml_builders.common import is_bank_ledger_name, is_cash_ledger_name
 
 logger = get_logger("app.threads.command_handlers.voucher")
 
@@ -85,9 +86,13 @@ def execute_voucher_command(
         or norm_payload.get("bankAccount")
     )
     if not norm_payload["bank_ledger"]:
-        raw_txn = str(norm_payload.get("transactionType") or norm_payload.get("transaction_type") or "").strip()
-        if raw_txn:
-            norm_payload["bank_ledger"] = "Cash" if raw_txn.upper() in ("CASH", "CASH_IN_HAND", "CASH-IN-HAND") else raw_txn
+        cand_l = str(norm_payload.get("ledger") or norm_payload.get("ledgerName") or norm_payload.get("account") or "").strip()
+        if cand_l and is_bank_ledger_name(cand_l):
+            norm_payload["bank_ledger"] = cand_l
+        else:
+            raw_txn = str(norm_payload.get("transactionType") or norm_payload.get("transaction_type") or "").strip()
+            if raw_txn:
+                norm_payload["bank_ledger"] = "Cash" if raw_txn.upper() in ("CASH", "CASH_IN_HAND", "CASH-IN-HAND") else raw_txn
     norm_payload["to_account"] = norm_payload.get("toAccount") or norm_payload.get("to_account")
     norm_payload["from_account"] = norm_payload.get("fromAccount") or norm_payload.get("from_account")
     norm_payload["particulars"] = (
@@ -147,9 +152,14 @@ def execute_voucher_command(
     if isinstance(party_cand, dict):
         party_cand = party_cand.get("name") or party_cand.get("ledgerName") or party_cand.get("customerName") or party_cand.get("partyName")
 
-    # If party_cand is empty or equals bank_ledger (or is "Cash" when bank is "Cash"), extract from particulars / items
+    # If party_cand is empty, equals bank_ledger, or is clearly a bank account, extract real party from particulars / items
     bank_clean = str(norm_payload.get("bank_ledger") or "").strip().lower()
-    if (not party_cand or str(party_cand).strip().lower() in ("", "cash", bank_clean)) and norm_payload.get("particulars"):
+    is_party_bank = bool(party_cand and is_bank_ledger_name(str(party_cand)))
+    if is_party_bank and (not norm_payload.get("bank_ledger") or norm_payload.get("bank_ledger") == "Cash"):
+        norm_payload["bank_ledger"] = str(party_cand).strip()
+        bank_clean = norm_payload["bank_ledger"].lower()
+
+    if (not party_cand or str(party_cand).strip().lower() in ("", "cash", bank_clean) or is_party_bank) and norm_payload.get("particulars"):
         parts = norm_payload["particulars"]
         if isinstance(parts, list):
             for p in parts:
@@ -162,7 +172,7 @@ def execute_voucher_command(
                         or p.get("supplier") or p.get("supplierName")
                         or p.get("ledger") or ""
                     ).strip()
-                    if p_name and p_name.lower() not in ("cash", "bank", bank_clean):
+                    if p_name and p_name.lower() not in ("cash", "bank", bank_clean) and not is_bank_ledger_name(p_name):
                         party_cand = p_name
                         break
 
@@ -470,9 +480,10 @@ def execute_voucher_command(
             if has_legs and (not amt or amt <= 0.0 or (deb_sum > 0 and round(amt, 2) == round(deb_sum + cred_sum, 2))):
                 amt = round(deb_sum if deb_sum > 0 else cred_sum, 2)
 
-    # If party_ledger defaulted to "Cash" or equals bank_ledger, extract real party from particulars
+    # If party_ledger defaulted to "Cash" or equals bank_ledger or is a bank, extract real party from particulars
     bank_chk = str(norm_payload.get("bank_ledger") or "").strip().lower()
-    if (norm_payload.get("party_ledger") in ("", "Cash", bank_chk)) and norm_payload.get("particulars"):
+    curr_party = str(norm_payload.get("party_ledger") or "").strip()
+    if (curr_party in ("", "Cash", bank_chk) or is_bank_ledger_name(curr_party)) and norm_payload.get("particulars"):
         parts = norm_payload["particulars"]
         if isinstance(parts, list):
             for p in parts:
@@ -485,7 +496,7 @@ def execute_voucher_command(
                         or p.get("supplier") or p.get("supplierName")
                         or p.get("ledger") or ""
                     ).strip()
-                    if p_name and p_name.lower() not in ("cash", "bank", bank_chk):
+                    if p_name and p_name.lower() not in ("cash", "bank", bank_chk) and not is_bank_ledger_name(p_name):
                         norm_payload["party_ledger"] = p_name
                         break
 

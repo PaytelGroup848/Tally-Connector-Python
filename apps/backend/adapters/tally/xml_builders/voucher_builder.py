@@ -6,6 +6,8 @@ from apps.backend.adapters.tally.xml_builders.common import (
     _clean_str,
     escape_xml,
     format_tally_date,
+    is_bank_ledger_name,
+    is_cash_ledger_name,
 )
 from shared.logging_config import get_logger
 
@@ -154,9 +156,11 @@ def _extract_party_ledger(voucher_data: dict[str, Any]) -> str:
                     if p_name:
                         candidates.append(p_name)
 
+    known_bank = _extract_bank_ledger(voucher_data).strip().lower()
     # First look for a non-cash, non-bank candidate
     for cand in candidates:
-        if cand and cand.lower() not in ("cash", "bank", "contra account", "journal account"):
+        c_low = cand.strip().lower()
+        if cand and c_low != known_bank and not is_cash_ledger_name(cand) and not is_bank_ledger_name(cand) and c_low not in ("contra account", "journal account"):
             return cand
 
     # Fallback to first non-empty candidate if only Cash/Bank exists
@@ -180,6 +184,11 @@ def _extract_bank_ledger(voucher_data: dict[str, Any]) -> str:
             sub = val.get("name") or val.get("ledgerName") or val.get("accountName")
             if sub and _clean_str(sub):
                 return _clean_str(sub)
+
+    for key in ("ledger", "ledgerName", "ledger_name"):
+        val = voucher_data.get(key)
+        if isinstance(val, str) and is_bank_ledger_name(val):
+            return _clean_str(val)
 
     raw_txn = _clean_str(voucher_data.get("transactionType") or voucher_data.get("transaction_type"))
     if raw_txn:

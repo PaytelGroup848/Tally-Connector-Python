@@ -1,5 +1,5 @@
 from typing import Dict, Any
-from apps.backend.adapters.tally.xml_builders.common import escape_xml
+from apps.backend.adapters.tally.xml_builders.common import escape_xml, classify_safe_ledger_parent
 
 
 
@@ -22,8 +22,9 @@ def build_ledger_import_xml(ledger_data: Dict[str, Any], action: str = "Create")
         or ""
     )
     p_type = str(ledger_data.get("partyType") or ledger_data.get("party_type") or "").strip().upper()
-    default_p = "Sundry Creditors" if "SUPPLIER" in p_type or "VENDOR" in p_type else "Sundry Debtors"
-    parent = escape_xml(ledger_data.get("parent") or default_p)
+    raw_default = "Sundry Creditors" if "SUPPLIER" in p_type or "VENDOR" in p_type else "Sundry Debtors"
+    chosen_parent = ledger_data.get("parent") or raw_default
+    parent = escape_xml(classify_safe_ledger_parent(ledger_name, chosen_parent))
     opening_bal = float(ledger_data.get("opening_balance") or ledger_data.get("openingBalance") or 0.0)
 
     is_party = any(k in parent.lower() for k in ("debtors", "creditors")) or bool(ledger_data.get("is_billwise"))

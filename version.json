@@ -3,9 +3,9 @@
   "latestVersion": "1.0.21",
   "latest_version": "1.0.21",
   "minVersion": "1.0.0",
-  "releaseNotes": "Fix dynamic Bank/Party mapping for Receipts & Payments, eliminate 60% sync freeze with superfast Tally AlterID incremental sync, smart company resolution, and clean Pylance float parsing.",
+  "releaseNotes": "Bulletproof bank ledger preservation against Sundry Creditors/Debtors corruption, dynamic Bank/Party mapping for Receipts & Payments, and robust local MongoDB master deduplication.",
   "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.21.exe",
   "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.21.exe",
-  "sha256": "66c061c5bc4024f7d876b72d61d6268a55197c5d6b3436c6d9522428e4ae5c2e",
+  "sha256": "d8fca8b096c55c5025790a1350d14179abe010d57305d4040cf19a8f25909485",
   "mandatory": false
 }

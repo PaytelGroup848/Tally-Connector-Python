@@ -51,6 +51,10 @@ from apps.backend.adapters.tally.xml_builders import (
     determine_voucher_type_parent,
     escape_xml,
     format_tally_date,
+    is_bank_ledger_name,
+    is_cash_ledger_name,
+    is_expense_ledger_name,
+    classify_safe_ledger_parent,
 )
 from apps.backend.adapters.tally.xml_builders.voucher_builder import (
     _extract_item_name,
@@ -408,12 +412,13 @@ class TallyImporter:
         """
         Auto-Creates the ledger in Tally if it does not already exist.
         Runs safely on-the-fly before voucher posting.
+        Guarantees that Bank Accounts, Cash-in-hand, and protected groups are never corrupted.
         """
-        if not ledger_name or not ledger_name.strip():
+        if not ledger_name or not str(ledger_name).strip():
             return False
 
-        clean_name = ledger_name.strip()
-        if clean_name.lower() in ("cash", "profit & loss a/c", "profit &amp; loss a/c"):
+        clean_name = str(ledger_name).strip()
+        if is_cash_ledger_name(clean_name) or clean_name.lower() in ("cash", "profit & loss a/c", "profit &amp; loss a/c"):
             return True
 
         comp_key = (company_name or "").strip().lower()
@@ -422,10 +427,28 @@ class TallyImporter:
         if clean_name.lower() in self._known_ledgers[comp_key]:
             return True
 
+        # Enterprise Safeguard 1: Inspect local DB to see if ledger already exists in this company
+        try:
+            from shared.db.mongo_client import get_collection
+            l_col = get_collection("ledgers")
+            existing_doc = l_col.find_one({
+                "company_name": company_name,
+                "name": {"$regex": f"^{re.escape(clean_name)}$", "$options": "i"}
+            })
+            if existing_doc:
+                # Ledger is already present in Tally! Do not alter its group.
+                self._known_ledgers[comp_key].add(clean_name.lower())
+                return True
+        except Exception:
+            pass
+
+        # Enterprise Safeguard 2: Sanitize proposed parent against protected groups
+        safe_parent = classify_safe_ledger_parent(clean_name, parent)
+
         ledger_payload = {
             "company_name": company_name,
             "name": clean_name,
-            "parent": parent,
+            "parent": safe_parent,
             **(extra_info or {})
         }
         xml_envelope = build_ledger_import_xml(ledger_payload)
@@ -1106,13 +1129,14 @@ class TallyImporter:
         is_physical_stock = "physical stock" in v_type_lower
         is_pure_inventory = is_stock_journal or is_physical_stock
 
-        if not is_pure_inventory and party_ledger and party_ledger.lower() not in ("cash", "bank"):
+        if not is_pure_inventory and party_ledger and not is_cash_ledger_name(party_ledger) and party_ledger.lower() not in ("cash", "bank"):
+            safe_party_parent = classify_safe_ledger_parent(party_ledger, party_parent)
             await self.ensure_ledger(
                 host=host,
                 port=port,
                 company_name=company_name,
                 ledger_name=party_ledger,
-                parent=party_parent,
+                parent=safe_party_parent,
                 extra_info={
                     "state": voucher_data.get("state"),
                     "gstin": voucher_data.get("gstin") or voucher_data.get("party_gstin"),
@@ -1139,7 +1163,7 @@ class TallyImporter:
             )
             or ""
         )
-        if bank_ledger_to_ensure and bank_ledger_to_ensure.lower() not in ("cash", "cash in hand", "cash-in-hand"):
+        if bank_ledger_to_ensure and not is_cash_ledger_name(bank_ledger_to_ensure) and bank_ledger_to_ensure.lower() not in ("cash", "cash in hand", "cash-in-hand"):
             await self.ensure_ledger(
                 host=host,
                 port=port,
@@ -1172,16 +1196,42 @@ class TallyImporter:
                             or j_ent.get("supplier")
                             or ""
                         ).strip()
-                        if j_name and j_name.lower() not in ("cash", "cash in hand", "cash-in-hand"):
+                        if j_name and not is_cash_ledger_name(j_name) and j_name.lower() not in ("cash", "cash in hand", "cash-in-hand"):
+                            # Safeguard: Never re-parent bank account as a customer or vendor!
+                            if bank_ledger_to_ensure and j_name.lower() == bank_ledger_to_ensure.lower():
+                                continue
+                            if is_bank_ledger_name(j_name):
+                                await self.ensure_ledger(
+                                    host=host,
+                                    port=port,
+                                    company_name=company_name,
+                                    ledger_name=j_name,
+                                    parent="Bank Accounts",
+                                )
+                                continue
+
                             j_type = str(j_ent.get("type") or j_ent.get("entry_type") or "Debit").strip().lower()
-                            if "contra" in v_type:
-                                j_parent = "Bank Accounts"
-                            elif "receipt" in v_type:
-                                j_parent = "Sundry Debtors"
-                            elif "payment" in v_type:
-                                j_parent = "Sundry Creditors"
+                            explicit_j_parent = j_ent.get("parent") or j_ent.get("group")
+                            if explicit_j_parent:
+                                j_parent = classify_safe_ledger_parent(j_name, explicit_j_parent)
                             else:
-                                j_parent = "Sundry Debtors" if j_type in ("debit", "dr", "by") else "Sundry Creditors"
+                                j_ltype = str(j_ent.get("ledgerType") or j_ent.get("ledger_type") or "").strip().upper()
+                                if "SUPPLIER" in j_ltype or "VENDOR" in j_ltype or "CREDITOR" in j_ltype:
+                                    j_parent = "Sundry Creditors"
+                                elif "CUSTOMER" in j_ltype or "DEBTOR" in j_ltype or "CLIENT" in j_ltype:
+                                    j_parent = "Sundry Debtors"
+                                elif "EXPENSE" in j_ltype or is_expense_ledger_name(j_name):
+                                    j_parent = "Indirect Expenses"
+                                elif "contra" in v_type:
+                                    j_parent = "Bank Accounts"
+                                elif "receipt" in v_type:
+                                    j_parent = "Sundry Debtors"
+                                elif "payment" in v_type:
+                                    j_parent = "Indirect Expenses" if is_expense_ledger_name(j_name) else "Sundry Creditors"
+                                else:
+                                    j_parent = "Sundry Debtors" if j_type in ("debit", "dr", "by") else "Sundry Creditors"
+                                j_parent = classify_safe_ledger_parent(j_name, j_parent)
+
                             await self.ensure_ledger(
                                 host=host,
                                 port=port,
