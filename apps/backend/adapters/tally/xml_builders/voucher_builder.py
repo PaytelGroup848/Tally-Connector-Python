@@ -177,12 +177,13 @@ def _extract_party_ledger(voucher_data: dict[str, Any]) -> str:
                     if p_name:
                         candidates.append(p_name)
 
-    known_bank = _extract_bank_ledger(voucher_data).strip().lower()
+    is_bank_transfer = "payment" in v_type or "receipt" in v_type or "contra" in v_type
+    known_bank = _extract_bank_ledger(voucher_data).strip().lower() if is_bank_transfer else ""
     # First look for a non-cash, non-bank candidate OR a distinct bank for Bank-to-Bank transfers
     for cand in candidates:
         c_low = cand.strip().lower()
         if cand and c_low != known_bank and not is_cash_ledger_name(cand) and c_low not in ("contra account", "journal account"):
-            if not is_bank_ledger_name(cand) or ("payment" in v_type or "receipt" in v_type or "contra" in v_type):
+            if not is_bank_ledger_name(cand) or is_bank_transfer or not known_bank:
                 return cand
 
     # Fallback to first candidate that is different from known_bank

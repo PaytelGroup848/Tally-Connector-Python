@@ -1,11 +1,11 @@
 {
-  "version": "1.0.22",
-  "latestVersion": "1.0.22",
-  "latest_version": "1.0.22",
+  "version": "1.0.23",
+  "latestVersion": "1.0.23",
+  "latest_version": "1.0.23",
   "minVersion": "1.0.0",
-  "releaseNotes": "Fix transactionType and ledger mapping for Web Payment and Receipt vouchers with Bank-to-Bank and Party support.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.22.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.22.exe",
-  "sha256": "d9c8cfc60eb02d33153ff991af4feae9e39c81b655f11aa2245317c6f259b4f4",
+  "releaseNotes": "Fix party ledger preservation for Quotation, Sales, Orders, and Invoices when party name matches bank ledger.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.23.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.23.exe",
+  "sha256": "22005a6bfea93be4fa7cd949c99e85d416b52fb90b58d6c1dfd252be90a74bed",
   "mandatory": false
 }

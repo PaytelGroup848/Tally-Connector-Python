@@ -596,6 +596,124 @@ def test_execute_voucher_command_web_format():
     assert norm_pay["party_ledger"] == "Axis"
 
 
+def test_quotation_voucher_with_axis_bank_as_party_ledger():
+    from apps.backend.adapters.tally.xml_builders.voucher_builder import (
+        build_voucher_import_xml,
+        _extract_party_ledger,
+    )
+    import xml.etree.ElementTree as ET
+
+    payload = {
+        "voucherType": "Quotation",
+        "voucherNumber": "QTN-001",
+        "partyLedger": "Axis",
+        "amount": 25000.0,
+        "items": [
+            {
+                "itemName": "IT Consulting Services",
+                "rate": 25000.0,
+                "quantity": 1,
+                "amount": 25000.0,
+            }
+        ],
+        "narration": "Quotation for Axis",
+    }
+
+    assert _extract_party_ledger(payload) == "Axis"
+
+    xml_str = build_voucher_import_xml(payload)
+    root = ET.fromstring(xml_str)
+
+    assert root.find(".//PARTYLEDGERNAME").text == "Axis"
+    assert root.find(".//PARTYNAME").text == "Axis"
+
+    party_leg = root.find(".//LEDGERENTRIES.LIST[ISPARTYLEDGER='Yes']")
+    assert party_leg is not None
+    assert party_leg.find("LEDGERNAME").text == "Axis"
+    assert float(party_leg.find("AMOUNT").text) == -25000.0
+
+
+def test_execute_voucher_command_quotation_axis():
+    from unittest.mock import MagicMock
+    from apps.desktop_app.ui.threads.command_handlers.voucher_command_handler import execute_voucher_command
+
+    mock_worker = MagicMock()
+    async def mock_import(payload):
+        return {"success": True, "voucher_number": "QTN-001"}
+    mock_worker.importer_service.import_voucher.side_effect = mock_import
+
+    qtn_cmd = {
+        "id": "cmd-web-qtn-1",
+        "type": "CREATE_QUOTATION",
+        "payload": {
+            "voucherType": "Quotation",
+            "voucherNumber": "QTN-001",
+            "partyLedger": "Axis",
+            "amount": 25000.0,
+            "items": [
+                {
+                    "itemName": "IT Consulting Services",
+                    "rate": 25000.0,
+                    "quantity": 1,
+                    "amount": 25000.0,
+                }
+            ],
+            "narration": "Quotation for Axis",
+            "companyName": "Working  Data",
+        },
+    }
+    norm_qtn, ok, res, err, err_det, cont = execute_voucher_command(
+        worker=mock_worker,
+        payload=qtn_cmd["payload"],
+        cmd=qtn_cmd,
+        cmd_id="cmd-web-qtn-1",
+        cmd_type="CREATE_QUOTATION",
+        comp_id="comp-123",
+        resolved_company="Working  Data",
+        active_host="127.0.0.1",
+        active_port=9047,
+        amt=25000.0,
+        curr_email="test@user.com",
+        curr_org="Test Org",
+    )
+    assert norm_qtn["party_ledger"] == "Axis"
+    assert norm_qtn.get("bank_ledger") != "Axis"
+
+
+def test_sales_voucher_with_axis_bank_as_party_ledger():
+    from apps.backend.adapters.tally.xml_builders.voucher_builder import (
+        build_voucher_import_xml,
+        _extract_party_ledger,
+    )
+    import xml.etree.ElementTree as ET
+
+    payload = {
+        "voucherType": "Sales",
+        "voucherNumber": "INV-101",
+        "partyLedger": "Axis",
+        "amount": 15000.0,
+        "items": [
+            {
+                "itemName": "Office Chair",
+                "rate": 15000.0,
+                "quantity": 1,
+                "amount": 15000.0,
+            }
+        ],
+        "narration": "Direct Bank Sale to Axis",
+    }
+
+    assert _extract_party_ledger(payload) == "Axis"
+
+    xml_str = build_voucher_import_xml(payload)
+    root = ET.fromstring(xml_str)
+    assert root.find(".//PARTYLEDGERNAME").text == "Axis"
+    party_leg = root.find(".//LEDGERENTRIES.LIST[ISPARTYLEDGER='Yes']")
+    assert party_leg is not None
+    assert party_leg.find("LEDGERNAME").text == "Axis"
+
+
+
 
 
 

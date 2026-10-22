@@ -184,10 +184,28 @@ def execute_voucher_command(
         or norm_payload.get("transactionType")
         or norm_payload.get("transaction_type")
     )
-    if is_party_bank and not has_explicit_bank and (not norm_payload.get("bank_ledger") or norm_payload.get("bank_ledger") == "Cash"):
-        norm_payload["bank_ledger"] = str(party_cand).strip()
-        bank_clean = norm_payload["bank_ledger"].lower()
-        party_cand = None
+    if is_bank_transfer and is_party_bank and not has_explicit_bank and (not norm_payload.get("bank_ledger") or norm_payload.get("bank_ledger") == "Cash"):
+        # Only treat party_cand as bank header if particulars has an alternate counterparty candidate
+        has_other_party = False
+        parts_preview = norm_payload.get("particulars")
+        if isinstance(parts_preview, list):
+            for p in parts_preview:
+                if isinstance(p, dict):
+                    p_name = str(
+                        p.get("partyName") or p.get("party_name")
+                        or p.get("ledgerName") or p.get("ledger_name")
+                        or p.get("name") or p.get("party")
+                        or p.get("customer") or p.get("customerName")
+                        or p.get("supplier") or p.get("supplierName")
+                        or p.get("ledger") or ""
+                    ).strip()
+                    if p_name and p_name.lower() not in ("cash", "bank", str(party_cand).strip().lower()):
+                        has_other_party = True
+                        break
+        if has_other_party:
+            norm_payload["bank_ledger"] = str(party_cand).strip()
+            bank_clean = norm_payload["bank_ledger"].lower()
+            party_cand = None
 
     if not party_cand or str(party_cand).strip().lower() == bank_clean:
         cand_l_s = str(norm_payload.get("ledger") or norm_payload.get("ledgerName") or "").strip()
@@ -197,7 +215,7 @@ def execute_voucher_command(
         elif raw_txn_s and raw_txn_s.lower() != bank_clean:
             party_cand = raw_txn_s
 
-    needs_party_lookup = not party_cand or str(party_cand).strip().lower() in ("", "cash", bank_clean) or (is_party_bank and not is_bank_transfer)
+    needs_party_lookup = not party_cand or str(party_cand).strip().lower() in ("", "cash", bank_clean)
     if needs_party_lookup and norm_payload.get("particulars"):
         parts = norm_payload["particulars"]
         if isinstance(parts, list):
@@ -535,7 +553,7 @@ def execute_voucher_command(
             norm_payload["party_ledger"] = raw_txn_s
             curr_party = raw_txn_s
 
-    party_needs_res = curr_party in ("", "Cash", bank_chk) or (is_bank_ledger_name(curr_party) and not is_bank_transfer)
+    party_needs_res = curr_party in ("", "Cash", bank_chk)
     if party_needs_res and norm_payload.get("particulars"):
         parts = norm_payload["particulars"]
         if isinstance(parts, list):
