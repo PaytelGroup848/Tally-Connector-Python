@@ -445,10 +445,10 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> list[dict[str, Any]
             branch_elem = find_first(elem, "BRANCHNAME", ".//BANKDETAILS.LIST/BRANCHNAME", ".//PAYMENTDETAILS.LIST/BRANCHNAME")
             branch_val = branch_elem.text.strip() if branch_elem is not None and branch_elem.text and branch_elem.text.strip() else ""
 
-            holder_elem = find_first(elem, "ACCOUNTHOLDERNAME", ".//BANKDETAILS.LIST/ACCOUNTHOLDERNAME", ".//PAYMENTDETAILS.LIST/ACCOUNTHOLDERNAME")
+            holder_elem = find_first(elem, "BANKACCHOLDERNAME", "ACCOUNTHOLDERNAME", ".//BANKDETAILS.LIST/ACCOUNTHOLDERNAME", ".//PAYMENTDETAILS.LIST/ACCOUNTHOLDERNAME")
             holder_val = holder_elem.text.strip() if holder_elem is not None and holder_elem.text and holder_elem.text.strip() else ""
 
-            swift_elem = find_first(elem, "SWIFTCODE", ".//BANKDETAILS.LIST/SWIFTCODE")
+            swift_elem = find_first(elem, "SWIFTCODE", ".//BANKDETAILS.LIST/SWIFTCODE", ".//PAYMENTDETAILS.LIST/SWIFTCODE")
             swift_val = swift_elem.text.strip() if swift_elem is not None and swift_elem.text and swift_elem.text.strip() else ""
 
             is_bank_ledger = computed_ltype == "BANK" or "bank" in parent_val.lower()

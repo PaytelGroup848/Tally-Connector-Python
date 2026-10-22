@@ -3,9 +3,9 @@
   "latestVersion": "1.0.21",
   "latest_version": "1.0.21",
   "minVersion": "1.0.0",
-  "releaseNotes": "Bulletproof bank ledger preservation against Sundry Creditors/Debtors corruption, dynamic Bank/Party mapping for Receipts & Payments, and robust local MongoDB master deduplication.",
+  "releaseNotes": "Enterprise bank ledger updates and creation with full bank details (account number, IFSC, branch, holder), bulletproof bank preservation, dynamic voucher mapping, and MongoDB synchronization.",
   "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.21.exe",
   "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.21.exe",
-  "sha256": "66c1a0c50f50b5f48277858e89e2df615ae91147e19d86b91f269828140f3253",
+  "sha256": "3b40f52bd6482389274b0ddb5ba8297c2bbd0a24dad01b2b67eb7289befefbbd",
   "mandatory": false
 }

@@ -362,6 +362,12 @@ class ImporterService:
             "error": result.get("error")
         }
 
+    async def update_ledger(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Updates / alters an existing ledger (Bank, Party, Expense, Duty) explicitly in Tally Prime."""
+        clean_payload = dict(payload)
+        clean_payload["action"] = "Alter"
+        return await self.create_ledger(clean_payload)
+
     async def create_stock_item(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Creates a new stock item explicitly in Tally Prime with base unit."""
         clean_payload = dict(payload)

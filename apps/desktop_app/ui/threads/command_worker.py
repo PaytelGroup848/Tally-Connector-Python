@@ -465,7 +465,10 @@ class RemoteCommandWorker(QThread):
                     if should_continue:
                         continue
 
-                elif cmd_type in ("CREATE_LEDGER", "CREATE_PARTY", "CREATE_CUSTOMER", "CREATE_SUPPLIER", "CREATE_VENDOR"):
+                elif cmd_type in (
+                    "CREATE_LEDGER", "CREATE_PARTY", "CREATE_CUSTOMER", "CREATE_SUPPLIER", "CREATE_VENDOR", "CREATE_BANK",
+                    "UPDATE_LEDGER", "UPDATE_PARTY", "UPDATE_CUSTOMER", "UPDATE_SUPPLIER", "UPDATE_VENDOR", "UPDATE_BANK", "ALTER_LEDGER"
+                ):
                     norm_payload, success, result_data, error_msg, error_details = execute_party_command(
                         payload=payload,
                         cmd=cmd,

@@ -201,3 +201,67 @@ async def test_importer_protects_bank_during_receipt_and_payment():
             assert parent == "Bank Accounts", f"Axis Bank must be Bank Accounts, but got: {parent}"
         if "vendor xyz" in name.lower():
             assert parent == "Sundry Creditors"
+
+
+def test_update_ledger_bank_payload_generation():
+    payload = {
+        "companyId": "6accd8b51c686ca6b74fec00",
+        "tallyExternalId": "29dc2f05-6a14-467d-8a1f-f819cd82ac4d-000000ef",
+        "ledgerId": "6ad869643bb757caa88baab1",
+        "ledgerName": "ICICI Bank",
+        "parent": "Bank Accounts",
+        "ledgerType": "BANK",
+        "bankDetails": {
+            "accountHolderName": "Himanshu Pvt Ltd",
+            "accountNumber": "67341044007859",
+            "ifscCode": "BKID0008976",
+            "swiftCode": "",
+            "branchName": "sector-21 faridabad",
+            "bankName": "ICICI Bank"
+        }
+    }
+    xml = build_ledger_import_xml(payload, action="Alter")
+    assert "<LEDGER ACTION=\"Alter\" NAME=\"ICICI Bank\">" in xml
+    assert "<PARENT>Bank Accounts</PARENT>" in xml
+    assert "<BANKACCHOLDERNAME>Himanshu Pvt Ltd</BANKACCHOLDERNAME>" in xml
+    assert "<ACCOUNTHOLDERNAME>Himanshu Pvt Ltd</ACCOUNTHOLDERNAME>" in xml
+    assert "<BANKACCOUNTNUMBER>67341044007859</BANKACCOUNTNUMBER>" in xml
+    assert "<IFSCODE>BKID0008976</IFSCODE>" in xml
+    assert "<BRANCHNAME>sector-21 faridabad</BRANCHNAME>" in xml
+    assert "<PAYMENTDETAILS.LIST>" in xml
+    assert "<ACCOUNTNUMBER>67341044007859</ACCOUNTNUMBER>" in xml
+
+
+def test_parse_tally_bank_with_bankaccholdername():
+    tally_xml = """<ENVELOPE>
+      <BODY>
+        <DATA>
+          <COLLECTION>
+            <LEDGER NAME="ICICI Bank" RESERVEDNAME="">
+              <PARENT>Bank Accounts</PARENT>
+              <IFSCODE>BKID0008976</IFSCODE>
+              <BRANCHNAME>sector-21 faridabad</BRANCHNAME>
+              <BANKACCHOLDERNAME>Himanshu Pvt Ltd</BANKACCHOLDERNAME>
+              <PAYMENTDETAILS.LIST>
+                <BANKNAME>ICICI Bank</BANKNAME>
+                <BRANCHNAME>sector-21 faridabad</BRANCHNAME>
+                <IFSCODE>BKID0008976</IFSCODE>
+                <ACCOUNTNUMBER>67341044007859</ACCOUNTNUMBER>
+              </PAYMENTDETAILS.LIST>
+            </LEDGER>
+          </COLLECTION>
+        </DATA>
+      </BODY>
+    </ENVELOPE>"""
+    ledgers = parse_metadata_response(tally_xml, tag_name="Ledger")
+    assert len(ledgers) == 1
+    bank_led = ledgers[0]
+    assert bank_led["name"] == "ICICI Bank"
+    assert bank_led["parent"] == "Bank Accounts"
+    b = bank_led["bankDetails"]
+    assert b["accountHolderName"] == "Himanshu Pvt Ltd"
+    assert b["accountNumber"] == "67341044007859"
+    assert b["ifscCode"] == "BKID0008976"
+    assert b["branchName"] == "sector-21 faridabad"
+    assert b["bankName"] == "ICICI Bank"
+

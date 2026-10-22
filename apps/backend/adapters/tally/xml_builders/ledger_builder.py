@@ -153,22 +153,31 @@ def build_ledger_import_xml(ledger_data: Dict[str, Any], action: str = "Create")
     b_name = escape_xml(str(raw_bank_details.get("bankName") or ledger_data.get("bankName") or ledger_data.get("bank_name") or "").strip())
     branch = escape_xml(str(raw_bank_details.get("branchName") or ledger_data.get("branchName") or ledger_data.get("branch") or "").strip())
     holder = escape_xml(str(raw_bank_details.get("accountHolderName") or ledger_data.get("accountHolderName") or ledger_data.get("account_holder_name") or "").strip())
+    swift = escape_xml(str(raw_bank_details.get("swiftCode") or ledger_data.get("swiftCode") or ledger_data.get("swift") or "").strip())
 
     bank_tags = ""
-    if acc_num or ifsc or b_name or branch or holder:
+    if acc_num or ifsc or b_name or branch or holder or swift:
         acc_tag = f"\n                        <BANKACCOUNTNUMBER>{acc_num}</BANKACCOUNTNUMBER>" if acc_num else ""
         ifsc_tag = f"\n                        <IFSCODE>{ifsc}</IFSCODE>" if ifsc else ""
         bname_tag = f"\n                        <BANKNAME>{b_name}</BANKNAME>" if b_name else ""
         branch_tag = f"\n                        <BRANCHNAME>{branch}</BRANCHNAME>" if branch else ""
         holder_tag = f"\n                        <ACCOUNTHOLDERNAME>{holder}</ACCOUNTHOLDERNAME>" if holder else ""
+        bank_holder_tag = f"\n                        <BANKACCHOLDERNAME>{holder}</BANKACCHOLDERNAME>" if holder else ""
+        swift_tag = f"\n                        <SWIFTCODE>{swift}</SWIFTCODE>" if swift else ""
+
         bank_list_acc = f"\n                            <ACCOUNTNUMBER>{acc_num}</ACCOUNTNUMBER>" if acc_num else ""
         bank_list_ifsc = f"\n                            <IFSCODE>{ifsc}</IFSCODE>" if ifsc else ""
         bank_list_bname = f"\n                            <BANKNAME>{b_name}</BANKNAME>" if b_name else ""
         bank_list_branch = f"\n                            <BRANCHNAME>{branch}</BRANCHNAME>" if branch else ""
+        bank_list_swift = f"\n                            <SWIFTCODE>{swift}</SWIFTCODE>" if swift else ""
+        bank_list_holder = f"\n                            <ACCOUNTHOLDERNAME>{holder}</ACCOUNTHOLDERNAME>" if holder else ""
 
-        bank_tags = f"""{acc_tag}{ifsc_tag}{bname_tag}{branch_tag}{holder_tag}
+        bank_tags = f"""{acc_tag}{ifsc_tag}{bname_tag}{branch_tag}{holder_tag}{bank_holder_tag}{swift_tag}
+                        <PAYMENTDETAILS.LIST>
+{bank_list_acc}{bank_list_ifsc}{bank_list_bname}{bank_list_branch}{bank_list_swift}{bank_list_holder}
+                        </PAYMENTDETAILS.LIST>
                         <BANKDETAILS.LIST>
-{bank_list_acc}{bank_list_ifsc}{bank_list_bname}{bank_list_branch}
+{bank_list_acc}{bank_list_ifsc}{bank_list_bname}{bank_list_branch}{bank_list_swift}{bank_list_holder}
                         </BANKDETAILS.LIST>"""
 
     action_attr = escape_xml(action or "Create")

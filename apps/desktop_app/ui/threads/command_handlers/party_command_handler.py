@@ -46,6 +46,9 @@ def execute_party_command(
     norm_payload["name"] = party_name
     norm_payload["party_ledger"] = party_name
 
+    req_action = norm_payload.get("action") or ("Alter" if any(k in cmd_type for k in ("UPDATE", "ALTER")) else "Create")
+    norm_payload["action"] = req_action
+
     p_type = str(norm_payload.get("partyType") or norm_payload.get("party_type") or norm_payload.get("ledgerType") or norm_payload.get("ledger_type") or norm_payload.get("type") or "").strip().upper()
     if is_bank_ledger_name(party_name) or "BANK" in p_type:
         default_parent = "Bank Accounts"
@@ -159,13 +162,29 @@ def execute_party_command(
             try:
                 p_name = norm_payload.get("name")
                 is_supp = "SUPPLIER" in p_type or "VENDOR" in p_type or "CREDITOR" in p_type
-                col_names = ["suppliers", "ledgers"] if is_supp else ["customers", "ledgers"]
+                is_bank = is_bank_ledger_name(p_name) or "BANK" in p_type
+                if is_bank:
+                    col_names = ["banks", "ledgers"]
+                elif is_supp:
+                    col_names = ["suppliers", "ledgers"]
+                else:
+                    col_names = ["customers", "ledgers"]
+
+                update_dict: Dict[str, Any] = {
+                    "tallyExternalId": ext_id,
+                    "updatedAt": datetime.now(timezone.utc),
+                }
+                if norm_payload.get("bankDetails"):
+                    update_dict["bankDetails"] = norm_payload["bankDetails"]
+                if norm_payload.get("parent"):
+                    update_dict["parent"] = norm_payload["parent"]
+
                 for c_name in col_names:
                     c_col = get_collection(c_name)
                     q = {"name": p_name}
                     if comp_id:
                         q["companyId"] = comp_id
-                    c_col.update_many(q, {"$set": {"tallyExternalId": ext_id, "updatedAt": datetime.now(timezone.utc)}})
+                    c_col.update_many(q, {"$set": update_dict})
             except Exception as m_err:
                 logger.debug(f"Direct MongoDB party update notice: {m_err}")
         else:

@@ -997,7 +997,11 @@ class TallyImporter:
                 "error": f"Company '{comp_name}' is not open in Tally Prime (Active: {', '.join(open_comps) or 'None'}).",
             }
 
-        xml_payload = build_ledger_import_xml(ledger_data, action="Create")
+        req_action = str(ledger_data.get("action") or "Create").strip().capitalize()
+        if req_action not in ("Create", "Alter"):
+            req_action = "Create"
+
+        xml_payload = build_ledger_import_xml(ledger_data, action=req_action)
         ok, status_code, res_text, err_msg = await self.client.send_xml_request_async(
             host=host, port=port, xml_content=xml_payload, serialize_company=comp_name
         )
@@ -1009,10 +1013,11 @@ class TallyImporter:
                 "error": err_msg or f"HTTP status code {status_code}",
             }
 
-        success, _, parse_err = parse_tally_import_response(res_text, default_voucher_number="LEDGER_CREATED")
+        default_vch = "LEDGER_ALTERED" if req_action == "Alter" else "LEDGER_CREATED"
+        success, _, parse_err = parse_tally_import_response(res_text, default_voucher_number=default_vch)
         if not success:
-            if parse_err and any(k in parse_err.lower() for k in ("already exists", "duplicate", "already present")):
-                logger.info(f"Ledger '{ledger_name}' already exists in Tally Prime. Attempting ACTION='Alter' to sync full details (Address, Mobile, GSTIN, State, Pincode)...")
+            if req_action == "Create" and parse_err and any(k in parse_err.lower() for k in ("already exists", "duplicate", "already present")):
+                logger.info(f"Ledger '{ledger_name}' already exists in Tally Prime. Attempting ACTION='Alter' to sync full details (Address, Mobile, GSTIN, State, Pincode, Bank Details)...")
                 alter_payload = build_ledger_import_xml(ledger_data, action="Alter")
                 alt_ok, alt_status, alt_res, _ = await self.client.send_xml_request_async(
                     host=host, port=port, xml_content=alter_payload, serialize_company=comp_name
@@ -1030,9 +1035,28 @@ class TallyImporter:
                     "tallyExternalId": tally_guid or f"TALLY-{ledger_name}",
                     "guid": tally_guid or f"TALLY-{ledger_name}",
                 }
+            elif req_action == "Alter" and parse_err and any(k in parse_err.lower() for k in ("does not exist", "not found", "cannot find", "unknown")):
+                logger.info(f"Ledger '{ledger_name}' does not exist in Tally Prime. Attempting fallback ACTION='Create'...")
+                create_payload = build_ledger_import_xml(ledger_data, action="Create")
+                crt_ok, crt_status, crt_res, _ = await self.client.send_xml_request_async(
+                    host=host, port=port, xml_content=create_payload, serialize_company=comp_name
+                )
+                if crt_ok and crt_status == 200:
+                    crt_success, _, _ = parse_tally_import_response(crt_res, default_voucher_number="LEDGER_CREATED")
+                    if crt_success:
+                        logger.info(f"Ledger '{ledger_name}' successfully created in Tally Prime via fallback ACTION='Create'.")
+                        tally_guid = await self.fetch_ledger_guid(host, port, comp_name, ledger_name)
+                        return {
+                            "success": True,
+                            "already_exists": False,
+                            "message": f"Ledger '{ledger_name}' created in Tally Prime.",
+                            "error": None,
+                            "tallyExternalId": tally_guid or f"TALLY-{ledger_name}",
+                            "guid": tally_guid or f"TALLY-{ledger_name}",
+                        }
             return {
                 "success": False,
-                "message": "Tally Prime rejected the ledger creation.",
+                "message": f"Tally Prime rejected the ledger {req_action.lower()} action.",
                 "error": parse_err,
             }
 
