@@ -104,18 +104,17 @@ def execute_voucher_command(
         or norm_payload.get("bankAccount")
     )
     if not norm_payload["bank_ledger"]:
+        raw_txn = str(norm_payload.get("transactionType") or norm_payload.get("transaction_type") or "").strip()
         cand_l = str(norm_payload.get("ledger") or norm_payload.get("ledgerName") or norm_payload.get("account") or "").strip()
-        if cand_l and is_bank_ledger_name(cand_l):
+        if raw_txn and raw_txn.lower() not in ("payment", "receipt", "contra", "sales", "purchase", "journal", "debit_note", "credit_note"):
+            norm_payload["bank_ledger"] = "Cash" if raw_txn.upper() in ("CASH", "CASH_IN_HAND", "CASH-IN-HAND") else raw_txn
+        elif cand_l and is_bank_ledger_name(cand_l):
             if ("payment" in v_type_check or "contra" in v_type_check) and norm_payload.get("from_account"):
                 norm_payload["bank_ledger"] = norm_payload.get("from_account")
             elif "receipt" in v_type_check and norm_payload.get("to_account"):
                 norm_payload["bank_ledger"] = norm_payload.get("to_account")
             else:
                 norm_payload["bank_ledger"] = cand_l
-        else:
-            raw_txn = str(norm_payload.get("transactionType") or norm_payload.get("transaction_type") or "").strip()
-            if raw_txn:
-                norm_payload["bank_ledger"] = "Cash" if raw_txn.upper() in ("CASH", "CASH_IN_HAND", "CASH-IN-HAND") else raw_txn
     norm_payload["particulars"] = (
         norm_payload.get("particulars")
         or payload.get("particulars")
@@ -178,10 +177,25 @@ def execute_voucher_command(
     is_party_bank = bool(party_cand and is_bank_ledger_name(str(party_cand)))
     is_bank_transfer = "payment" in v_type_check or "receipt" in v_type_check or "contra" in v_type_check
 
-    if is_party_bank and (not norm_payload.get("bank_ledger") or norm_payload.get("bank_ledger") == "Cash"):
+    has_explicit_bank = bool(
+        norm_payload.get("bankLedger")
+        or norm_payload.get("from_account")
+        or norm_payload.get("to_account")
+        or norm_payload.get("transactionType")
+        or norm_payload.get("transaction_type")
+    )
+    if is_party_bank and not has_explicit_bank and (not norm_payload.get("bank_ledger") or norm_payload.get("bank_ledger") == "Cash"):
         norm_payload["bank_ledger"] = str(party_cand).strip()
         bank_clean = norm_payload["bank_ledger"].lower()
         party_cand = None
+
+    if not party_cand or str(party_cand).strip().lower() == bank_clean:
+        cand_l_s = str(norm_payload.get("ledger") or norm_payload.get("ledgerName") or "").strip()
+        raw_txn_s = str(norm_payload.get("transactionType") or norm_payload.get("transaction_type") or "").strip()
+        if cand_l_s and cand_l_s.lower() != bank_clean:
+            party_cand = cand_l_s
+        elif raw_txn_s and raw_txn_s.lower() != bank_clean:
+            party_cand = raw_txn_s
 
     needs_party_lookup = not party_cand or str(party_cand).strip().lower() in ("", "cash", bank_clean) or (is_party_bank and not is_bank_transfer)
     if needs_party_lookup and norm_payload.get("particulars"):
@@ -506,10 +520,21 @@ def execute_voucher_command(
             if has_legs and (not amt or amt <= 0.0 or (deb_sum > 0 and round(amt, 2) == round(deb_sum + cred_sum, 2))):
                 amt = round(deb_sum if deb_sum > 0 else cred_sum, 2)
 
-    # If party_ledger defaulted to "Cash" or equals bank_ledger, extract real party from particulars
+    # If party_ledger defaulted to "Cash" or equals bank_ledger, extract real party from particulars or ledger field
     bank_chk = str(norm_payload.get("bank_ledger") or "").strip().lower()
     curr_party = str(norm_payload.get("party_ledger") or "").strip()
     is_bank_transfer = "payment" in v_type_check or "receipt" in v_type_check or "contra" in v_type_check
+
+    if curr_party in ("", "Cash", bank_chk):
+        cand_l_s = str(norm_payload.get("ledger") or norm_payload.get("ledgerName") or "").strip()
+        raw_txn_s = str(norm_payload.get("transactionType") or norm_payload.get("transaction_type") or "").strip()
+        if cand_l_s and cand_l_s.lower() != bank_chk:
+            norm_payload["party_ledger"] = cand_l_s
+            curr_party = cand_l_s
+        elif raw_txn_s and raw_txn_s.lower() != bank_chk:
+            norm_payload["party_ledger"] = raw_txn_s
+            curr_party = raw_txn_s
+
     party_needs_res = curr_party in ("", "Cash", bank_chk) or (is_bank_ledger_name(curr_party) and not is_bank_transfer)
     if party_needs_res and norm_payload.get("particulars"):
         parts = norm_payload["particulars"]

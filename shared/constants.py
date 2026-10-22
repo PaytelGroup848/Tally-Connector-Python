@@ -7,7 +7,7 @@ Central constants for error codes, environment names, and default ports.
 from enum import Enum
 
 APP_NAME = "CtrlBooks"
-APP_VERSION = "1.0.21"
+APP_VERSION = "1.0.22"
 
 class Environment(str, Enum):
     DEVELOPMENT = "development"

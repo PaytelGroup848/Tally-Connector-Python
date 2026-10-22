@@ -232,7 +232,12 @@ def _extract_bank_ledger(voucher_data: dict[str, Any]) -> str:
             if sub and _clean_str(sub):
                 return _clean_str(sub)
 
-    # 3. Only fallback to "ledger" / "ledgerName" if no explicit fromAccount/toAccount
+    # 3. Explicit transactionType (CtrlBooks Web payment mode / bank account)
+    raw_txn = _clean_str(voucher_data.get("transactionType") or voucher_data.get("transaction_type"))
+    if raw_txn and raw_txn.lower() not in ("payment", "receipt", "contra", "sales", "purchase", "journal", "debit_note", "credit_note", "sales_order", "purchase_order"):
+        return "Cash" if raw_txn.upper() in ("CASH", "CASH_IN_HAND", "CASH-IN-HAND") else raw_txn
+
+    # 4. Only fallback to "ledger" / "ledgerName" if no explicit fromAccount/toAccount/transactionType
     for key in ("ledger", "ledgerName", "ledger_name"):
         val = voucher_data.get(key)
         if isinstance(val, str) and is_bank_ledger_name(val):
@@ -242,7 +247,6 @@ def _extract_bank_ledger(voucher_data: dict[str, Any]) -> str:
                 continue
             return _clean_str(val)
 
-    raw_txn = _clean_str(voucher_data.get("transactionType") or voucher_data.get("transaction_type"))
     if raw_txn:
         return "Cash" if raw_txn.upper() in ("CASH", "CASH_IN_HAND", "CASH-IN-HAND") else raw_txn
 
@@ -1659,9 +1663,17 @@ def build_voucher_import_xml(voucher_data: dict[str, Any]) -> str:
         elif "receipt" in voucher_type.lower():
             bank_ledger = escape_xml(_extract_bank_ledger(voucher_data))
             if party_ledger.lower() == bank_ledger.lower():
-                alt_party = _extract_party_ledger(voucher_data)
-                if alt_party and alt_party.lower() != bank_ledger.lower():
-                    party_ledger = escape_xml(alt_party)
+                raw_t = _clean_str(voucher_data.get("transactionType") or voucher_data.get("transaction_type"))
+                raw_l = _clean_str(voucher_data.get("ledger") or voucher_data.get("ledgerName"))
+                if raw_t and raw_l and raw_t.lower() != raw_l.lower():
+                    if bank_ledger.lower() == raw_t.lower():
+                        party_ledger = escape_xml(raw_l)
+                    elif bank_ledger.lower() == raw_l.lower():
+                        party_ledger = escape_xml(raw_t)
+                else:
+                    alt_party = _extract_party_ledger(voucher_data)
+                    if alt_party and alt_party.lower() != bank_ledger.lower():
+                        party_ledger = escape_xml(alt_party)
 
             bill_num = escape_xml(
                 _clean_str(
@@ -1700,9 +1712,17 @@ def build_voucher_import_xml(voucher_data: dict[str, Any]) -> str:
         elif "payment" in voucher_type.lower():
             bank_ledger = escape_xml(_extract_bank_ledger(voucher_data))
             if party_ledger.lower() == bank_ledger.lower():
-                alt_party = _extract_party_ledger(voucher_data)
-                if alt_party and alt_party.lower() != bank_ledger.lower():
-                    party_ledger = escape_xml(alt_party)
+                raw_t = _clean_str(voucher_data.get("transactionType") or voucher_data.get("transaction_type"))
+                raw_l = _clean_str(voucher_data.get("ledger") or voucher_data.get("ledgerName"))
+                if raw_t and raw_l and raw_t.lower() != raw_l.lower():
+                    if bank_ledger.lower() == raw_t.lower():
+                        party_ledger = escape_xml(raw_l)
+                    elif bank_ledger.lower() == raw_l.lower():
+                        party_ledger = escape_xml(raw_t)
+                else:
+                    alt_party = _extract_party_ledger(voucher_data)
+                    if alt_party and alt_party.lower() != bank_ledger.lower():
+                        party_ledger = escape_xml(alt_party)
 
             bill_num = escape_xml(
                 _clean_str(

@@ -452,5 +452,150 @@ def test_execute_voucher_command_bank_to_bank(monkeypatch):
     assert norm_rec["party_ledger"] == "Bank of Baroda"
 
 
+def test_web_receipt_voucher_bob_to_axis():
+    from apps.backend.adapters.tally.xml_builders.voucher_builder import (
+        build_voucher_import_xml,
+        _extract_bank_ledger,
+        _extract_party_ledger,
+    )
+    import xml.etree.ElementTree as ET
+
+    # Exact payload from CtrlBooks Web screenshot
+    payload = {
+        "voucherType": "Receipt",
+        "voucherNumber": "989",
+        "transactionType": "Bank Of Baroda",
+        "ledger": "Axis",
+        "amount": 2.0,
+        "narration": "tfr"
+    }
+
+    assert _extract_bank_ledger(payload) == "Bank Of Baroda"
+    assert _extract_party_ledger(payload) == "Axis"
+
+    xml_str = build_voucher_import_xml(payload)
+    root = ET.fromstring(xml_str)
+    entries = root.findall(".//ALLLEDGERENTRIES.LIST")
+    assert len(entries) == 2
+
+    # Receipt Debit leg: Bank Of Baroda (receiving bank), ISDEEMEDPOSITIVE=Yes, AMOUNT=-2.00
+    assert entries[0].find("LEDGERNAME").text == "Bank Of Baroda"
+    assert entries[0].find("ISDEEMEDPOSITIVE").text == "Yes"
+    assert float(entries[0].find("AMOUNT").text) == -2.0
+
+    # Receipt Credit leg: Axis (counterparty ledger), ISDEEMEDPOSITIVE=No, AMOUNT=2.00
+    assert entries[1].find("LEDGERNAME").text == "Axis"
+    assert entries[1].find("ISDEEMEDPOSITIVE").text == "No"
+    assert float(entries[1].find("AMOUNT").text) == 2.0
+
+
+def test_web_payment_voucher_bob_to_axis():
+    from apps.backend.adapters.tally.xml_builders.voucher_builder import (
+        build_voucher_import_xml,
+        _extract_bank_ledger,
+        _extract_party_ledger,
+    )
+    import xml.etree.ElementTree as ET
+
+    # Exact payload from CtrlBooks Web for Payment
+    payload = {
+        "voucherType": "Payment",
+        "voucherNumber": "990",
+        "transactionType": "Bank Of Baroda",
+        "ledger": "Axis",
+        "amount": 2.0,
+        "narration": "tfr"
+    }
+
+    assert _extract_bank_ledger(payload) == "Bank Of Baroda"
+    assert _extract_party_ledger(payload) == "Axis"
+
+    xml_str = build_voucher_import_xml(payload)
+    root = ET.fromstring(xml_str)
+    entries = root.findall(".//ALLLEDGERENTRIES.LIST")
+    assert len(entries) == 2
+
+    # Payment Debit leg: Axis (counterparty receiving), ISDEEMEDPOSITIVE=Yes, AMOUNT=-2.00
+    assert entries[0].find("LEDGERNAME").text == "Axis"
+    assert entries[0].find("ISDEEMEDPOSITIVE").text == "Yes"
+    assert float(entries[0].find("AMOUNT").text) == -2.0
+
+    # Payment Credit leg: Bank Of Baroda (paying bank), ISDEEMEDPOSITIVE=No, AMOUNT=2.00
+    assert entries[1].find("LEDGERNAME").text == "Bank Of Baroda"
+    assert entries[1].find("ISDEEMEDPOSITIVE").text == "No"
+    assert float(entries[1].find("AMOUNT").text) == 2.0
+
+
+def test_execute_voucher_command_web_format():
+    from unittest.mock import MagicMock
+    from apps.desktop_app.ui.threads.command_handlers.voucher_command_handler import execute_voucher_command
+
+    mock_worker = MagicMock()
+    async def mock_import(payload):
+        return {"success": True, "voucher_number": "989"}
+    mock_worker.importer_service.import_voucher.side_effect = mock_import
+
+    # Test Web Receipt: transactionType="Bank Of Baroda", ledger="Axis"
+    rec_cmd = {
+        "id": "cmd-web-rec-1",
+        "type": "CREATE_RECEIPT",
+        "payload": {
+            "voucherType": "Receipt",
+            "transactionType": "Bank Of Baroda",
+            "ledger": "Axis",
+            "amount": 2.0,
+            "narration": "tfr",
+            "companyName": "Working  Data"
+        }
+    }
+    norm_rec, ok, res, err, err_det, cont = execute_voucher_command(
+        worker=mock_worker,
+        payload=rec_cmd["payload"],
+        cmd=rec_cmd,
+        cmd_id="cmd-web-rec-1",
+        cmd_type="CREATE_RECEIPT",
+        comp_id="comp-123",
+        resolved_company="Working  Data",
+        active_host="127.0.0.1",
+        active_port=9047,
+        amt=2.0,
+        curr_email="test@user.com",
+        curr_org="Test Org"
+    )
+    assert norm_rec["bank_ledger"] == "Bank Of Baroda"
+    assert norm_rec["party_ledger"] == "Axis"
+
+    # Test Web Payment: transactionType="Bank Of Baroda", ledger="Axis"
+    pay_cmd = {
+        "id": "cmd-web-pay-1",
+        "type": "CREATE_PAYMENT",
+        "payload": {
+            "voucherType": "Payment",
+            "transactionType": "Bank Of Baroda",
+            "ledger": "Axis",
+            "amount": 2.0,
+            "narration": "tfr",
+            "companyName": "Working  Data"
+        }
+    }
+    norm_pay, ok, res, err, err_det, cont = execute_voucher_command(
+        worker=mock_worker,
+        payload=pay_cmd["payload"],
+        cmd=pay_cmd,
+        cmd_id="cmd-web-pay-1",
+        cmd_type="CREATE_PAYMENT",
+        comp_id="comp-123",
+        resolved_company="Working  Data",
+        active_host="127.0.0.1",
+        active_port=9047,
+        amt=2.0,
+        curr_email="test@user.com",
+        curr_org="Test Org"
+    )
+    assert norm_pay["bank_ledger"] == "Bank Of Baroda"
+    assert norm_pay["party_ledger"] == "Axis"
+
+
+
 
 
