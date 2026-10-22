@@ -1,7 +1,7 @@
  
 
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, Query, Path
+from fastapi import APIRouter, Depends, Query, Path, Body
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from shared.db.session import get_db
@@ -33,7 +33,7 @@ class PreviewExtractionRequestSchema(BaseModel):
 )
 def extract_entity_data(
     connector_id: str = Path(..., description="Data Connector UUID"),
-    body: ExtractEntityRequestSchema = ...,
+    body: ExtractEntityRequestSchema = Body(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission(Permissions.DATA_EXTRACT))
 ):
@@ -57,7 +57,7 @@ def extract_entity_data(
 )
 def preview_extraction_data(
     connector_id: str = Path(..., description="Data Connector UUID"),
-    body: PreviewExtractionRequestSchema = ...,
+    body: PreviewExtractionRequestSchema = Body(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission(Permissions.DATA_EXTRACT_PREVIEW))
 ):
