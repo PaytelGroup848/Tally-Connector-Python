@@ -211,6 +211,10 @@ def diagnose_voucher_rejection(
                     actions.append(
                         f"Company '{company_name}' is not open in Tally Prime. Please open '{company_name}' inside Tally Prime (Gateway of Tally) and retry the entry from the web app."
                     )
+                elif "voucher date is missing" in clean_le.lower() or "retry split" in clean_le.lower():
+                    actions.append(
+                        "Tally Educational Mode restriction: Tally Prime is running without an active license, which only permits voucher dates on the 1st, 2nd, or last day of the month. Please change the invoice date on the web app to 01-10-2026 or 02-10-2026, or activate your Tally license."
+                    )
                 elif "ledger" in clean_le.lower():
                     actions.append("Ensure the required ledger accounts exist and are active in Tally.")
                 elif "item" in clean_le.lower() or "unit" in clean_le.lower():
