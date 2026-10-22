@@ -74,6 +74,24 @@ def execute_voucher_command(
     v_type_check = str(norm_payload.get("voucher_type") or "").strip().lower()
     is_pure_inventory = "stock journal" in v_type_check or "physical stock" in v_type_check
 
+    norm_payload["to_account"] = norm_payload.get("toAccount") or norm_payload.get("to_account") or norm_payload.get("depositTo") or norm_payload.get("deposit_to")
+    norm_payload["from_account"] = norm_payload.get("fromAccount") or norm_payload.get("from_account") or norm_payload.get("receivedFrom") or norm_payload.get("received_from")
+
+    if "payment" in v_type_check or "contra" in v_type_check:
+        paying_acc = norm_payload.get("from_account") or norm_payload.get("sourceAccount") or norm_payload.get("paying_bank")
+        receiving_acc = norm_payload.get("to_account") or norm_payload.get("paidTo") or norm_payload.get("paid_to") or norm_payload.get("destinationAccount")
+        if paying_acc and not norm_payload.get("bank_ledger"):
+            norm_payload["bank_ledger"] = paying_acc
+        if receiving_acc and not norm_payload.get("party_ledger"):
+            norm_payload["party_ledger"] = receiving_acc
+    elif "receipt" in v_type_check:
+        receiving_acc = norm_payload.get("to_account") or norm_payload.get("depositTo") or norm_payload.get("deposit_to") or norm_payload.get("received_into")
+        paying_acc = norm_payload.get("from_account") or norm_payload.get("receivedFrom") or norm_payload.get("received_from") or norm_payload.get("sourceAccount")
+        if receiving_acc and not norm_payload.get("bank_ledger"):
+            norm_payload["bank_ledger"] = receiving_acc
+        if paying_acc and not norm_payload.get("party_ledger"):
+            norm_payload["party_ledger"] = paying_acc
+
     norm_payload["bank_ledger"] = (
         norm_payload.get("bankLedger")
         or norm_payload.get("bank_ledger")
@@ -88,13 +106,16 @@ def execute_voucher_command(
     if not norm_payload["bank_ledger"]:
         cand_l = str(norm_payload.get("ledger") or norm_payload.get("ledgerName") or norm_payload.get("account") or "").strip()
         if cand_l and is_bank_ledger_name(cand_l):
-            norm_payload["bank_ledger"] = cand_l
+            if ("payment" in v_type_check or "contra" in v_type_check) and norm_payload.get("from_account"):
+                norm_payload["bank_ledger"] = norm_payload.get("from_account")
+            elif "receipt" in v_type_check and norm_payload.get("to_account"):
+                norm_payload["bank_ledger"] = norm_payload.get("to_account")
+            else:
+                norm_payload["bank_ledger"] = cand_l
         else:
             raw_txn = str(norm_payload.get("transactionType") or norm_payload.get("transaction_type") or "").strip()
             if raw_txn:
                 norm_payload["bank_ledger"] = "Cash" if raw_txn.upper() in ("CASH", "CASH_IN_HAND", "CASH-IN-HAND") else raw_txn
-    norm_payload["to_account"] = norm_payload.get("toAccount") or norm_payload.get("to_account")
-    norm_payload["from_account"] = norm_payload.get("fromAccount") or norm_payload.get("from_account")
     norm_payload["particulars"] = (
         norm_payload.get("particulars")
         or payload.get("particulars")
@@ -155,11 +176,15 @@ def execute_voucher_command(
     # If party_cand is empty, equals bank_ledger, or is clearly a bank account, extract real party from particulars / items
     bank_clean = str(norm_payload.get("bank_ledger") or "").strip().lower()
     is_party_bank = bool(party_cand and is_bank_ledger_name(str(party_cand)))
+    is_bank_transfer = "payment" in v_type_check or "receipt" in v_type_check or "contra" in v_type_check
+
     if is_party_bank and (not norm_payload.get("bank_ledger") or norm_payload.get("bank_ledger") == "Cash"):
         norm_payload["bank_ledger"] = str(party_cand).strip()
         bank_clean = norm_payload["bank_ledger"].lower()
+        party_cand = None
 
-    if (not party_cand or str(party_cand).strip().lower() in ("", "cash", bank_clean) or is_party_bank) and norm_payload.get("particulars"):
+    needs_party_lookup = not party_cand or str(party_cand).strip().lower() in ("", "cash", bank_clean) or (is_party_bank and not is_bank_transfer)
+    if needs_party_lookup and norm_payload.get("particulars"):
         parts = norm_payload["particulars"]
         if isinstance(parts, list):
             for p in parts:
@@ -172,9 +197,10 @@ def execute_voucher_command(
                         or p.get("supplier") or p.get("supplierName")
                         or p.get("ledger") or ""
                     ).strip()
-                    if p_name and p_name.lower() not in ("cash", "bank", bank_clean) and not is_bank_ledger_name(p_name):
-                        party_cand = p_name
-                        break
+                    if p_name and p_name.lower() not in ("cash", "bank", bank_clean):
+                        if not is_bank_ledger_name(p_name) or is_bank_transfer:
+                            party_cand = p_name
+                            break
 
     if is_pure_inventory:
         norm_payload["party_ledger"] = "Inventory / Stock"
@@ -480,10 +506,12 @@ def execute_voucher_command(
             if has_legs and (not amt or amt <= 0.0 or (deb_sum > 0 and round(amt, 2) == round(deb_sum + cred_sum, 2))):
                 amt = round(deb_sum if deb_sum > 0 else cred_sum, 2)
 
-    # If party_ledger defaulted to "Cash" or equals bank_ledger or is a bank, extract real party from particulars
+    # If party_ledger defaulted to "Cash" or equals bank_ledger, extract real party from particulars
     bank_chk = str(norm_payload.get("bank_ledger") or "").strip().lower()
     curr_party = str(norm_payload.get("party_ledger") or "").strip()
-    if (curr_party in ("", "Cash", bank_chk) or is_bank_ledger_name(curr_party)) and norm_payload.get("particulars"):
+    is_bank_transfer = "payment" in v_type_check or "receipt" in v_type_check or "contra" in v_type_check
+    party_needs_res = curr_party in ("", "Cash", bank_chk) or (is_bank_ledger_name(curr_party) and not is_bank_transfer)
+    if party_needs_res and norm_payload.get("particulars"):
         parts = norm_payload["particulars"]
         if isinstance(parts, list):
             for p in parts:
@@ -496,9 +524,10 @@ def execute_voucher_command(
                         or p.get("supplier") or p.get("supplierName")
                         or p.get("ledger") or ""
                     ).strip()
-                    if p_name and p_name.lower() not in ("cash", "bank", bank_chk) and not is_bank_ledger_name(p_name):
-                        norm_payload["party_ledger"] = p_name
-                        break
+                    if p_name and p_name.lower() not in ("cash", "bank", bank_chk):
+                        if not is_bank_ledger_name(p_name) or is_bank_transfer:
+                            norm_payload["party_ledger"] = p_name
+                            break
 
     if is_pure_inventory and (not amt or amt <= 0.0):
         raw_items_dict: dict[str, Any] = {}

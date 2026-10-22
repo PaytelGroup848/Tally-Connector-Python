@@ -265,3 +265,192 @@ def test_parse_tally_bank_with_bankaccholdername():
     assert b["branchName"] == "sector-21 faridabad"
     assert b["bankName"] == "ICICI Bank"
 
+
+def test_payment_voucher_bank_to_bank_distinct_legs():
+    from apps.backend.adapters.tally.xml_builders.voucher_builder import (
+        build_voucher_import_xml,
+        _extract_bank_ledger,
+        _extract_party_ledger,
+    )
+    import xml.etree.ElementTree as ET
+
+    # User's case: Payment from Bank of Baroda to ICICI Bank
+    payload = {
+        "voucher_type": "Payment",
+        "voucher_number": "PAY-BOB-001",
+        "date": "2026-10-22",
+        "amount": 3333.0,
+        "fromAccount": "Bank of Baroda",
+        "toAccount": "ICICI Bank",
+        "ledgerName": "ICICI Bank",
+        "narration": "Bank to bank transfer from BOB to ICICI"
+    }
+
+    assert _extract_bank_ledger(payload) == "Bank of Baroda"
+    assert _extract_party_ledger(payload) == "ICICI Bank"
+
+    xml_str = build_voucher_import_xml(payload)
+    root = ET.fromstring(xml_str)
+    entries = root.findall(".//ALLLEDGERENTRIES.LIST")
+    assert len(entries) == 2, f"Expected 2 ledger entries, got {len(entries)}"
+
+    # Debit leg: ICICI Bank (party/receiving) with ISDEEMEDPOSITIVE=Yes, AMOUNT=-3333.00
+    debit_entry = entries[0]
+    assert debit_entry.find("LEDGERNAME").text == "ICICI Bank"
+    assert debit_entry.find("ISDEEMEDPOSITIVE").text == "Yes"
+    assert float(debit_entry.find("AMOUNT").text) == -3333.0
+
+    # Credit leg: Bank of Baroda (bank/paying) with ISDEEMEDPOSITIVE=No, AMOUNT=3333.00
+    credit_entry = entries[1]
+    assert credit_entry.find("LEDGERNAME").text == "Bank of Baroda"
+    assert credit_entry.find("ISDEEMEDPOSITIVE").text == "No"
+    assert float(credit_entry.find("AMOUNT").text) == 3333.0
+
+
+def test_receipt_voucher_bank_to_bank_distinct_legs():
+    from apps.backend.adapters.tally.xml_builders.voucher_builder import (
+        build_voucher_import_xml,
+        _extract_bank_ledger,
+        _extract_party_ledger,
+    )
+    import xml.etree.ElementTree as ET
+
+    # User's case: Receipt into ICICI Bank from Bank of Baroda
+    payload = {
+        "voucher_type": "Receipt",
+        "voucher_number": "REC-ICICI-001",
+        "date": "2026-10-22",
+        "amount": 5000.0,
+        "toAccount": "ICICI Bank",
+        "fromAccount": "Bank of Baroda",
+        "ledgerName": "Bank of Baroda",
+        "narration": "Funds received into ICICI from Bank of Baroda"
+    }
+
+    assert _extract_bank_ledger(payload) == "ICICI Bank"
+    assert _extract_party_ledger(payload) == "Bank of Baroda"
+
+    xml_str = build_voucher_import_xml(payload)
+    root = ET.fromstring(xml_str)
+    entries = root.findall(".//ALLLEDGERENTRIES.LIST")
+    assert len(entries) == 2, f"Expected 2 ledger entries, got {len(entries)}"
+
+    # Debit leg: ICICI Bank (receiving bank) with ISDEEMEDPOSITIVE=Yes, AMOUNT=-5000.00
+    debit_entry = entries[0]
+    assert debit_entry.find("LEDGERNAME").text == "ICICI Bank"
+    assert debit_entry.find("ISDEEMEDPOSITIVE").text == "Yes"
+    assert float(debit_entry.find("AMOUNT").text) == -5000.0
+
+    # Credit leg: Bank of Baroda (paying party) with ISDEEMEDPOSITIVE=No, AMOUNT=5000.00
+    credit_entry = entries[1]
+    assert credit_entry.find("LEDGERNAME").text == "Bank of Baroda"
+    assert credit_entry.find("ISDEEMEDPOSITIVE").text == "No"
+    assert float(credit_entry.find("AMOUNT").text) == 5000.0
+
+
+def test_contra_voucher_bank_to_bank_distinct_legs():
+    from apps.backend.adapters.tally.xml_builders.voucher_builder import (
+        build_voucher_import_xml,
+        _extract_bank_ledger,
+        _extract_party_ledger,
+    )
+    import xml.etree.ElementTree as ET
+
+    # Contra: from Bank of Baroda to ICICI Bank
+    payload = {
+        "voucher_type": "Contra",
+        "voucher_number": "CNT-001",
+        "date": "2026-10-22",
+        "amount": 7500.0,
+        "fromAccount": "Bank of Baroda",
+        "toAccount": "ICICI Bank"
+    }
+
+    xml_str = build_voucher_import_xml(payload)
+    root = ET.fromstring(xml_str)
+    entries = root.findall(".//ALLLEDGERENTRIES.LIST")
+    assert len(entries) == 2
+
+    # In Contra: to_account is Debit, from_account is Credit
+    assert entries[0].find("LEDGERNAME").text == "ICICI Bank"
+    assert entries[0].find("ISDEEMEDPOSITIVE").text == "Yes"
+    assert float(entries[0].find("AMOUNT").text) == -7500.0
+
+    assert entries[1].find("LEDGERNAME").text == "Bank of Baroda"
+    assert entries[1].find("ISDEEMEDPOSITIVE").text == "No"
+    assert float(entries[1].find("AMOUNT").text) == 7500.0
+
+
+def test_execute_voucher_command_bank_to_bank(monkeypatch):
+    from unittest.mock import MagicMock
+    from apps.desktop_app.ui.threads.command_handlers.voucher_command_handler import execute_voucher_command
+
+    captured_import = {}
+    mock_worker = MagicMock()
+    async def mock_import(payload):
+        captured_import.update(payload)
+        return {"success": True, "voucher_number": "1"}
+    mock_worker.importer_service.import_voucher.side_effect = mock_import
+
+    # Test Payment command: Bank of Baroda to ICICI Bank
+    pay_cmd = {
+        "id": "cmd-pay-1",
+        "type": "CREATE_PAYMENT",
+        "payload": {
+            "voucherType": "Payment",
+            "fromAccount": "Bank of Baroda",
+            "toAccount": "ICICI Bank",
+            "amount": 3333.0,
+            "companyName": "Working  Data"
+        }
+    }
+    norm_pay, ok, res, err, err_det, cont = execute_voucher_command(
+        worker=mock_worker,
+        payload=pay_cmd["payload"],
+        cmd=pay_cmd,
+        cmd_id="cmd-pay-1",
+        cmd_type="CREATE_PAYMENT",
+        comp_id="comp-123",
+        resolved_company="Working  Data",
+        active_host="127.0.0.1",
+        active_port=9047,
+        amt=3333.0,
+        curr_email="test@user.com",
+        curr_org="Test Org"
+    )
+    assert norm_pay["bank_ledger"] == "Bank of Baroda"
+    assert norm_pay["party_ledger"] == "ICICI Bank"
+
+    # Test Receipt command: ICICI Bank from Bank of Baroda
+    rec_cmd = {
+        "id": "cmd-rec-1",
+        "type": "CREATE_RECEIPT",
+        "payload": {
+            "voucherType": "Receipt",
+            "toAccount": "ICICI Bank",
+            "fromAccount": "Bank of Baroda",
+            "amount": 5000.0,
+            "companyName": "Working  Data"
+        }
+    }
+    captured_import.clear()
+    norm_rec, ok, res, err, err_det, cont = execute_voucher_command(
+        worker=mock_worker,
+        payload=rec_cmd["payload"],
+        cmd=rec_cmd,
+        cmd_id="cmd-rec-1",
+        cmd_type="CREATE_RECEIPT",
+        comp_id="comp-123",
+        resolved_company="Working  Data",
+        active_host="127.0.0.1",
+        active_port=9047,
+        amt=5000.0,
+        curr_email="test@user.com",
+        curr_org="Test Org"
+    )
+    assert norm_rec["bank_ledger"] == "ICICI Bank"
+    assert norm_rec["party_ledger"] == "Bank of Baroda"
+
+
+
+

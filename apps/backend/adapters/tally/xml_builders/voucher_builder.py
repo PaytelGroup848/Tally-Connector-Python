@@ -116,7 +116,28 @@ def _extract_items_list(voucher_data: dict[str, Any]) -> list:
 
 def _extract_party_ledger(voucher_data: dict[str, Any]) -> str:
     """Extracts party ledger name from payload, prioritizing specific party names over generic 'Cash'/'Bank'."""
+    v_type = str(voucher_data.get("voucher_type") or voucher_data.get("voucherType") or "").strip().lower()
     candidates = []
+
+    # 1. Type-specific priority keys
+    if "payment" in v_type:
+        type_party_keys = ("toAccount", "to_account", "destinationAccount", "destination_account", "paidTo", "paid_to", "received_by")
+    elif "receipt" in v_type:
+        type_party_keys = ("fromAccount", "from_account", "sourceAccount", "source_account", "receivedFrom", "received_from", "paid_by")
+    elif "contra" in v_type:
+        type_party_keys = ("toAccount", "to_account", "destinationAccount", "destination_account")
+    else:
+        type_party_keys = ()
+
+    for key in type_party_keys:
+        val = voucher_data.get(key)
+        if isinstance(val, str) and _clean_str(val):
+            candidates.append(_clean_str(val))
+        elif isinstance(val, dict):
+            sub = val.get("name") or val.get("ledgerName") or val.get("customerName") or val.get("partyName")
+            if sub and _clean_str(sub):
+                candidates.append(_clean_str(sub))
+
     for key in (
         "party_ledger", "partyLedger", "party_name", "partyName",
         "party", "customer", "customer_name", "customerName",
@@ -157,10 +178,16 @@ def _extract_party_ledger(voucher_data: dict[str, Any]) -> str:
                         candidates.append(p_name)
 
     known_bank = _extract_bank_ledger(voucher_data).strip().lower()
-    # First look for a non-cash, non-bank candidate
+    # First look for a non-cash, non-bank candidate OR a distinct bank for Bank-to-Bank transfers
     for cand in candidates:
         c_low = cand.strip().lower()
-        if cand and c_low != known_bank and not is_cash_ledger_name(cand) and not is_bank_ledger_name(cand) and c_low not in ("contra account", "journal account"):
+        if cand and c_low != known_bank and not is_cash_ledger_name(cand) and c_low not in ("contra account", "journal account"):
+            if not is_bank_ledger_name(cand) or ("payment" in v_type or "receipt" in v_type or "contra" in v_type):
+                return cand
+
+    # Fallback to first candidate that is different from known_bank
+    for cand in candidates:
+        if cand and cand.strip().lower() != known_bank:
             return cand
 
     # Fallback to first non-empty candidate if only Cash/Bank exists
@@ -172,7 +199,27 @@ def _extract_party_ledger(voucher_data: dict[str, Any]) -> str:
 
 
 def _extract_bank_ledger(voucher_data: dict[str, Any]) -> str:
-    """Extracts bank/cash ledger name from payload, supporting transactionType as smart fallback."""
+    """Extracts bank/cash ledger name from payload, respecting voucher type semantics."""
+    v_type = str(voucher_data.get("voucher_type") or voucher_data.get("voucherType") or "").strip().lower()
+
+    # 1. Type-specific priority keys
+    if "payment" in v_type or "contra" in v_type:
+        type_priority_keys = ("fromAccount", "from_account", "sourceAccount", "source_account", "paying_bank")
+    elif "receipt" in v_type:
+        type_priority_keys = ("toAccount", "to_account", "depositTo", "deposit_to", "received_into", "destinationAccount", "destination_account")
+    else:
+        type_priority_keys = ()
+
+    for key in type_priority_keys:
+        val = voucher_data.get(key)
+        if isinstance(val, str) and _clean_str(val):
+            return _clean_str(val)
+        elif isinstance(val, dict):
+            sub = val.get("name") or val.get("ledgerName") or val.get("accountName")
+            if sub and _clean_str(sub):
+                return _clean_str(sub)
+
+    # 2. Standard explicit bank ledger keys
     for key in (
         "bank_ledger", "bankLedger", "cash_bank_ledger", "cashBankLedger",
         "account", "accountName", "account_name", "bank_account", "bankAccount"
@@ -185,9 +232,14 @@ def _extract_bank_ledger(voucher_data: dict[str, Any]) -> str:
             if sub and _clean_str(sub):
                 return _clean_str(sub)
 
+    # 3. Only fallback to "ledger" / "ledgerName" if no explicit fromAccount/toAccount
     for key in ("ledger", "ledgerName", "ledger_name"):
         val = voucher_data.get(key)
         if isinstance(val, str) and is_bank_ledger_name(val):
+            if ("payment" in v_type or "contra" in v_type) and any(voucher_data.get(k) for k in ("fromAccount", "from_account", "sourceAccount", "source_account")):
+                continue
+            if "receipt" in v_type and any(voucher_data.get(k) for k in ("toAccount", "to_account", "depositTo", "deposit_to")):
+                continue
             return _clean_str(val)
 
     raw_txn = _clean_str(voucher_data.get("transactionType") or voucher_data.get("transaction_type"))

@@ -3,9 +3,9 @@
   "latestVersion": "1.0.21",
   "latest_version": "1.0.21",
   "minVersion": "1.0.0",
-  "releaseNotes": "Enterprise bank ledger updates and creation with full bank details (account number, IFSC, branch, holder), bulletproof bank preservation, dynamic voucher mapping, and MongoDB synchronization.",
+  "releaseNotes": "Enterprise bank ledger updates and creation with full bank details, bulletproof bank preservation, Bank-to-Bank Payment and Receipt multi-account mapping fixes, and MongoDB synchronization.",
   "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.21.exe",
   "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.21.exe",
-  "sha256": "3b40f52bd6482389274b0ddb5ba8297c2bbd0a24dad01b2b67eb7289befefbbd",
+  "sha256": "2ad0e4884abd50da0b79ca3c7d8b4c857740a502ecaa29c5e6e43b32bd47bb99",
   "mandatory": false
 }
