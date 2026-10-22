@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from PySide6.QtWidgets import QMainWindow, QStackedWidget, QSystemTrayIcon, QApplication, QMessageBox
-from PySide6.QtCore import QTimer, QUrl, QThread, Signal
+from PySide6.QtCore import QTimer, QUrl, QThread, Signal, Qt
 from PySide6.QtGui import QDesktopServices, QIcon
 
 from apps.desktop_app.ui.screens.login_screen import LoginScreen
@@ -38,6 +38,7 @@ class ConnectorMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("CtrlBooks")
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, False)
         self.setMinimumSize(620, 580)
         self.resize(650, 610)
         self.is_force_exit = False

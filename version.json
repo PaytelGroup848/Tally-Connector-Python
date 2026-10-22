@@ -6,6 +6,6 @@
   "releaseNotes": "Bulletproof bank ledger preservation against Sundry Creditors/Debtors corruption, dynamic Bank/Party mapping for Receipts & Payments, and robust local MongoDB master deduplication.",
   "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.21.exe",
   "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.21.exe",
-  "sha256": "d8fca8b096c55c5025790a1350d14179abe010d57305d4040cf19a8f25909485",
+  "sha256": "66c1a0c50f50b5f48277858e89e2df615ae91147e19d86b91f269828140f3253",
   "mandatory": false
 }
