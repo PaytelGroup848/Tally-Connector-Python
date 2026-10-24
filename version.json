@@ -3,9 +3,9 @@
   "latestVersion": "1.0.24",
   "latest_version": "1.0.24",
   "minVersion": "1.0.0",
-  "releaseNotes": "Fix UI voucher chip count using live Tally Prime statistics report while maintaining Pure Cloud API Mode.",
+  "releaseNotes": "Enterprise Production Engine: Deterministic RFC-4122 UUIDv5 fallback for missing Tally company GUIDs, seamless cloud onboarding, live Tally statistics chip counts, and Pure Cloud API Mode.",
   "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.24.exe",
   "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.24.exe",
-  "sha256": "47b6e7c48d3011c612eab788c3e79b615bfb4b1a537205159c80a3e4cc1c403f",
+  "sha256": "4ad126984921d1957190026b141bd8fd845b2aeb509db16c8939728098c33e01",
   "mandatory": false
 }

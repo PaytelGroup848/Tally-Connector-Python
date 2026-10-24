@@ -456,9 +456,15 @@ class CloudAuthService:
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/json"
         }
+        import uuid
+        clean_name = str(company_name or "").strip()
+        eff_guid = str(company_guid or "").strip()
+        if not eff_guid or len(eff_guid) < 16 or eff_guid.lower() in ("none", "null", "undefined"):
+            eff_guid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"ctrlbooks.tally.{clean_name.lower()}"))
+
         payload = {
-            "tallyCompanyName": company_name,
-            "tallyCompanyGuid": company_guid or "",
+            "tallyCompanyName": clean_name,
+            "tallyCompanyGuid": eff_guid,
         }
         logger.info(f"Calling Cloud Link Company for '{company_name}'...")
 

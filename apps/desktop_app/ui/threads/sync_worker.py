@@ -257,6 +257,10 @@ class BackgroundSyncWorker(QThread):
             if oc.get("name", "").strip().lower() == c_name.strip().lower() and oc.get("guid"):
                 c_guid = str(oc.get("guid") or "")
 
+        if not c_guid or len(c_guid) < 16 or c_guid.lower() in ("none", "null", "undefined"):
+            import uuid
+            c_guid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"ctrlbooks.tally.{c_name.strip().lower()}"))
+
         org_oid, c_oid = self._resolve_ids(c_name)
         now_iso = datetime.now(timezone.utc).isoformat()
         now_dt = datetime.now(timezone.utc)

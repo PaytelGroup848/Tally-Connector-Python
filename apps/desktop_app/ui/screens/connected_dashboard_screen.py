@@ -307,7 +307,17 @@ class ConnectedDashboardScreen(QWidget):
                         c_stats = c.get("stats")
                         if c_stats:
                             total_records += (c_stats.get("ledgers", 0) + c_stats.get("vouchers", 0) + c_stats.get("items", 0))
-                        self.cards_layout.addWidget(self.create_company_card(c_name, c["path"], False, "TALLY", stats=c_stats))
+                        is_synced_comp = False
+                        try:
+                            from shared.cloud.helpers import _safe_get_collection
+                            col = _safe_get_collection("companies")
+                            if col is not None:
+                                c_doc = col.find_one({"$or": [{"company_name": c_name}, {"name": c_name}, {"tallyCompanyName": c_name}]})
+                                if c_doc and (c_doc.get("status") == "SYNCED" or c_doc.get("cloud_company_id") or c_doc.get("last_sync_at")):
+                                    is_synced_comp = True
+                        except Exception:
+                            pass
+                        self.cards_layout.addWidget(self.create_company_card(c_name, c["path"], is_synced_comp, "TALLY", stats=c_stats))
                         total_active += 1
 
                 self.pill_conn_status.setText(f"🟢 Connected: Tally ({t_port})")

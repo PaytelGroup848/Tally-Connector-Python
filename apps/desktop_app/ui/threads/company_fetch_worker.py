@@ -59,7 +59,20 @@ def fetch_real_tally_companies(settings=None, return_port: bool = False) -> tupl
             if h_res.status_code == 200 and h_res.text:
                 comp_dicts = parse_company_list(h_res.text)
                 if comp_dicts:
-                    comps = [{"name": c["name"], "path": c.get("path", "C:\\TallyPrime\\Data"), "guid": c.get("guid", "")} for c in comp_dicts if c.get("name")]
+                    import uuid
+                    comps = []
+                    for c in comp_dicts:
+                        if not c.get("name"):
+                            continue
+                        c_n = str(c["name"]).strip()
+                        raw_guid = str(c.get("guid") or "").strip()
+                        if not raw_guid or len(raw_guid) < 16 or raw_guid.lower() in ("none", "null", "undefined"):
+                            raw_guid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"ctrlbooks.tally.{c_n.lower()}"))
+                        comps.append({
+                            "name": c_n,
+                            "path": c.get("path", "C:\\TallyPrime\\Data"),
+                            "guid": raw_guid
+                        })
                     return (comps, True, p) if return_port else (comps, True)
                 # If Tally responded 200 but no company is open:
                 return ([], True, p) if return_port else ([], True)

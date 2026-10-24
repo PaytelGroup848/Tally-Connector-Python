@@ -70,13 +70,19 @@ class CloudSyncClient:
                         target_cid = c.get("id") or c.get("_id")
                         break
 
+        import uuid
+        clean_name = str(company_name or "").strip()
+        eff_guid = str(company_guid or "").strip()
+        if not eff_guid or len(eff_guid) < 16 or eff_guid.lower() in ("none", "null", "undefined"):
+            eff_guid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"ctrlbooks.tally.{clean_name.lower()}"))
+
         if not target_cid or len(str(target_cid)) < 12:
-            link_ok, _, link_data = self.link_company(company_name, company_guid)
+            link_ok, _, link_data = self.link_company(clean_name, eff_guid)
             if link_ok and link_data:
                 target_cid = link_data.get("id") or link_data.get("_id")
 
         if not target_cid:
-            target_cid = company_guid or company_name
+            target_cid = eff_guid or clean_name
 
         if target_cid and len(str(target_cid)) >= 8:
             try:
