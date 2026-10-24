@@ -328,18 +328,32 @@ class BackgroundSyncWorker(QThread):
             c_name, org_oid, c_oid, extracted_ledgers, extracted_stock_items, extracted_vouchers
         )
 
-        # Count total vouchers in MongoDB so UI card chip displays total historical count
+        # Retrieve total truthful counts from Tally Prime statistics report (live source of truth)
         total_voucher_count = len(extracted_vouchers)
+        total_ledger_count = len(extracted_ledgers)
+        total_item_count = len(extracted_stock_items)
         try:
-            col_v = get_collection("vouchers")
-            total_voucher_count = col_v.count_documents({"company_name": c_name})
+            from apps.desktop_app.ui.threads.company_fetch_worker import fetch_tally_company_statistics
+            t_stats = fetch_tally_company_statistics(c_name, host=self.tally_host, port=tally_port, timeout=2.0)
+            if t_stats and isinstance(t_stats, dict):
+                if t_stats.get("vouchers") is not None and t_stats["vouchers"] > 0:
+                    total_voucher_count = t_stats["vouchers"]
+                if t_stats.get("ledgers") is not None and t_stats["ledgers"] > 0:
+                    total_ledger_count = t_stats["ledgers"]
+                if t_stats.get("items") is not None and t_stats["items"] > 0:
+                    total_item_count = t_stats["items"]
+            else:
+                from shared.config import get_settings
+                if get_settings().direct_mongo_sync_enabled:
+                    col_v = get_collection("vouchers")
+                    total_voucher_count = col_v.count_documents({"company_name": c_name})
         except Exception:
             pass
 
         stats_dict = {
-            "ledgers": len(extracted_ledgers),
+            "ledgers": total_ledger_count,
             "vouchers": total_voucher_count,
-            "items": len(extracted_stock_items)
+            "items": total_item_count
         }
         try:
             col = get_collection("companies")

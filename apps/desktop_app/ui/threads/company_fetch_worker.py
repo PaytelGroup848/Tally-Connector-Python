@@ -135,14 +135,14 @@ def fetch_all_companies() -> tuple:
         if tally_ok and detected_port:
             t_port = detected_port
 
-        # Retrieve statistics for all discovered companies: Check DB first (<1ms), fallback to fast Tally query
+        # Retrieve statistics for all discovered companies: Check live Tally Prime statistics report first, fallback to DB
         for c in tally_comps:
             c_name = c.get("name", "")
-            db_s = fetch_db_company_statistics(c_name)
-            if db_s and any(db_s.values()):
-                c["stats"] = db_s
+            t_s = fetch_tally_company_statistics(c_name, host=t_host, port=t_port, timeout=1.0)
+            if t_s and any(t_s.values()):
+                c["stats"] = t_s
             else:
-                c["stats"] = fetch_tally_company_statistics(c_name, host=t_host, port=t_port, timeout=1.0)
+                c["stats"] = fetch_db_company_statistics(c_name)
 
         for c in registered_companies:
             c_name = c.get("name") or c.get("company_name") or c.get("tallyCompanyName") or ""
@@ -150,11 +150,11 @@ def fetch_all_companies() -> tuple:
             if tally_match and "stats" in tally_match:
                 c["stats"] = tally_match["stats"]
             else:
-                db_s = fetch_db_company_statistics(c_name)
-                if db_s and any(db_s.values()):
-                    c["stats"] = db_s
+                t_s = fetch_tally_company_statistics(c_name, host=t_host, port=t_port, timeout=1.0)
+                if t_s and any(t_s.values()):
+                    c["stats"] = t_s
                 else:
-                    c["stats"] = fetch_tally_company_statistics(c_name, host=t_host, port=t_port, timeout=1.0)
+                    c["stats"] = fetch_db_company_statistics(c_name)
 
     except Exception as exc:
         logger.debug(f"Error fetching companies: {exc}")

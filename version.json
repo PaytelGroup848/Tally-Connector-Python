@@ -3,9 +3,9 @@
   "latestVersion": "1.0.24",
   "latest_version": "1.0.24",
   "minVersion": "1.0.0",
-  "releaseNotes": "Pure Cloud API Mode: Bypass redundant direct MongoDB Atlas duplicate bulk writes to prevent 512MB storage exhaustion and improve sync efficiency.",
+  "releaseNotes": "Fix UI voucher chip count using live Tally Prime statistics report while maintaining Pure Cloud API Mode.",
   "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.24.exe",
   "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.24.exe",
-  "sha256": "873d3de1c16a69c3e27c170a42644e8454564710958e374ee56db3bfaa014000",
+  "sha256": "47b6e7c48d3011c612eab788c3e79b615bfb4b1a537205159c80a3e4cc1c403f",
   "mandatory": false
 }
