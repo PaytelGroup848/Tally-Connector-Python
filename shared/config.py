@@ -70,6 +70,7 @@ class Settings(BaseModel):
     otp_provider_key: Optional[str] = None
     resend_api_key: Optional[str] = Field(default=None)
     sync_worker_count: int = Field(default=2)
+    direct_mongo_sync_enabled: bool = Field(default=False)
 
     @property
     def effective_mongo_url(self) -> str:
@@ -141,6 +142,7 @@ class Settings(BaseModel):
             jwt_secret=os.getenv("JWT_SECRET"),
             otp_provider_key=os.getenv("OTP_PROVIDER_KEY"),
             sync_worker_count=int(os.getenv("SYNC_WORKER_COUNT", "2")),
+            direct_mongo_sync_enabled=parse_bool(os.getenv("DIRECT_MONGO_SYNC_ENABLED"), default=False),
         )
 
     def validate_required(self) -> None:

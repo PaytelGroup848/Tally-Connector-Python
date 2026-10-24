@@ -115,7 +115,8 @@ def sync_vouchers(
     if from_alter_id and from_alter_id > max_voucher_alter:
         max_voucher_alter = from_alter_id
 
-    if extracted_vouchers:
+    from shared.config import get_settings
+    if extracted_vouchers and get_settings().direct_mongo_sync_enabled:
         if getattr(worker, "progress_changed", None):
             worker.progress_changed.emit(base_pct + 62, f"[{idx}/{total_companies}] Saving {len(extracted_vouchers)} voucher(s) locally...")
         try:

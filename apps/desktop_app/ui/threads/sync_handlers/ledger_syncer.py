@@ -30,7 +30,8 @@ def sync_ledgers(worker, c_name: str, port: int, now_iso: str, now_dt: datetime,
     except Exception as exc:
         logger.warning(f"Ledger extraction error for '{c_name}': {exc}")
 
-    if extracted_ledgers:
+    from shared.config import get_settings
+    if extracted_ledgers and get_settings().direct_mongo_sync_enabled:
         try:
             l_col = get_collection("ledgers")
             cust_col = get_collection("customers")

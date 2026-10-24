@@ -9,6 +9,9 @@ from apps.desktop_app.ui.threads.sync_handlers.common import chunk_list
 logger = get_logger("app.threads.sync_handlers.master")
 
 def sync_groups(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid):
+    from shared.config import get_settings
+    if not get_settings().direct_mongo_sync_enabled:
+        return
     try:
         grp_xml = build_collection_xml("Group", ["NAME", "PARENT", "GUID", "ALTERID", "ISADDABLE", "ISSUBLEDGER", "NATUREOFGROUP"], company_name=c_name)
         ok_g, code_g, text_g, err_g = worker.tally_client.send_xml_request(worker.tally_host, port, grp_xml, timeout=30.0)
@@ -46,6 +49,9 @@ def sync_groups(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid):
         logger.warning(f"Groups extraction error for '{c_name}': {exc}")
 
 def sync_godowns(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid):
+    from shared.config import get_settings
+    if not get_settings().direct_mongo_sync_enabled:
+        return
     try:
         gd_xml = build_collection_xml("Godown", ["NAME", "PARENT", "GUID", "ALTERID", "ADDRESS.LIST"], company_name=c_name)
         ok_gd, code_gd, text_gd, err_gd = worker.tally_client.send_xml_request(worker.tally_host, port, gd_xml, timeout=30.0)
@@ -80,6 +86,9 @@ def sync_godowns(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid):
         logger.warning(f"Godowns extraction error for '{c_name}': {exc}")
 
 def sync_units(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid):
+    from shared.config import get_settings
+    if not get_settings().direct_mongo_sync_enabled:
+        return
     try:
         u_xml = build_collection_xml("Unit", ["NAME", "SYMBOL", "ORIGINALNAME", "DECIMALPLACES", "GUID", "ALTERID"], company_name=c_name)
         ok_u, code_u, text_u, err_u = worker.tally_client.send_xml_request(worker.tally_host, port, u_xml, timeout=30.0)
@@ -115,6 +124,9 @@ def sync_units(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid):
         logger.warning(f"Units extraction error for '{c_name}': {exc}")
 
 def sync_stock_groups(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid):
+    from shared.config import get_settings
+    if not get_settings().direct_mongo_sync_enabled:
+        return
     try:
         sg_xml = build_collection_xml("StockGroup", ["NAME", "PARENT", "GUID", "ALTERID", "HSNCODE", "HSNDETAILS.LIST", "TARIFFLIST.LIST", "GSTDETAILS.LIST"], company_name=c_name)
         ok_sg, code_sg, text_sg, err_sg = worker.tally_client.send_xml_request(worker.tally_host, port, sg_xml, timeout=30.0)
@@ -156,6 +168,9 @@ def sync_stock_groups(worker, c_name: str, port: int, now_iso: str, org_oid, c_o
         logger.warning(f"Stock groups extraction notice: {exc}")
 
 def sync_voucher_types(worker, c_name: str, port: int, now_iso: str, org_oid, c_oid):
+    from shared.config import get_settings
+    if not get_settings().direct_mongo_sync_enabled:
+        return
     try:
         vt_xml = build_collection_xml(
             "VoucherType",

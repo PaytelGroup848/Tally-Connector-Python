@@ -31,7 +31,8 @@ def sync_stock_items(worker, c_name: str, port: int, now_iso: str, org_oid, c_oi
     except Exception as exc:
         logger.warning(f"Stock items extraction error for '{c_name}': {exc}")
 
-    if extracted_stock_items:
+    from shared.config import get_settings
+    if extracted_stock_items and get_settings().direct_mongo_sync_enabled:
         try:
             s_col = get_collection("stock_items")
             stocks_col = get_collection("stocks")

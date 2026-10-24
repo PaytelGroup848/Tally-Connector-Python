@@ -137,7 +137,7 @@ class ExtractionService:
                 records_failed=failed_cnt
             )
             
-            if store_in_db and processed_output_records:
+            if store_in_db and get_settings().direct_mongo_sync_enabled and processed_output_records:
                 try:
                     extracted_record_repository.upsert_batch(
                         db=db,
