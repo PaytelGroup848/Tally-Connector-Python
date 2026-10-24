@@ -6,6 +6,6 @@
   "releaseNotes": "Enterprise Production Engine: Deterministic RFC-4122 UUIDv5 fallback for missing Tally company GUIDs, seamless cloud onboarding, live Tally statistics chip counts, and Pure Cloud API Mode.",
   "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.24.exe",
   "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.24.exe",
-  "sha256": "4ad126984921d1957190026b141bd8fd845b2aeb509db16c8939728098c33e01",
+  "sha256": "a497a6cd51715c77c407b1e32155e53b1733eb560758e4b51083a65f243eba3c",
   "mandatory": false
 }

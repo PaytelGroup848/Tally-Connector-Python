@@ -60,41 +60,67 @@ class CloudSyncClient:
         if not self.access_token:
             return False, "Not authenticated. Please login first.", {}
 
-        target_cid = company_id
-        if not target_cid or len(str(target_cid)) < 12:
-            ok_c, c_list = self.get_cloud_companies()
-            if ok_c and c_list:
-                for c in c_list:
-                    c_n = c.get("tallyCompanyName") or c.get("companyName") or c.get("name") or ""
-                    if c_n.strip().lower() == company_name.strip().lower():
-                        target_cid = c.get("id") or c.get("_id")
-                        break
+        import re, uuid
+        def _is_24_hex_id(val: Any) -> bool:
+            return bool(val and isinstance(val, (str, bytes)) and re.match(r"^[0-9a-fA-F]{24}$", str(val).strip()))
 
-        import uuid
+        target_cid = str(company_id).strip() if _is_24_hex_id(company_id) else None
         clean_name = str(company_name or "").strip()
         eff_guid = str(company_guid or "").strip()
         if not eff_guid or len(eff_guid) < 16 or eff_guid.lower() in ("none", "null", "undefined"):
             eff_guid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"ctrlbooks.tally.{clean_name.lower()}"))
 
-        if not target_cid or len(str(target_cid)) < 12:
-            link_ok, _, link_data = self.link_company(clean_name, eff_guid)
-            if link_ok and link_data:
-                target_cid = link_data.get("id") or link_data.get("_id")
-
+        # 1. Lookup in Cloud companies list for canonical 24-character ObjectId
         if not target_cid:
-            target_cid = eff_guid or clean_name
+            ok_c, c_list = self.get_cloud_companies()
+            if ok_c and c_list:
+                for c in c_list:
+                    c_n = str(c.get("tallyCompanyName") or c.get("companyName") or c.get("name") or "").strip().lower()
+                    if c_n == clean_name.lower():
+                        c_cand = c.get("id") or c.get("_id")
+                        if _is_24_hex_id(c_cand):
+                            target_cid = str(c_cand).strip()
+                            break
 
-        if target_cid and len(str(target_cid)) >= 8:
-            try:
-                col = _safe_get_collection("companies")
-                if col is not None:
-                    col.update_one(
-                        {"$or": [{"company_name": company_name}, {"name": company_name}, {"tallyCompanyName": company_name}]},
-                        {"$set": {"cloud_company_id": str(target_cid)}},
-                        upsert=True
-                    )
-            except Exception:
-                pass
+        # 2. If not found in cloud list, call link_company to obtain canonical cloud ObjectId
+        if not target_cid:
+            link_ok, _, link_data = self.link_company(clean_name, eff_guid)
+            if link_ok and isinstance(link_data, dict):
+                c_cand = link_data.get("id") or link_data.get("_id")
+                if _is_24_hex_id(c_cand):
+                    target_cid = str(c_cand).strip()
+
+        # 3. If still not resolved, re-fetch cloud companies list as fallback
+        if not target_cid:
+            ok_c, c_list = self.get_cloud_companies()
+            if ok_c and c_list:
+                for c in c_list:
+                    c_n = str(c.get("tallyCompanyName") or c.get("companyName") or c.get("name") or "").strip().lower()
+                    if c_n == clean_name.lower():
+                        c_cand = c.get("id") or c.get("_id")
+                        if _is_24_hex_id(c_cand):
+                            target_cid = str(c_cand).strip()
+                            break
+
+        # CRITICAL: If canonical 24-char ObjectId is still missing, NEVER use Tally GUID as cloud_company_id!
+        if not target_cid or not _is_24_hex_id(target_cid):
+            logger.error(f"Cannot start cloud sync for '{company_name}': Cloud server has not assigned a valid 24-character ObjectId.")
+            return False, f"Company '{company_name}' could not be registered on cloud account. Please check internet connection.", {}
+
+        # Persist the validated 24-character ObjectId into MongoDB companies collection
+        try:
+            col = _safe_get_collection("companies")
+            if col is not None:
+                col.update_one(
+                    {"$or": [{"company_name": company_name}, {"name": company_name}, {"tallyCompanyName": company_name}]},
+                    {"$set": {
+                        "cloud_company_id": str(target_cid),
+                        "company_guid": eff_guid
+                    }},
+                    upsert=True
+                )
+        except Exception:
+            pass
 
         s_type = "INITIAL" if sync_type.upper() in ("INITIAL", "FULL") else "INCREMENTAL"
 

@@ -179,41 +179,39 @@ class ConnectorMainWindow(QMainWindow):
                     ]
                 })
                 if doc:
-                    company_id = doc.get("cloud_company_id") or str(doc.get("_id") or "") or doc.get("id")
+                    cand_id = doc.get("cloud_company_id")
+                    if cand_id and re.match(r"^[0-9a-fA-F]{24}$", str(cand_id).strip()):
+                        company_id = str(cand_id).strip()
             except Exception as exc:
                 logger.warning(f"Error looking up company_id in MongoDB for '{c_name}': {exc}")
 
-        # 2. Fallback: Query Cloud companies API if not found in MongoDB
+        # 2. Fallback: Query Cloud companies API if not found or if previous ID was not a valid 24-char ObjectId
         if not company_id and c_name and cloud_auth_service.access_token:
             try:
-                import httpx
-                headers = {"Authorization": f"Bearer {cloud_auth_service.access_token}"}
-                resp = httpx.get(f"{cloud_auth_service.base_url}/companies", headers=headers, timeout=3.0)
-                if resp.status_code == 200:
-                    c_list = resp.json().get("data", {}).get("companies", [])
+                ok_c, c_list = cloud_auth_service.get_cloud_companies()
+                if ok_c and c_list:
                     for item in c_list:
-                        item_name = item.get("tallyCompanyName") or item.get("name") or ""
-                        if item_name.lower().strip() == c_name.lower().strip():
-                            company_id = item.get("id") or item.get("_id")
-                            if company_id and get_collection:
-                                try:
-                                    col = get_collection("companies")
-                                    col.update_one(
-                                        {"$or": [{"name": c_name}, {"company_name": c_name}, {"tallyCompanyName": c_name}]},
-                                        {
-                                            "$set": {"cloud_company_id": str(company_id)},
-                                            "$setOnInsert": {"company_name": c_name, "name": c_name}
-                                        },
-                                        upsert=True
-                                    )
-                                except Exception:
-                                    pass
-                            break
+                        item_name = str(item.get("tallyCompanyName") or item.get("companyName") or item.get("name") or "").strip().lower()
+                        if item_name == c_name.lower():
+                            c_cand = item.get("id") or item.get("_id")
+                            if c_cand and re.match(r"^[0-9a-fA-F]{24}$", str(c_cand).strip()):
+                                company_id = str(c_cand).strip()
+                                if get_collection:
+                                    try:
+                                        col = get_collection("companies")
+                                        col.update_one(
+                                            {"$or": [{"name": c_name}, {"company_name": c_name}, {"tallyCompanyName": c_name}]},
+                                            {"$set": {"cloud_company_id": company_id}},
+                                            upsert=True
+                                        )
+                                    except Exception:
+                                        pass
+                                break
             except Exception as exc:
                 logger.warning(f"Error querying cloud companies endpoint for '{c_name}': {exc}")
 
-        # Construct target route
-        if company_id:
+        # Construct target route: ONLY open company-details if company_id is a valid 24-character ObjectId!
+        if company_id and re.match(r"^[0-9a-fA-F]{24}$", str(company_id).strip()):
             route = f"{web_base}/company-details/{company_id}"
         else:
             route = f"{web_base}/dashboard"

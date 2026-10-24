@@ -45,9 +45,10 @@ def push_cloud_sync(
         }
     )
     if not sync_ok:
-        logger.warning(f"Cloud sync session start warning for '{c_name}': {sync_msg}")
+        logger.error(f"Cloud sync session start error for '{c_name}': {sync_msg}")
+        return False, f"Cloud Sync rejected: {sync_msg}"
 
-    sync_id = (s_data.get("syncJobId") or s_data.get("syncId") or s_data.get("id") or str(uuid.uuid4())) if sync_ok else str(uuid.uuid4())
+    sync_id = s_data.get("syncJobId") or s_data.get("syncId") or s_data.get("id") or str(uuid.uuid4())
     any_batch_failed = False
     failed_batches: List[str] = []
     synced_ledgers = 0
