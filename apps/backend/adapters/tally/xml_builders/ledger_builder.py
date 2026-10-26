@@ -148,16 +148,32 @@ def build_ledger_import_xml(ledger_data: Dict[str, Any], action: str = "Create")
     if not isinstance(raw_bank_details, dict):
         raw_bank_details = {}
 
-    acc_num = escape_xml(str(raw_bank_details.get("accountNumber") or ledger_data.get("accountNumber") or ledger_data.get("account_number") or "").strip())
-    ifsc = escape_xml(str(raw_bank_details.get("ifscCode") or ledger_data.get("ifscCode") or ledger_data.get("ifsc") or "").strip())
-    b_name = escape_xml(str(raw_bank_details.get("bankName") or ledger_data.get("bankName") or ledger_data.get("bank_name") or "").strip())
-    branch = escape_xml(str(raw_bank_details.get("branchName") or ledger_data.get("branchName") or ledger_data.get("branch") or "").strip())
-    holder = escape_xml(str(raw_bank_details.get("accountHolderName") or ledger_data.get("accountHolderName") or ledger_data.get("account_holder_name") or "").strip())
-    swift = escape_xml(str(raw_bank_details.get("swiftCode") or ledger_data.get("swiftCode") or ledger_data.get("swift") or "").strip())
+    def _clean_bank_str(val: Any) -> str:
+        s = str(val or "").strip()
+        if s.lower() in ("na", "n/a", "none", "null", "undefined"):
+            return ""
+        return s
+
+    raw_acc = _clean_bank_str(raw_bank_details.get("accountNumber") or ledger_data.get("accountNumber") or ledger_data.get("account_number"))
+    raw_ifsc = _clean_bank_str(raw_bank_details.get("ifscCode") or ledger_data.get("ifscCode") or ledger_data.get("ifsc"))
+    raw_bname = _clean_bank_str(raw_bank_details.get("bankName") or ledger_data.get("bankName") or ledger_data.get("bank_name"))
+    raw_branch = _clean_bank_str(raw_bank_details.get("branchName") or ledger_data.get("branchName") or ledger_data.get("branch"))
+    raw_holder = _clean_bank_str(raw_bank_details.get("accountHolderName") or ledger_data.get("accountHolderName") or ledger_data.get("account_holder_name"))
+    raw_swift = _clean_bank_str(raw_bank_details.get("swiftCode") or ledger_data.get("swiftCode") or ledger_data.get("swift"))
+
+    acc_num = escape_xml(raw_acc)
+    ifsc = escape_xml(raw_ifsc)
+    b_name = escape_xml(raw_bname)
+    branch = escape_xml(raw_branch)
+    holder = escape_xml(raw_holder)
+    swift = escape_xml(raw_swift)
 
     bank_tags = ""
     if acc_num or ifsc or b_name or branch or holder or swift:
-        acc_tag = f"\n                        <BANKACCOUNTNUMBER>{acc_num}</BANKACCOUNTNUMBER>" if acc_num else ""
+        acc_tag = f"""
+                        <BANKDETAILS>{acc_num}</BANKDETAILS>
+                        <BANKACCOUNTNUMBER>{acc_num}</BANKACCOUNTNUMBER>
+                        <ACCOUNTNUMBER>{acc_num}</ACCOUNTNUMBER>""" if acc_num else ""
         ifsc_tag = f"\n                        <IFSCODE>{ifsc}</IFSCODE>" if ifsc else ""
         bname_tag = f"\n                        <BANKNAME>{b_name}</BANKNAME>" if b_name else ""
         branch_tag = f"\n                        <BRANCHNAME>{branch}</BRANCHNAME>" if branch else ""

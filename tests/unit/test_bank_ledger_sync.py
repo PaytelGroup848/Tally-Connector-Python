@@ -22,6 +22,7 @@ def test_build_ledger_with_bank_details():
     xml = build_ledger_import_xml(payload, action="Create")
     assert "<LEDGER ACTION=\"Create\" NAME=\"ICICI Bank\">" in xml
     assert "<PARENT>Bank Accounts</PARENT>" in xml
+    assert "<BANKDETAILS>67341044007859</BANKDETAILS>" in xml
     assert "<BANKACCOUNTNUMBER>67341044007859</BANKACCOUNTNUMBER>" in xml
     assert "<IFSCODE>BKID0008976</IFSCODE>" in xml
     assert "<BANKNAME>ICICI Bank</BANKNAME>" in xml
