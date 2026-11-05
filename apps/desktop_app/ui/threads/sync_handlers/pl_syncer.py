@@ -73,48 +73,101 @@ def sync_pl_accounts(
 
         ledgers = parse_metadata_response(txt, "Ledger")
 
-        # 2. Extract Purchase Accounts ledgers
+        # 2. Categorize ledgers across all P&L groups
         purchase_ledgers = []
         purchase_total = 0.0
-        for l in ledgers:
-            parent = str(l.get("parent") or "").strip().lower()
-            if parent == "purchase accounts":
-                raw_bal = float(l.get("closingBalance") or 0.0)
-                if abs(raw_bal) > 0.0001:
-                    # In Tally XML, Debit purchase is negative in CLOSINGBALANCE, Credit is positive
-                    # On P&L screen: Debit is displayed as positive expense, Credit as (-) negative
-                    display_amt = -raw_bal
-                    purchase_total += display_amt
-                    purchase_ledgers.append({
-                        "ledgerName": str(l.get("name") or "").strip(),
-                        "amount": round(display_amt, 2),
-                        "rawAmount": raw_bal,
-                        "drCr": "Dr" if raw_bal < 0 else "Cr"
-                    })
 
-        purchase_ledgers.sort(key=lambda x: abs(x["amount"]), reverse=True)
-
-        # 3. Extract Sales Accounts ledgers
         sales_ledgers = []
         sales_total = 0.0
+
+        direct_exp_ledgers = []
+        direct_exp_total = 0.0
+
+        indirect_exp_ledgers = []
+        indirect_exp_total = 0.0
+
+        direct_inc_ledgers = []
+        direct_inc_total = 0.0
+
+        indirect_inc_ledgers = []
+        indirect_inc_total = 0.0
+
         for l in ledgers:
             parent = str(l.get("parent") or "").strip().lower()
-            if parent == "sales accounts":
-                raw_bal = float(l.get("closingBalance") or 0.0)
-                if abs(raw_bal) > 0.0001:
-                    # In Tally XML, Credit sales is positive in CLOSINGBALANCE
-                    display_amt = raw_bal
-                    sales_total += display_amt
-                    sales_ledgers.append({
-                        "ledgerName": str(l.get("name") or "").strip(),
-                        "amount": round(display_amt, 2),
-                        "rawAmount": raw_bal,
-                        "drCr": "Cr" if raw_bal > 0 else "Dr"
-                    })
+            raw_bal = float(l.get("closingBalance") or 0.0)
+            if abs(raw_bal) <= 0.0001:
+                continue
+            l_name = str(l.get("name") or "").strip()
 
+            if parent == "purchase accounts" or "purchase account" in parent:
+                # In Tally XML, Debit purchase is negative in CLOSINGBALANCE, Credit is positive
+                display_amt = -raw_bal
+                purchase_total += display_amt
+                purchase_ledgers.append({
+                    "ledgerName": l_name,
+                    "amount": round(display_amt, 2),
+                    "rawAmount": raw_bal,
+                    "drCr": "Dr" if raw_bal < 0 else "Cr"
+                })
+            elif parent == "sales accounts" or "sales account" in parent:
+                # In Tally XML, Credit sales is positive in CLOSINGBALANCE
+                display_amt = raw_bal
+                sales_total += display_amt
+                sales_ledgers.append({
+                    "ledgerName": l_name,
+                    "amount": round(display_amt, 2),
+                    "rawAmount": raw_bal,
+                    "drCr": "Cr" if raw_bal > 0 else "Dr"
+                })
+            elif "indirect exp" in parent:
+                # Indirect expenses (Debit side): Dr is negative in XML CLOSINGBALANCE
+                display_amt = -raw_bal
+                indirect_exp_total += display_amt
+                indirect_exp_ledgers.append({
+                    "ledgerName": l_name,
+                    "amount": round(display_amt, 2),
+                    "rawAmount": raw_bal,
+                    "drCr": "Dr" if raw_bal < 0 else "Cr"
+                })
+            elif "direct exp" in parent:
+                # Direct expenses (Debit side): Dr is negative in XML CLOSINGBALANCE
+                display_amt = -raw_bal
+                direct_exp_total += display_amt
+                direct_exp_ledgers.append({
+                    "ledgerName": l_name,
+                    "amount": round(display_amt, 2),
+                    "rawAmount": raw_bal,
+                    "drCr": "Dr" if raw_bal < 0 else "Cr"
+                })
+            elif "indirect inc" in parent:
+                # Indirect incomes (Credit side): Cr is positive in XML CLOSINGBALANCE
+                display_amt = raw_bal
+                indirect_inc_total += display_amt
+                indirect_inc_ledgers.append({
+                    "ledgerName": l_name,
+                    "amount": round(display_amt, 2),
+                    "rawAmount": raw_bal,
+                    "drCr": "Cr" if raw_bal > 0 else "Dr"
+                })
+            elif "direct inc" in parent:
+                # Direct incomes (Credit side): Cr is positive in XML CLOSINGBALANCE
+                display_amt = raw_bal
+                direct_inc_total += display_amt
+                direct_inc_ledgers.append({
+                    "ledgerName": l_name,
+                    "amount": round(display_amt, 2),
+                    "rawAmount": raw_bal,
+                    "drCr": "Cr" if raw_bal > 0 else "Dr"
+                })
+
+        purchase_ledgers.sort(key=lambda x: abs(x["amount"]), reverse=True)
         sales_ledgers.sort(key=lambda x: abs(x["amount"]), reverse=True)
+        direct_exp_ledgers.sort(key=lambda x: abs(x["amount"]), reverse=True)
+        indirect_exp_ledgers.sort(key=lambda x: abs(x["amount"]), reverse=True)
+        direct_inc_ledgers.sort(key=lambda x: abs(x["amount"]), reverse=True)
+        indirect_inc_ledgers.sort(key=lambda x: abs(x["amount"]), reverse=True)
 
-        # 4. Extract Opening/Closing Stock and Gross Profit from P&L report
+        # 3. Extract Opening/Closing Stock and Gross Profit from P&L report
         pl_summary = {
             "openingStock": 0.0,
             "closingStock": 0.0,
@@ -122,7 +175,10 @@ def sync_pl_accounts(
             "nettProfit": 0.0,
             "directExpenses": 0.0,
             "indirectExpenses": 0.0,
-            "indirectIncomes": 0.0
+            "indirectIncomes": 0.0,
+            "directIncomes": 0.0,
+            "purchaseAccounts": 0.0,
+            "salesAccounts": 0.0
         }
 
         report_xml = f"""<ENVELOPE>
@@ -170,28 +226,45 @@ def sync_pl_accounts(
                                     pl_summary["openingStock"] = v
                                 elif "closing stock" in current_name:
                                     pl_summary["closingStock"] = v
-                                elif "indirect expenses" in current_name:
+                                elif "indirect expenses" in current_name or "indirect expense" in current_name:
                                     pl_summary["indirectExpenses"] = v
-                                elif "direct expenses" in current_name:
+                                elif "direct expenses" in current_name or "direct expense" in current_name:
                                     pl_summary["directExpenses"] = v
-                                elif "indirect incomes" in current_name:
+                                elif "indirect incomes" in current_name or "indirect income" in current_name:
                                     pl_summary["indirectIncomes"] = v
+                                elif "direct incomes" in current_name or "direct income" in current_name:
+                                    pl_summary["directIncomes"] = v
                                 elif "gross profit" in current_name:
                                     pl_summary["grossProfit"] = v
                                 elif "nett profit" in current_name or "net profit" in current_name:
                                     pl_summary["nettProfit"] = v
+                                elif "purchase accounts" in current_name:
+                                    pl_summary["purchaseAccounts"] = v
+                                elif "sales accounts" in current_name:
+                                    pl_summary["salesAccounts"] = v
                             except Exception:
                                 pass
             except Exception:
                 pass
 
+        # Reconcile summary totals with ledger sums if report was empty or missing sub-totals
+        eff_direct_exp = pl_summary["directExpenses"] if pl_summary.get("directExpenses", 0.0) > 0 else round(direct_exp_total, 2)
+        eff_indirect_exp = pl_summary["indirectExpenses"] if pl_summary.get("indirectExpenses", 0.0) > 0 else round(indirect_exp_total, 2)
+        eff_direct_inc = pl_summary.get("directIncomes", 0.0) if pl_summary.get("directIncomes", 0.0) > 0 else round(direct_inc_total, 2)
+        eff_indirect_inc = pl_summary["indirectIncomes"] if pl_summary.get("indirectIncomes", 0.0) > 0 else round(indirect_inc_total, 2)
+
+        if purchase_total == 0.0 and pl_summary.get("purchaseAccounts", 0.0) > 0.0:
+            purchase_total = pl_summary["purchaseAccounts"]
+        if sales_total == 0.0 and pl_summary.get("salesAccounts", 0.0) > 0.0:
+            sales_total = pl_summary["salesAccounts"]
+
         # Calculate Gross Profit and Nett Profit matching Tally P&L report
         if pl_summary["grossProfit"] == 0.0 and (sales_total > 0 or purchase_total > 0):
-            calc_gp = (sales_total + pl_summary["closingStock"]) - (pl_summary["openingStock"] + purchase_total + pl_summary["directExpenses"])
+            calc_gp = (sales_total + eff_direct_inc + pl_summary["closingStock"]) - (pl_summary["openingStock"] + purchase_total + eff_direct_exp)
             pl_summary["grossProfit"] = round(calc_gp, 2)
 
         if pl_summary["nettProfit"] == 0.0 and pl_summary["grossProfit"] != 0.0:
-            calc_np = pl_summary["grossProfit"] + pl_summary["indirectIncomes"] - pl_summary["indirectExpenses"]
+            calc_np = pl_summary["grossProfit"] + eff_indirect_inc - eff_indirect_exp
             pl_summary["nettProfit"] = round(calc_np, 2)
 
         # Build records to push
@@ -215,26 +288,69 @@ def sync_pl_accounts(
                 "ledgers": sales_ledgers
             },
             {
+                "category": "DIRECT_EXPENSES",
+                "side": "DEBIT",
+                "groupName": "Direct Expenses",
+                "totalAmount": round(eff_direct_exp, 2),
+                "startDate": fmt_from,
+                "endDate": fmt_to,
+                "ledgers": direct_exp_ledgers
+            },
+            {
+                "category": "INDIRECT_EXPENSES",
+                "side": "DEBIT",
+                "groupName": "Indirect Expenses",
+                "totalAmount": round(eff_indirect_exp, 2),
+                "startDate": fmt_from,
+                "endDate": fmt_to,
+                "ledgers": indirect_exp_ledgers
+            },
+            {
+                "category": "DIRECT_INCOMES",
+                "side": "CREDIT",
+                "groupName": "Direct Incomes",
+                "totalAmount": round(eff_direct_inc, 2),
+                "startDate": fmt_from,
+                "endDate": fmt_to,
+                "ledgers": direct_inc_ledgers
+            },
+            {
+                "category": "INDIRECT_INCOMES",
+                "side": "CREDIT",
+                "groupName": "Indirect Incomes",
+                "totalAmount": round(eff_indirect_inc, 2),
+                "startDate": fmt_from,
+                "endDate": fmt_to,
+                "ledgers": indirect_inc_ledgers
+            },
+            {
                 "category": "PL_SUMMARY",
                 "groupName": "Profit & Loss Summary",
                 "startDate": fmt_from,
                 "endDate": fmt_to,
-                "purchaseAccountsTotal": round(purchase_total, 2),
-                "salesAccountsTotal": round(sales_total, 2),
                 "openingStock": round(pl_summary.get("openingStock", 0.0), 2),
                 "closingStock": round(pl_summary.get("closingStock", 0.0), 2),
                 "grossProfit": round(pl_summary.get("grossProfit", 0.0), 2),
                 "nettProfit": round(pl_summary.get("nettProfit", 0.0), 2),
-                "directExpenses": round(pl_summary.get("directExpenses", 0.0), 2),
-                "indirectExpenses": round(pl_summary.get("indirectExpenses", 0.0), 2),
-                "indirectIncomes": round(pl_summary.get("indirectIncomes", 0.0), 2)
+                "purchaseAccountsTotal": round(purchase_total, 2),
+                "salesAccountsTotal": round(sales_total, 2),
+                "purchaseAccounts": round(purchase_total, 2),
+                "salesAccounts": round(sales_total, 2),
+                "directExpenses": round(eff_direct_exp, 2),
+                "indirectExpenses": round(eff_indirect_exp, 2),
+                "directIncomes": round(eff_direct_inc, 2),
+                "indirectIncomes": round(eff_indirect_inc, 2)
             }
         ]
 
         logger.info(
             f"Extracted PL accounts for '{company_name}' [{fmt_from} -> {fmt_to}]: "
-            f"Purchase={round(purchase_total, 2)} ({len(purchase_ledgers)} ledgers), "
-            f"Sales={round(sales_total, 2)} ({len(sales_ledgers)} ledgers)"
+            f"Purchase={round(purchase_total, 2)} ({len(purchase_ledgers)}), "
+            f"Sales={round(sales_total, 2)} ({len(sales_ledgers)}), "
+            f"DirectExp={round(eff_direct_exp, 2)} ({len(direct_exp_ledgers)}), "
+            f"IndirectExp={round(eff_indirect_exp, 2)} ({len(indirect_exp_ledgers)}), "
+            f"DirectInc={round(eff_direct_inc, 2)} ({len(direct_inc_ledgers)}), "
+            f"IndirectInc={round(eff_indirect_inc, 2)} ({len(indirect_inc_ledgers)})"
         )
         return records
 

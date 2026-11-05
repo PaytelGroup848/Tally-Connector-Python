@@ -31,6 +31,21 @@ def test_sync_pl_accounts_extraction():
                         <PARENT>Sales Accounts</PARENT>
                         <CLOSINGBALANCE>161711.63</CLOSINGBALANCE>
                     </LEDGER>
+                    <LEDGER>
+                        <NAME>Packing &amp; Forwarding ( P )</NAME>
+                        <PARENT>Direct Expenses</PARENT>
+                        <CLOSINGBALANCE>-630.00</CLOSINGBALANCE>
+                    </LEDGER>
+                    <LEDGER>
+                        <NAME>ACCOUNT WRITING CHARGES</NAME>
+                        <PARENT>Indirect Expenses</PARENT>
+                        <CLOSINGBALANCE>-3000.00</CLOSINGBALANCE>
+                    </LEDGER>
+                    <LEDGER>
+                        <NAME>Packing &amp; Forwarding ( S )</NAME>
+                        <PARENT>Indirect Incomes</PARENT>
+                        <CLOSINGBALANCE>45325.00</CLOSINGBALANCE>
+                    </LEDGER>
                 </COLLECTION>
             </DATA>
         </BODY>
@@ -58,7 +73,7 @@ def test_sync_pl_accounts_extraction():
         to_date="2026-10-03"
     )
 
-    assert len(records) == 3
+    assert len(records) == 7
     
     # Check Purchase Accounts
     p_rec = next(r for r in records if r["category"] == "PURCHASE_ACCOUNTS")
@@ -82,10 +97,32 @@ def test_sync_pl_accounts_extraction():
     assert s_rec["totalAmount"] == 6348689.01  # 6186977.38 + 161711.63
     assert len(s_rec["ledgers"]) == 2
 
+    # Check Direct Expenses
+    de_rec = next(r for r in records if r["category"] == "DIRECT_EXPENSES")
+    assert de_rec["groupName"] == "Direct Expenses"
+    assert de_rec["totalAmount"] == 630.00
+    assert len(de_rec["ledgers"]) == 1
+    assert de_rec["ledgers"][0]["ledgerName"] == "Packing & Forwarding ( P )"
+
+    # Check Indirect Expenses
+    ie_rec = next(r for r in records if r["category"] == "INDIRECT_EXPENSES")
+    assert ie_rec["groupName"] == "Indirect Expenses"
+    assert ie_rec["totalAmount"] == 3000.00
+    assert len(ie_rec["ledgers"]) == 1
+
+    # Check Indirect Incomes
+    ii_rec = next(r for r in records if r["category"] == "INDIRECT_INCOMES")
+    assert ii_rec["groupName"] == "Indirect Incomes"
+    assert ii_rec["totalAmount"] == 45325.00
+    assert len(ii_rec["ledgers"]) == 1
+
     # Check PL Summary
     sum_rec = next(r for r in records if r["category"] == "PL_SUMMARY")
     assert sum_rec["openingStock"] == 191066.77
     assert sum_rec["closingStock"] == 974522.29
+    assert sum_rec["directExpenses"] == 630.00
+    assert sum_rec["indirectExpenses"] == 3000.00
+    assert sum_rec["indirectIncomes"] == 45325.00
 
 
 def test_voucher_batch_with_pl_data_payload():
@@ -123,21 +160,44 @@ def test_voucher_batch_with_pl_data_payload():
     ]
 
     pl_data = {
-        "purchaseAccounts": {
-            "groupName": "Purchase Accounts",
-            "totalAmount": 6344357.58,
-            "ledgers": [{"ledgerName": "Purchase GST", "amount": 6289307.73}]
-        },
         "salesAccounts": {
             "groupName": "Sales Accounts",
             "totalAmount": 6422473.35,
             "ledgers": [{"ledgerName": "Sales GST", "amount": 6186977.38}]
         },
+        "purchaseAccounts": {
+            "groupName": "Purchase Accounts",
+            "totalAmount": 6344357.58,
+            "ledgers": [{"ledgerName": "Purchase GST", "amount": 6289307.73}]
+        },
+        "directExpenses": {
+            "groupName": "Direct Expenses",
+            "totalAmount": 630.0,
+            "ledgers": [{"ledgerName": "Packing & Forwarding ( P )", "amount": 630.0}]
+        },
+        "indirectExpenses": {
+            "groupName": "Indirect Expenses",
+            "totalAmount": 14592.48,
+            "ledgers": [{"ledgerName": "Bank Charges", "amount": 3.48}]
+        },
+        "directIncomes": {
+            "groupName": "Direct Incomes",
+            "totalAmount": 0.0,
+            "ledgers": []
+        },
+        "indirectIncomes": {
+            "groupName": "Indirect Incomes",
+            "totalAmount": 45325.0,
+            "ledgers": [{"ledgerName": "Packing & Forwarding ( S )", "amount": 45325.0}]
+        },
         "plSummary": {
             "openingStock": 191066.77,
             "closingStock": 974522.29,
             "grossProfit": 860941.29,
-            "nettProfit": 891673.81
+            "nettProfit": 891673.81,
+            "directExpenses": 630.0,
+            "indirectExpenses": 14592.48,
+            "indirectIncomes": 45325.0
         },
         "plAccounts": [
             {"category": "PURCHASE_ACCOUNTS", "totalAmount": 6344357.58},
@@ -172,19 +232,36 @@ def test_voucher_batch_with_pl_data_payload():
     assert sent_body["isLastBatch"] is True
 
     # Verify PL data attached to top-level payload
-    assert "purchaseAccounts" in sent_body
-    assert sent_body["purchaseAccounts"]["totalAmount"] == 6344357.58
     assert "salesAccounts" in sent_body
     assert sent_body["salesAccounts"]["totalAmount"] == 6422473.35
+    assert "purchaseAccounts" in sent_body
+    assert sent_body["purchaseAccounts"]["totalAmount"] == 6344357.58
+    assert "directExpenses" in sent_body
+    assert sent_body["directExpenses"]["totalAmount"] == 630.0
+    assert "indirectExpenses" in sent_body
+    assert sent_body["indirectExpenses"]["totalAmount"] == 14592.48
+    assert "directIncomes" in sent_body
+    assert "indirectIncomes" in sent_body
+    assert sent_body["indirectIncomes"]["totalAmount"] == 45325.0
     assert "plSummary" in sent_body
     assert sent_body["plSummary"]["grossProfit"] == 860941.29
     assert "plAccounts" in sent_body
     assert len(sent_body["plAccounts"]) == 2
 
-    # Verify PL data also injected into record and record.raw (for MongoDB persistence)
+    # Verify voucherGroup injected into records and records.raw
     rec = sent_body["records"][0]
+    assert rec["voucherGroup"] == "Sales Accounts"
+    assert rec["raw"]["voucherGroup"] == "Sales Accounts"
+
+    # Verify PL data also injected into record and record.raw (for MongoDB persistence)
     assert rec["purchaseAccounts"]["totalAmount"] == 6344357.58
     assert rec["salesAccounts"]["totalAmount"] == 6422473.35
+    assert rec["directExpenses"]["totalAmount"] == 630.0
+    assert rec["indirectExpenses"]["totalAmount"] == 14592.48
+    assert rec["indirectIncomes"]["totalAmount"] == 45325.0
     assert rec["raw"]["purchaseAccounts"]["totalAmount"] == 6344357.58
     assert rec["raw"]["salesAccounts"]["totalAmount"] == 6422473.35
+    assert rec["raw"]["directExpenses"]["totalAmount"] == 630.0
+    assert rec["raw"]["indirectExpenses"]["totalAmount"] == 14592.48
+    assert rec["raw"]["indirectIncomes"]["totalAmount"] == 45325.0
     assert rec["raw"]["plSummary"]["grossProfit"] == 860941.29

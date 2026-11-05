@@ -572,6 +572,35 @@ class CloudSyncClient:
                 v_num = str(r.get("voucherNumber") or r.get("voucher_number") or raw_dict.get("name") or raw_dict.get("vouchernumber") or "")
                 v_type = str(r.get("voucherType") or r.get("voucher_type") or raw_dict.get("parent") or raw_dict.get("vouchertypename") or "Sales")
                 v_party = str(r.get("partyLedger") or r.get("party_ledger") or raw_dict.get("party") or raw_dict.get("partyledgername") or "Cash")
+
+                # Determine voucherGroup (e.g. "Sales Accounts", "Purchase Accounts", etc.)
+                v_group = str(r.get("voucherGroup") or raw_dict.get("voucherGroup") or "").strip()
+                if not v_group:
+                    vt_lower = v_type.lower()
+                    rp_lower = str(raw_dict.get("parent") or "").lower()
+                    comb = f"{vt_lower} {rp_lower}"
+                    if "sale" in comb or "credit note" in comb:
+                        v_group = "Sales Accounts"
+                    elif "purchase" in comb or "debit note" in comb:
+                        v_group = "Purchase Accounts"
+                    elif "indirect exp" in comb:
+                        v_group = "Indirect Expenses"
+                    elif "direct exp" in comb:
+                        v_group = "Direct Expenses"
+                    elif "indirect inc" in comb:
+                        v_group = "Indirect Incomes"
+                    elif "direct inc" in comb:
+                        v_group = "Direct Incomes"
+                    elif "receipt" in comb:
+                        v_group = "Receipt"
+                    elif "payment" in comb:
+                        v_group = "Payment"
+                    elif "contra" in comb:
+                        v_group = "Contra"
+                    elif "journal" in comb:
+                        v_group = "Journal"
+                    else:
+                        v_group = v_type.strip() or "Sales Accounts" 
                 
                 raw_amt = r.get("amount")
                 if raw_amt is None:
@@ -636,6 +665,7 @@ class CloudSyncClient:
                     "voucherNumber": str(v_num),
                     "parent": str(raw_dict.get("parent") or v_type),
                     "voucherType": str(v_type),
+                    "voucherGroup": str(v_group),
                     "party": str(raw_dict.get("party") or v_party),
                     "partyLedger": str(v_party),
                     "customerName": str(cust_name),
@@ -682,6 +712,7 @@ class CloudSyncClient:
                     "voucherNumber": str(v_num),
                     "invoiceNumber": str(v_num),
                     "voucherType": str(v_type),
+                    "voucherGroup": str(v_group),
                     "invoiceType": str(v_type),
                     "date": str(formatted_date),
                     "invoiceDate": str(formatted_date),
@@ -743,39 +774,78 @@ class CloudSyncClient:
                 r["syncJobId"] = sync_id
                 r["syncType"] = eff_sync_type
                 r["isFullReplace"] = eff_full_replace
-                if eff_full_replace and fmt_start:
+                if fmt_start:
                     r["startDate"] = fmt_start
-                if eff_full_replace and fmt_end:
+                if fmt_end:
                     r["endDate"] = fmt_end
+                if norm_entity == "VOUCHER" and not r.get("voucherGroup"):
+                    vt = str(r.get("voucherType") or r.get("invoiceType") or "")
+                    comb = vt.lower()
+                    if "sale" in comb or "credit note" in comb:
+                        r["voucherGroup"] = "Sales Accounts"
+                    elif "purchase" in comb or "debit note" in comb:
+                        r["voucherGroup"] = "Purchase Accounts"
+                    elif "receipt" in comb:
+                        r["voucherGroup"] = "Receipt"
+                    elif "payment" in comb:
+                        r["voucherGroup"] = "Payment"
+                    elif "contra" in comb:
+                        r["voucherGroup"] = "Contra"
+                    elif "journal" in comb:
+                        r["voucherGroup"] = "Journal"
+                    else:
+                        r["voucherGroup"] = vt or "Sales Accounts"
                 if "raw" in r and isinstance(r["raw"], dict):
                     r["raw"]["syncJobId"] = sync_id
                     r["raw"]["syncType"] = eff_sync_type
                     r["raw"]["isFullReplace"] = eff_full_replace
-                    if eff_full_replace and fmt_start:
+                    if fmt_start:
                         r["raw"]["startDate"] = fmt_start
-                    if eff_full_replace and fmt_end:
+                    if fmt_end:
                         r["raw"]["endDate"] = fmt_end
+                    if norm_entity == "VOUCHER" and not r["raw"].get("voucherGroup"):
+                        r["raw"]["voucherGroup"] = r.get("voucherGroup")
 
         if norm_entity == "VOUCHER" and pl_data:
-            p_acc = pl_data.get("purchaseAccounts")
             s_acc = pl_data.get("salesAccounts")
+            p_acc = pl_data.get("purchaseAccounts")
+            d_exp = pl_data.get("directExpenses")
+            ind_exp = pl_data.get("indirectExpenses")
+            d_inc = pl_data.get("directIncomes")
+            ind_inc = pl_data.get("indirectIncomes")
             pl_sum = pl_data.get("plSummary")
             pl_arr = pl_data.get("plAccounts")
             for r in records_to_send:
                 if isinstance(r, dict):
-                    if p_acc:
-                        r["purchaseAccounts"] = p_acc
                     if s_acc:
                         r["salesAccounts"] = s_acc
+                    if p_acc:
+                        r["purchaseAccounts"] = p_acc
+                    if d_exp:
+                        r["directExpenses"] = d_exp
+                    if ind_exp:
+                        r["indirectExpenses"] = ind_exp
+                    if d_inc:
+                        r["directIncomes"] = d_inc
+                    if ind_inc:
+                        r["indirectIncomes"] = ind_inc
                     if pl_sum:
                         r["plSummary"] = pl_sum
                     if pl_arr:
                         r["plAccounts"] = pl_arr
                     if "raw" in r and isinstance(r["raw"], dict):
-                        if p_acc:
-                            r["raw"]["purchaseAccounts"] = p_acc
                         if s_acc:
                             r["raw"]["salesAccounts"] = s_acc
+                        if p_acc:
+                            r["raw"]["purchaseAccounts"] = p_acc
+                        if d_exp:
+                            r["raw"]["directExpenses"] = d_exp
+                        if ind_exp:
+                            r["raw"]["indirectExpenses"] = ind_exp
+                        if d_inc:
+                            r["raw"]["directIncomes"] = d_inc
+                        if ind_inc:
+                            r["raw"]["indirectIncomes"] = ind_inc
                         if pl_sum:
                             r["raw"]["plSummary"] = pl_sum
                         if pl_arr:
@@ -792,21 +862,28 @@ class CloudSyncClient:
             "isLastBatch": is_last_batch
         }
 
+        if fmt_start:
+            payload["startDate"] = fmt_start
+        if fmt_end:
+            payload["endDate"] = fmt_end
+
         if norm_entity == "VOUCHER" and pl_data:
-            if pl_data.get("purchaseAccounts"):
-                payload["purchaseAccounts"] = pl_data.get("purchaseAccounts")
             if pl_data.get("salesAccounts"):
                 payload["salesAccounts"] = pl_data.get("salesAccounts")
+            if pl_data.get("purchaseAccounts"):
+                payload["purchaseAccounts"] = pl_data.get("purchaseAccounts")
+            if pl_data.get("directExpenses"):
+                payload["directExpenses"] = pl_data.get("directExpenses")
+            if pl_data.get("indirectExpenses"):
+                payload["indirectExpenses"] = pl_data.get("indirectExpenses")
+            if pl_data.get("directIncomes"):
+                payload["directIncomes"] = pl_data.get("directIncomes")
+            if pl_data.get("indirectIncomes"):
+                payload["indirectIncomes"] = pl_data.get("indirectIncomes")
             if pl_data.get("plSummary"):
                 payload["plSummary"] = pl_data.get("plSummary")
             if pl_data.get("plAccounts"):
                 payload["plAccounts"] = pl_data.get("plAccounts")
-
-        if eff_full_replace:
-            if fmt_start:
-                payload["startDate"] = fmt_start
-            if fmt_end:
-                payload["endDate"] = fmt_end
 
         date_info = f" [{fmt_start} -> {fmt_end}]" if (eff_full_replace and fmt_start and fmt_end) else ""
         logger.info(

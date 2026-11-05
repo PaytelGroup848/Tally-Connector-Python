@@ -373,12 +373,37 @@ def sync_vouchers(
         logger.info(f"Voucher Date Filter for '{c_name}': Kept {len(filtered)} of {total_raw} vouchers strictly within {tally_from} to {tally_to}")
         extracted_vouchers = filtered
 
-    # Recalculate max_voucher_alter strictly from filtered vouchers
+    # Recalculate max_voucher_alter strictly from filtered vouchers & assign voucherGroup
     max_voucher_alter = 0
     for v in extracted_vouchers:
         alt = int(v.get("alterid", 0) or 0)
         if alt > max_voucher_alter:
             max_voucher_alter = alt
+        if not v.get("voucherGroup"):
+            v_type_str = str(v.get("voucherType") or v.get("voucher_type") or v.get("parent") or "")
+            comb = v_type_str.lower()
+            if "sale" in comb or "credit note" in comb:
+                v["voucherGroup"] = "Sales Accounts"
+            elif "purchase" in comb or "debit note" in comb:
+                v["voucherGroup"] = "Purchase Accounts"
+            elif "indirect exp" in comb:
+                v["voucherGroup"] = "Indirect Expenses"
+            elif "direct exp" in comb:
+                v["voucherGroup"] = "Direct Expenses"
+            elif "indirect inc" in comb:
+                v["voucherGroup"] = "Indirect Incomes"
+            elif "direct inc" in comb:
+                v["voucherGroup"] = "Direct Incomes"
+            elif "receipt" in comb:
+                v["voucherGroup"] = "Receipt"
+            elif "payment" in comb:
+                v["voucherGroup"] = "Payment"
+            elif "contra" in comb:
+                v["voucherGroup"] = "Contra"
+            elif "journal" in comb:
+                v["voucherGroup"] = "Journal"
+            else:
+                v["voucherGroup"] = v_type_str or "Sales Accounts"
 
 
 
@@ -513,6 +538,10 @@ def sync_vouchers(
                     "voucherType": v_type,
 
                     "voucher_type": v_type,
+
+                    "voucherGroup": str(v.get("voucherGroup") or v_type),
+
+                    "voucher_group": str(v.get("voucherGroup") or v_type),
 
                     "partyLedger": v_party,
 

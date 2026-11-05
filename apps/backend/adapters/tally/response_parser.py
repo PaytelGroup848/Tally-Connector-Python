@@ -1069,11 +1069,36 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> list[dict[str, Any]
             alt_id = int(alter_elem.text.strip()) if alter_elem is not None and alter_elem.text and alter_elem.text.strip().isdigit() else 0
 
             ext_vch_id = str(guid_val or v_num)
+            vt_lower = str(v_type or "").lower()
+            if "sale" in vt_lower or "credit note" in vt_lower:
+                v_grp = "Sales Accounts"
+            elif "purchase" in vt_lower or "debit note" in vt_lower:
+                v_grp = "Purchase Accounts"
+            elif "indirect exp" in vt_lower:
+                v_grp = "Indirect Expenses"
+            elif "direct exp" in vt_lower:
+                v_grp = "Direct Expenses"
+            elif "indirect inc" in vt_lower:
+                v_grp = "Indirect Incomes"
+            elif "direct inc" in vt_lower:
+                v_grp = "Direct Incomes"
+            elif "receipt" in vt_lower:
+                v_grp = "Receipt"
+            elif "payment" in vt_lower:
+                v_grp = "Payment"
+            elif "contra" in vt_lower:
+                v_grp = "Contra"
+            elif "journal" in vt_lower:
+                v_grp = "Journal"
+            else:
+                v_grp = str(v_type or "Sales Accounts")
+
             items.append({
                 "voucherId": ext_vch_id,
                 "tallyExternalId": ext_vch_id,
                 "voucherNumber": str(v_num or ""),
                 "voucherType": str(v_type or "Sales"),
+                "voucherGroup": v_grp,
                 "date": str(parsed_date or eff_date or "2023-04-01"),
                 "effectiveDate": str(eff_date or parsed_date or "2023-04-01"),
                 "reference": str(ref_num or ""),
@@ -1120,6 +1145,7 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> list[dict[str, Any]
                     "voucherNumber": str(v_num or ""),
                     "parent": str(v_type or "Sales"),
                     "voucherType": str(v_type or "Sales"),
+                    "voucherGroup": v_grp,
                     "party": str(party_val or "Cash"),
                     "partyLedger": str(party_val or "Cash"),
                     "customerName": str(party_val or "Cash"),
