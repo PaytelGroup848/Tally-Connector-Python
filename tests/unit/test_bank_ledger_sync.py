@@ -714,6 +714,83 @@ def test_sales_voucher_with_axis_bank_as_party_ledger():
     assert party_leg.find("LEDGERNAME").text == "Axis"
 
 
+def test_bank_ledger_empty_tag_trap_and_cloud_fallback(monkeypatch):
+    from apps.backend.adapters.tally.response_parser import parse_metadata_response
+    from shared.cloud.cloud_sync_client import CloudSyncClient
+    from unittest.mock import MagicMock
+
+    # 1. Verify Reason A: Empty XML tags (ACCOUNTHOLDERNAME / PAYMENTFAVOURING) do not trap the parser
+    xml_with_empty_tags = """<ENVELOPE>
+      <BODY>
+        <DATA>
+          <COLLECTION>
+            <LEDGER NAME="Kotak Mahindra Bank Ltd" RESERVEDNAME="">
+              <PARENT>Bank Accounts</PARENT>
+              <IFSCODE>KKBK0000999</IFSCODE>
+              <BRANCHNAME>Kandivali (West)</BRANCHNAME>
+              <BANKDETAILS>999999999</BANKDETAILS>
+              <ACCOUNTHOLDERNAME></ACCOUNTHOLDERNAME>
+              <PAYMENTDETAILS.LIST>
+                <PAYMENTFAVOURING></PAYMENTFAVOURING>
+              </PAYMENTDETAILS.LIST>
+              <BANKACCHOLDERNAME>Tarun Enterprise</BANKACCHOLDERNAME>
+            </LEDGER>
+          </COLLECTION>
+        </DATA>
+      </BODY>
+    </ENVELOPE>"""
+    ledgers = parse_metadata_response(xml_with_empty_tags, tag_name="Ledger")
+    assert len(ledgers) == 1
+    assert ledgers[0]["bankDetails"]["accountHolderName"] == "Tarun Enterprise"
+    assert ledgers[0]["bankDetails"]["accountNumber"] == "999999999"
+
+    # 2. Verify Reason B: Pure Cloud sync fallback to company name when Tally XML omits bank holder name
+    xml_without_holder = """<ENVELOPE>
+      <BODY>
+        <DATA>
+          <COLLECTION>
+            <LEDGER NAME="Kotak Mahindra Bank Ltd" RESERVEDNAME="">
+              <PARENT>Bank Accounts</PARENT>
+              <IFSCODE>KKBK0000999</IFSCODE>
+              <BRANCHNAME>Kandivali (West)</BRANCHNAME>
+              <BANKDETAILS>999999999</BANKDETAILS>
+            </LEDGER>
+          </COLLECTION>
+        </DATA>
+      </BODY>
+    </ENVELOPE>"""
+    ledgers_no_holder = parse_metadata_response(xml_without_holder, tag_name="Ledger")
+    assert len(ledgers_no_holder) == 1
+
+    captured_payload = {}
+    class MockClient:
+        def post(self, url, json=None, headers=None):
+            nonlocal captured_payload
+            captured_payload = json
+            class MockResp:
+                status_code = 200
+                text = '{"success": true}'
+                def json(self):
+                    return {"success": True}
+            return MockResp()
+
+    mock_auth = MagicMock()
+    mock_auth.base_url = "http://localhost:8000"
+    mock_auth.access_token = "mock-token"
+    mock_auth._get_client.return_value = MockClient()
+
+    client = CloudSyncClient(mock_auth)
+    ok, msg, data = client.sync_batch("sync-test-99", "Tarun Enterprise (25-26)", "LEDGER", ledgers_no_holder)
+    assert ok is True
+    records = captured_payload.get("records", [])
+    assert len(records) == 1
+    # Pure-cloud fallback must guarantee accountHolderName is populated with company_name
+    assert records[0]["bankDetails"]["accountHolderName"] == "Tarun Enterprise (25-26)"
+    assert records[0]["bankDetails"]["accountNumber"] == "999999999"
+    assert records[0]["bankDetails"]["ifscCode"] == "KKBK0000999"
+
+
+
 
 
 

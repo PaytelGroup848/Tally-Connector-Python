@@ -57,7 +57,7 @@ def main():
         print(f"    ISCC.exe {ISS_FILE}")
         return
 
-    cmd = [iscc_path, str(ISS_FILE)]
+    cmd = [iscc_path, f"/DMyAppVersion={ver}", str(ISS_FILE)]
     print(f"Executing: {' '.join(cmd)}")
     res = subprocess.run(cmd, cwd=str(ROOT))
 

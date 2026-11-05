@@ -1,11 +1,11 @@
 {
-  "version": "1.0.24",
-  "latestVersion": "1.0.24",
-  "latest_version": "1.0.24",
+  "version": "1.0.0",
+  "latestVersion": "1.0.0",
+  "latest_version": "1.0.0",
   "minVersion": "1.0.0",
-  "releaseNotes": "Enterprise Production Engine: Deterministic RFC-4122 UUIDv5 fallback for missing Tally company GUIDs, seamless cloud onboarding, live Tally statistics chip counts, and Pure Cloud API Mode.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.24.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.24.exe",
-  "sha256": "5e8f93a05dd64b0ec449fae32e29389b3876c94358c801824e9008242fd08ca6",
+  "releaseNotes": "CtrlBooks Release v1.0.0 - Full Tally Prime automatic two-way synchronization, bank account holder extraction, dynamic discovery, and real-time cloud analytics.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.0.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.0.exe",
+  "sha256": "",
   "mandatory": false
 }

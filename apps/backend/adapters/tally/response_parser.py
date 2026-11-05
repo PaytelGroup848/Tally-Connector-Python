@@ -253,6 +253,127 @@ def parse_rate(rate_str: Any) -> float:
             return 0.0
     return 0.0
 
+def parse_tally_balance(raw_val: Any) -> tuple[float, str, bool]:
+    """
+    Parses Tally raw balance string or float into:
+    (clean_amount, balance_type, is_deemed_positive)
+    
+    Tally Core Accounting Rules:
+    - In Tally XML collections:
+      * Negative (-) denotes Debit (Dr) -> is_deemed_positive = True
+      * Positive (+) denotes Credit (Cr) -> is_deemed_positive = False
+      * Zero (0) denotes balanced/zero -> balance_type = ""
+    - If string explicitly contains 'Dr' or 'Cr' suffixes:
+      * 'Dr' -> 'Dr', True
+      * 'Cr' -> 'Cr', False
+    
+    Returns:
+      (abs_magnitude, "Dr"|"Cr"|"", is_deemed_positive)
+    """
+    if raw_val is None:
+        return 0.0, "", True
+    
+    text = str(raw_val).strip()
+    if not text:
+        return 0.0, "", True
+        
+    u_text = text.upper()
+    has_dr = "DR" in u_text
+    has_cr = "CR" in u_text
+    
+    # Extract numeric part (including minus and decimal dot)
+    clean_num = re.sub(r'[^\d.-]', '', text)
+    try:
+        val = float(clean_num) if clean_num else 0.0
+    except (ValueError, TypeError):
+        val = 0.0
+        
+    abs_val = round(abs(val), 2)
+    if abs_val < 0.000001:
+        return 0.0, "", True
+        
+    if has_dr:
+        return abs_val, "Dr", True
+    elif has_cr:
+        return abs_val, "Cr", False
+    else:
+        # Standard Tally XML algebraic convention: Negative is Debit, Positive is Credit
+        if val < 0:
+            return abs_val, "Dr", True
+        else:
+            return abs_val, "Cr", False
+
+def is_asset_ledger(ledger_type: str = "", parent: str = "") -> bool:
+    """
+    Returns True if the ledger follows Asset / Bank signed balance convention:
+    Debit (+) is Positive, Credit (-) is Negative.
+    This applies to all Assets, Bank Accounts, Cash, Customers (Sundry Debtors),
+    as well as Bank OD / Bank OCC / Overdraft accounts (where loan utilized is Credit/Negative,
+    and surplus paid is Debit/Positive).
+    """
+    p = str(parent or "").strip().lower()
+    lt = str(ledger_type or "").strip().upper()
+    if lt in ("ASSET", "BANK", "CASH", "CUSTOMER"):
+        return True
+    if any(k in p for k in ("asset", "bank", "cash", "debtor", "customer", "deposit", "investment", "stock", "overdraft", "od a/c", "occ a/c")):
+        return True
+    return False
+
+def compute_signed_balance(raw_val: Any, is_asset: bool) -> float:
+    """
+    Computes signed balance (+ or -) according to CtrlBooks standard:
+    - ASSETS:
+        Tally Debit (-) -> CtrlBooks Positive (+)
+        Tally Credit (+) -> CtrlBooks Negative (-)
+        Formula: -1 * raw_val
+    - LIABILITIES / EXPENSES / INCOMES:
+        Tally Debit (-) -> CtrlBooks Negative (-)
+        Tally Credit (+) -> CtrlBooks Positive (+)
+        Formula: +1 * raw_val
+    """
+    if raw_val is None:
+        return 0.0
+    if isinstance(raw_val, (int, float)):
+        val = float(raw_val)
+    else:
+        text = str(raw_val).strip()
+        if not text:
+            return 0.0
+        u = text.upper()
+        clean_num = re.sub(r'[^\d.-]', '', text)
+        try:
+            val = float(clean_num) if clean_num else 0.0
+        except (ValueError, TypeError):
+            val = 0.0
+        if "DR" in u:
+            val = -abs(val)
+        elif "CR" in u:
+            val = abs(val)
+
+    if is_asset:
+        return round(-val, 2)
+    else:
+        return round(val, 2)
+
+def map_ctrlbooks_balance_type(tally_bal_type: str, is_asset: bool) -> str:
+    """
+    CtrlBooks Balance Sheet Standard Mapping:
+    - ASSET:
+        Tally Debit (Dr) -> CtrlBooks Credit (Cr)
+        Tally Credit (Cr) -> CtrlBooks Debit (Dr)
+    - LIABILITY:
+        Tally Debit (Dr) -> CtrlBooks Debit (Dr)
+        Tally Credit (Cr) -> CtrlBooks Credit (Cr)
+    """
+    clean_type = str(tally_bal_type or "").strip().title()
+    if clean_type not in ("Dr", "Cr"):
+        return clean_type
+    
+    if is_asset:
+        return "Cr" if clean_type == "Dr" else "Dr"
+    else:
+        return "Dr" if clean_type == "Dr" else "Cr"
+
 _ITEM_MASTER_LOOKUP_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 
 def lookup_stock_item_details(item_name: str, company_name: str = "") -> dict[str, Any]:
@@ -360,24 +481,26 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> list[dict[str, Any]
             ltype_elem = find_first(elem, "LEDGERCLASSIFICATION", "LEDGERTYPE")
             alter_elem = elem.find("ALTERID")
 
-            c_bal = 0.0
-            if bal_elem is not None and bal_elem.text:
-                try:
-                    c_bal = float(bal_elem.text.strip())
-                except ValueError:
-                    c_bal = 0.0
+            c_bal_raw = bal_elem.text.strip() if bal_elem is not None and bal_elem.text else None
+            op_bal_raw = op_bal_elem.text.strip() if op_bal_elem is not None and op_bal_elem.text else None
 
-            op_bal = 0.0
-            if op_bal_elem is not None and op_bal_elem.text:
-                try:
-                    op_bal = float(op_bal_elem.text.strip())
-                except ValueError:
-                    op_bal = 0.0
+            c_bal_mag, tally_c_type, _ = parse_tally_balance(c_bal_raw)
+            op_bal_mag, tally_op_type, _ = parse_tally_balance(op_bal_raw)
 
             parent_val = parent_elem.text.strip() if parent_elem is not None and parent_elem.text else ""
             gstin_val = gstin_elem.text.strip() if gstin_elem is not None and gstin_elem.text and gstin_elem.text.strip() else None
             raw_ltype = ltype_elem.text.strip() if ltype_elem is not None and ltype_elem.text else None
             computed_ltype = classify_ledger_type(parent_val, raw_ltype)
+
+            # Signed balance convention (+ or -) without forcing Cr/Dr:
+            # Asset: Tally Debit (-) -> CtrlBooks Positive (+), Tally Credit (+) -> Negative (-)
+            # Liability: Tally Debit (-) -> Negative (-), Tally Credit (+) -> Positive (+)
+            is_asset = is_asset_ledger(computed_ltype, parent_val)
+            c_bal = compute_signed_balance(c_bal_raw, is_asset)
+            op_bal = compute_signed_balance(op_bal_raw, is_asset)
+            c_bal_type = ""
+            op_bal_type = ""
+            c_is_deemed = bool(c_bal >= 0)
             guid_val = guid_elem.text.strip() if guid_elem is not None and guid_elem.text else None
             alt_id = int(alter_elem.text.strip()) if alter_elem is not None and alter_elem.text and alter_elem.text.strip().isdigit() else 0
 
@@ -433,23 +556,23 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> list[dict[str, Any]
                         credit_days = 0
 
             # Parse Bank Details (Account No, IFSC, Bank Name, Branch, Account Holder)
-            acc_elem = find_first(elem, "BANKDETAILS", "BANKACCOUNTNUMBER", "ACCOUNTNUMBER", ".//BANKDETAILS.LIST/ACCOUNTNUMBER", ".//PAYMENTDETAILS.LIST/ACCOUNTNUMBER")
-            acc_num_val = acc_elem.text.strip() if acc_elem is not None and acc_elem.text and acc_elem.text.strip() else ""
-
-            ifsc_elem = find_first(elem, "IFSCODE", ".//BANKDETAILS.LIST/IFSCODE", ".//PAYMENTDETAILS.LIST/IFSCODE")
-            ifsc_val = ifsc_elem.text.strip() if ifsc_elem is not None and ifsc_elem.text and ifsc_elem.text.strip() else ""
-
-            bname_elem = find_first(elem, "BANKNAME", ".//BANKDETAILS.LIST/BANKNAME", ".//PAYMENTDETAILS.LIST/BANKNAME")
-            bname_val = bname_elem.text.strip() if bname_elem is not None and bname_elem.text and bname_elem.text.strip() else ""
-
-            branch_elem = find_first(elem, "BRANCHNAME", ".//BANKDETAILS.LIST/BRANCHNAME", ".//PAYMENTDETAILS.LIST/BRANCHNAME")
-            branch_val = branch_elem.text.strip() if branch_elem is not None and branch_elem.text and branch_elem.text.strip() else ""
-
-            holder_elem = find_first(elem, "BANKACCHOLDERNAME", "ACCOUNTHOLDERNAME", ".//BANKDETAILS.LIST/ACCOUNTHOLDERNAME", ".//PAYMENTDETAILS.LIST/ACCOUNTHOLDERNAME")
-            holder_val = holder_elem.text.strip() if holder_elem is not None and holder_elem.text and holder_elem.text.strip() else ""
-
-            swift_elem = find_first(elem, "SWIFTCODE", ".//BANKDETAILS.LIST/SWIFTCODE", ".//PAYMENTDETAILS.LIST/SWIFTCODE")
-            swift_val = swift_elem.text.strip() if swift_elem is not None and swift_elem.text and swift_elem.text.strip() else ""
+            acc_num_val = find_first_text(elem, "BANKDETAILS", "BANKACCOUNTNUMBER", "ACCOUNTNUMBER", ".//BANKDETAILS.LIST/ACCOUNTNUMBER", ".//PAYMENTDETAILS.LIST/ACCOUNTNUMBER")
+            ifsc_val = find_first_text(elem, "IFSCODE", ".//BANKDETAILS.LIST/IFSCODE", ".//PAYMENTDETAILS.LIST/IFSCODE")
+            bname_val = find_first_text(elem, "BANKNAME", ".//BANKDETAILS.LIST/BANKNAME", ".//PAYMENTDETAILS.LIST/BANKNAME")
+            branch_val = find_first_text(elem, "BRANCHNAME", ".//BANKDETAILS.LIST/BRANCHNAME", ".//PAYMENTDETAILS.LIST/BRANCHNAME")
+            holder_val = find_first_text(
+                elem,
+                "BANKACCHOLDERNAME",
+                "ACCOUNTHOLDERNAME",
+                "PAYMENTFAVOURING",
+                ".//BANKDETAILS.LIST/BANKACCHOLDERNAME",
+                ".//BANKDETAILS.LIST/ACCOUNTHOLDERNAME",
+                ".//PAYMENTDETAILS.LIST/PAYMENTFAVOURING",
+                ".//PAYMENTDETAILS.LIST/ACCOUNTHOLDERNAME",
+                ".//PAYMENTDETAILS.LIST/BANKACCHOLDERNAME",
+                default=""
+            )
+            swift_val = find_first_text(elem, "SWIFTCODE", ".//BANKDETAILS.LIST/SWIFTCODE", ".//PAYMENTDETAILS.LIST/SWIFTCODE")
 
             is_bank_ledger = computed_ltype == "BANK" or "bank" in parent_val.lower()
             bank_details = None
@@ -488,7 +611,13 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> list[dict[str, Any]
                 "registration_type": reg_type_val,
                 "pan": pan_val,
                 "openingBalance": op_bal,
+                "openingBalanceType": op_bal_type,
                 "closingBalance": c_bal,
+                "closingBalanceType": c_bal_type,
+                "balanceType": c_bal_type,
+                "drCr": c_bal_type,
+                "isDeemedPositive": c_is_deemed,
+                "isBalanceProcessed": True,
                 "creditLimit": credit_limit,
                 "creditDays": credit_days,
                 "creditPeriod": credit_period_str,
@@ -513,7 +642,15 @@ def parse_metadata_response(xml_text: str, tag_name: str) -> list[dict[str, Any]
                     "registration_type": reg_type_val,
                     "pan": pan_val,
                     "openingBalance": op_bal,
+                    "openingBalanceType": op_bal_type,
                     "closingBalance": c_bal,
+                    "closingBalanceType": c_bal_type,
+                    "balanceType": c_bal_type,
+                    "drCr": c_bal_type,
+                    "isDeemedPositive": c_is_deemed,
+                    "isBalanceProcessed": True,
+                    "rawClosingBalance": c_bal_raw,
+                    "rawOpeningBalance": op_bal_raw,
                     "creditLimit": credit_limit,
                     "creditDays": credit_days,
                     "creditPeriod": credit_period_str,

@@ -41,8 +41,13 @@ class TestPartiesModule(unittest.TestCase):
         self.assertEqual(l["creditLimit"], 75000.0)
         self.assertEqual(l["creditDays"], 45)
         self.assertEqual(l["creditPeriod"], "45 Days")
-        self.assertEqual(l["openingBalance"], -25000.0)
-        self.assertEqual(l["closingBalance"], -35000.0)
+        self.assertEqual(l["openingBalance"], 25000.0)
+        self.assertEqual(l["openingBalanceType"], "")
+        self.assertEqual(l["closingBalance"], 35000.0)
+        self.assertEqual(l["closingBalanceType"], "")
+        self.assertEqual(l["balanceType"], "")
+        self.assertEqual(l["drCr"], "")
+        self.assertEqual(l["isDeemedPositive"], True)
 
     def test_voucher_party_ledger_flag(self):
         voucher_xml = """<ENVELOPE>

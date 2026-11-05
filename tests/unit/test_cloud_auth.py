@@ -105,7 +105,7 @@ class TestCloudAuthService(unittest.TestCase):
         mock_resp.json.return_value = {"success": True, "message": "Sync started", "data": {"syncId": "sync_101"}}
         mock_post.return_value = mock_resp
 
-        ok, msg, data = self.auth_svc.sync_start("Demo Company", "G1", "FULL", 100)
+        ok, msg, data = self.auth_svc.sync_start("Demo Company", "G1", "FULL", 100, company_id="6aa38f546cd43af3d64fbc0d")
         self.assertTrue(ok)
         self.assertEqual(data["syncId"], "sync_101")
 
@@ -264,6 +264,50 @@ class TestCloudAuthService(unittest.TestCase):
         self.assertEqual(raw["advancedSettings"]["dispatchDocNo"], "DC-100")
         self.assertEqual(len(raw["items"]), 1)
         self.assertEqual(len(raw["lines"]), 1)
+
+    @patch("httpx.Client.get")
+    def test_get_me_preserves_user_fields_pure_api(self, mock_get):
+        """Verifies get_me merges API data without overwriting existing session user details and without DB."""
+        self.auth_svc.access_token = "valid_tok"
+        self.auth_svc.current_user = {
+            "email": "himanshu@cloudata.in",
+            "name": "Himanshu",
+            "mobile": "9999999999"
+        }
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = '{"success": true, "data": {"connector": {"status": "ONLINE"}, "plan": {"name": "Pro"}}}'
+        mock_resp.json.return_value = {
+            "success": True,
+            "data": {
+                "connector": {"status": "ONLINE"},
+                "plan": {"name": "Pro"}
+            }
+        }
+        mock_get.return_value = mock_resp
+
+        ok, data = self.auth_svc.get_me()
+        self.assertTrue(ok)
+        # Verify current_user still has session fields
+        self.assertEqual(self.auth_svc.current_user.get("email"), "himanshu@cloudata.in")
+        self.assertEqual(self.auth_svc.current_user.get("name"), "Himanshu")
+        self.assertEqual(self.auth_svc.current_user.get("connector", {}).get("status"), "ONLINE")
+
+    def test_update_profile_api_driven(self):
+        """Verifies update_profile updates in-memory profile and session cache without DB."""
+        self.auth_svc.access_token = "valid_tok"
+        ok, msg = self.auth_svc.update_profile(
+            name="New Name",
+            mobile="8888888888",
+            email="test@test.com",
+            postal_code="110001",
+            country_code="IN +91"
+        )
+        self.assertTrue(ok)
+        self.assertEqual(self.auth_svc.current_user.get("name"), "New Name")
+        self.assertEqual(self.auth_svc.current_user.get("mobile"), "8888888888")
+        self.assertEqual(self.auth_svc.current_user.get("email"), "test@test.com")
 
 
 if __name__ == "__main__":

@@ -18,21 +18,7 @@ from apps.desktop_app.ui.widgets.toast import ToastNotification
 
 logger = logging.getLogger("app.desktop.connected_dashboard")
 
-def parse_interval_to_ms(interval_str: str) -> int:
-    clean = str(interval_str or "").strip().lower()
-    if "real-time" in clean or "realtime" in clean:
-        return 30 * 1000  # 30 seconds
-    elif "1 min" in clean:
-        return 60 * 1000  # 1 minute
-    elif "15 min" in clean:
-        return 15 * 60 * 1000  # 15 minutes
-    elif "5 min" in clean:
-        return 5 * 60 * 1000  # 5 minutes
-    elif "1 hour" in clean or "60 min" in clean:
-        return 60 * 60 * 1000  # 1 hour
-    elif "manual" in clean:
-        return 0  # Manual (disabled)
-    return 5 * 60 * 1000  # default 5 minutes
+from shared.connection_config import parse_interval_to_ms
 
 
 class CompanyCardFrame(QFrame):
@@ -57,7 +43,7 @@ class ConnectedDashboardScreen(QWidget):
         self.init_ui()
         self.auto_timer = QTimer(self)
         self.auto_timer.timeout.connect(self.load_live_companies)
-        self.auto_timer.start(10000)
+        self.auto_timer.start(25000)
 
         # Periodic background auto-sync timer (respects Sync Interval Frequency setting)
         self.periodic_sync_timer = QTimer(self)
@@ -73,19 +59,33 @@ class ConnectedDashboardScreen(QWidget):
         super().showEvent(event)
         self.refresh_sync_interval()
 
-    def refresh_sync_interval(self):
+    def refresh_sync_interval(self, custom_interval: Optional[str] = None):
         """Reads current sync_interval_minutes from connection config and updates the periodic timer."""
         try:
-            from shared.connection_config import load_connection_config
-            cfg = load_connection_config()
-            interval_str = cfg.get("sync_interval_minutes", "5 mins")
+            from shared.connection_config import load_connection_config, parse_interval_to_ms
+            if custom_interval:
+                interval_str = str(custom_interval).strip()
+            else:
+                cfg = load_connection_config()
+                interval_str = str(cfg.get("sync_interval_minutes", "1 min")).strip()
+
             ms = parse_interval_to_ms(interval_str)
             self.periodic_sync_timer.stop()
             if ms > 0:
                 self.periodic_sync_timer.start(ms)
                 logger.info(f"Periodic auto-sync active: running every {interval_str} ({ms}ms)")
+                if hasattr(self, "pill_sync_interval") and self.pill_sync_interval:
+                    self.pill_sync_interval.setText(f"⏱️ Every {interval_str}")
+                    self.pill_sync_interval.setStyleSheet("background-color: #ECFDF5; color: #047857; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 12px; border: 1px solid #A7F3D0;")
+                if hasattr(self, "c3_val"):
+                    self.c3_val.setText(f"🟢 Every {interval_str}")
             else:
                 logger.info("Periodic auto-sync disabled (Manual mode).")
+                if hasattr(self, "pill_sync_interval") and self.pill_sync_interval:
+                    self.pill_sync_interval.setText("⚪ Manual Sync")
+                    self.pill_sync_interval.setStyleSheet("background-color: #F1F5F9; color: #64748B; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 12px; border: 1px solid #CBD5E1;")
+                if hasattr(self, "c3_val"):
+                    self.c3_val.setText("⚪ Manual Sync")
         except Exception as exc:
             logger.debug(f"Error configuring periodic sync timer: {exc}")
 
@@ -96,7 +96,12 @@ class ConnectedDashboardScreen(QWidget):
             return
 
         logger.info("Periodic auto-sync triggered: syncing open companies in background...")
-        self.start_qthread_sync("", "TALLY")
+        if hasattr(self, "pill_sync_interval") and self.pill_sync_interval:
+            self.pill_sync_interval.setText("🔄 Auto Syncing...")
+            self.pill_sync_interval.setStyleSheet("background-color: #FEF3C7; color: #92400E; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 12px; border: 1px solid #FDE68A;")
+        if hasattr(self, "c3_val"):
+            self.c3_val.setText("🟡 Auto Syncing...")
+        self.start_qthread_sync("", "TALLY", is_periodic=True)
 
     def on_command_received(self, cmd_id: str, cmd_type: str):
         ToastNotification.show_toast(self, f"Cloud Command Received: {cmd_type}", duration_ms=2500)
@@ -164,6 +169,20 @@ class ConnectedDashboardScreen(QWidget):
         """)
         sb_layout.addWidget(self.pill_tally_ready)
         sb_layout.addStretch()
+
+        self.pill_sync_interval = QLabel("⏱️ Auto-Sync: 1 min")
+        self.pill_sync_interval.setStyleSheet("""
+            QLabel {
+                background-color: #ECFDF5;
+                color: #047857;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 4px 10px;
+                border-radius: 12px;
+                border: 1px solid #A7F3D0;
+            }
+        """)
+        sb_layout.addWidget(self.pill_sync_interval)
 
         self.st_lbl = self.pill_conn_status
         layout.addWidget(status_bar)
@@ -235,13 +254,52 @@ class ConnectedDashboardScreen(QWidget):
     def on_header_sync_clicked(self):
         self.start_qthread_sync("", "TALLY")
 
+    def on_company_sync_clicked(self, comp_name: str, source: str, card: Optional[CompanyCardFrame] = None):
+        """
+        Handles click on 'Sync' / '+ Sync Now' button for a company.
+        If date range has NOT been configured for this company yet:
+            Opens SyncDateDialog to prompt the user once.
+        If already configured:
+            Starts sync immediately using the saved date range.
+        """
+        from shared.cloud.helpers import get_company_sync_dates, save_company_sync_dates
+        from apps.desktop_app.ui.widgets.sync_date_dialog import SyncDateDialog
+
+        f_date, t_date, is_conf = get_company_sync_dates(comp_name)
+        if not is_conf:
+            dlg = SyncDateDialog(comp_name, parent=self)
+            if dlg.exec():
+                f_date, t_date, fy_label = dlg.get_dates()
+                save_company_sync_dates(comp_name, f_date, t_date, fy_label, company_name=comp_name, reset_voucher_checkpoint=True)
+                from apps.desktop_app.ui.widgets.toast import ToastNotification
+                ToastNotification.show_toast(self, f"Configured {fy_label} for '{comp_name}'", "success", duration_ms=2500)
+                self.start_qthread_sync(comp_name, source, card, is_full_sync=True, from_date=f_date, to_date=t_date)
+            else:
+                return
+        else:
+            self.start_qthread_sync(comp_name, source, card, from_date=f_date, to_date=t_date)
+
+    def handle_change_sync_date(self, comp_name: str, source: str, card: Optional[CompanyCardFrame] = None):
+        """Opens SyncDateDialog from 3-dots menu to edit company financial year / date range."""
+        from shared.cloud.helpers import get_company_sync_dates, save_company_sync_dates
+        from apps.desktop_app.ui.widgets.sync_date_dialog import SyncDateDialog
+        from apps.desktop_app.ui.widgets.toast import ToastNotification
+
+        f_date, t_date, _ = get_company_sync_dates(comp_name)
+        dlg = SyncDateDialog(comp_name, initial_from_date=f_date, initial_to_date=t_date, is_change_mode=True, parent=self)
+        if dlg.exec():
+            new_f, new_t, fy_label = dlg.get_dates()
+            save_company_sync_dates(comp_name, new_f, new_t, fy_label, company_name=comp_name, reset_voucher_checkpoint=True)
+            ToastNotification.show_toast(self, f"Sync date updated: {fy_label} for '{comp_name}'", "success", duration_ms=3000)
+            self.start_qthread_sync(comp_name, source, card, is_full_sync=True, from_date=new_f, to_date=new_t)
+
     def set_source_filter(self, source_type: str):
         self.active_source_filter = "TALLY"
         self.load_live_companies()
 
     def load_live_companies(self):
         if hasattr(self, "_active_workers") and any(w.isRunning() for w in self._active_workers):
-            QTimer.singleShot(300, self.load_live_companies)
+            # Do not poll or interrupt Tally while a sync worker is actively querying Port 9000
             return
         if getattr(self, "_is_fetching_companies", False):
             return
@@ -309,12 +367,10 @@ class ConnectedDashboardScreen(QWidget):
                             total_records += (c_stats.get("ledgers", 0) + c_stats.get("vouchers", 0) + c_stats.get("items", 0))
                         is_synced_comp = False
                         try:
-                            from shared.cloud.helpers import _safe_get_collection
-                            col = _safe_get_collection("companies")
-                            if col is not None:
-                                c_doc = col.find_one({"$or": [{"company_name": c_name}, {"name": c_name}, {"tallyCompanyName": c_name}]})
-                                if c_doc and (c_doc.get("status") == "SYNCED" or c_doc.get("cloud_company_id") or c_doc.get("last_sync_at")):
-                                    is_synced_comp = True
+                            from shared.cloud.helpers import get_local_checkpoint
+                            cp = get_local_checkpoint(c_name)
+                            if cp and (cp.get("status") == "SYNCED" or cp.get("cloud_company_id") or cp.get("updated_at")):
+                                is_synced_comp = True
                         except Exception:
                             pass
                         self.cards_layout.addWidget(self.create_company_card(c_name, c["path"], is_synced_comp, "TALLY", stats=c_stats))
@@ -358,11 +414,45 @@ class ConnectedDashboardScreen(QWidget):
         super().closeEvent(event)
 
     def cleanup(self):
-        if hasattr(self, "auto_timer"):
+        # 1. Stop background auto and periodic sync timers
+        if hasattr(self, "auto_timer") and self.auto_timer:
             self.auto_timer.stop()
+        if hasattr(self, "periodic_sync_timer") and self.periodic_sync_timer:
+            self.periodic_sync_timer.stop()
         if hasattr(self, "command_worker") and self.command_worker:
             self.command_worker.stop()
             self.command_worker.wait(200)
+
+        # 2. Cancel and terminate any running background sync workers
+        if hasattr(self, "_active_workers"):
+            for w in list(self._active_workers):
+                try:
+                    w.cancel()
+                    w.wait(200)
+                except Exception:
+                    pass
+            self._active_workers.clear()
+
+        # 3. Clean up all live company card UI widgets from dashboard layout
+        if hasattr(self, "cards_layout") and self.cards_layout:
+            while self.cards_layout.count():
+                item = self.cards_layout.takeAt(0)
+                if item:
+                    widget = item.widget()
+                    if widget:
+                        widget.deleteLater()
+
+        # 4. Reset metric counters, header labels and status pills
+        if hasattr(self, "c1_val") and self.c1_val:
+            self.c1_val.setText("📊 0 Active")
+        if hasattr(self, "c2_val") and self.c2_val:
+            self.c2_val.setText("⚡ 0 Records")
+        if hasattr(self, "c3_val") and self.c3_val:
+            self.c3_val.setText("⚪ Not Synced")
+
+        # 5. Reset internal states
+        self._discovered_companies = []
+        self._is_syncing_all = False
 
     def create_company_card(self, name: str, path: str, is_synced: bool, source: str = "TALLY", stats: Optional[Dict[str, int]] = None) -> CompanyCardFrame:
         card = CompanyCardFrame()
@@ -436,7 +526,7 @@ class ConnectedDashboardScreen(QWidget):
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:1 #047857);
                 }
             """)
-            s_btn.clicked.connect(lambda checked=False, comp=name, s=source, c=card: self.start_qthread_sync(comp, s, c))
+            s_btn.clicked.connect(lambda checked=False, comp=name, s=source, c=card: self.on_company_sync_clicked(comp, s, c))
             top_row.addWidget(s_btn)
 
             w_btn = QPushButton("↗ Web")
@@ -496,7 +586,7 @@ class ConnectedDashboardScreen(QWidget):
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:1 #047857);
                 }
             """)
-            a_btn.clicked.connect(lambda: self.start_qthread_sync(name, source, card))
+            a_btn.clicked.connect(lambda checked=False, comp=name, s=source, c=card: self.on_company_sync_clicked(comp, s, c))
             top_row.addWidget(a_btn)
 
         c_layout.addLayout(top_row)
@@ -609,13 +699,29 @@ class ConnectedDashboardScreen(QWidget):
         except Exception as exc:
             logger.debug(f"Error in on_company_synced_instant: {exc}")
 
-    def start_qthread_sync(self, comp_name: str, source: str, card: Optional[CompanyCardFrame] = None, is_full_sync: bool = False):
+    def start_qthread_sync(self, comp_name: str, source: str, card: Optional[CompanyCardFrame] = None, is_full_sync: bool = False, is_periodic: bool = False, from_date: Optional[str] = None, to_date: Optional[str] = None):
         self._active_workers = [w for w in self._active_workers if w.isRunning()]
 
-        if any(w.isRunning() and (getattr(w, "target_company", "") == comp_name or not comp_name) for w in self._active_workers):
-            from apps.desktop_app.ui.widgets.toast import ToastNotification
-            toast = ToastNotification("Sync is already running. Please wait for it to complete.", "info", self)
-            toast.show()
+        # Check if an existing worker is already handling sync
+        existing_worker = next((w for w in self._active_workers if w.isRunning() and (getattr(w, "target_company", "") == comp_name or not comp_name or not getattr(w, "target_company", ""))), None)
+        if existing_worker:
+            if not is_periodic:
+                # If a background worker is already active, attach the live progress dialog to it immediately
+                try:
+                    from apps.desktop_app.ui.widgets.sync_progress_dialog import SyncProgressDialog
+                    self._sync_progress_dlg = SyncProgressDialog(
+                        company_name=comp_name or getattr(existing_worker, "target_company", "") or "All Companies",
+                        source=source,
+                        from_date=from_date,
+                        to_date=to_date,
+                        parent=self
+                    )
+                    existing_worker.progress_changed.connect(self._sync_progress_dlg.on_progress_changed)
+                    existing_worker.sync_completed.connect(self._sync_progress_dlg.on_sync_completed)
+                    existing_worker.sync_failed.connect(self._sync_progress_dlg.on_sync_failed)
+                    self._sync_progress_dlg.show()
+                except Exception as dlg_exc:
+                    logger.debug(f"SyncProgressDialog open notice: {dlg_exc}")
             return
 
         p_bar = QProgressBar()
@@ -626,13 +732,40 @@ class ConnectedDashboardScreen(QWidget):
         s_lbl = QLabel(f"🟡 {sync_label_str} {source}...")
         s_lbl.setStyleSheet("font-size: 11px; color: #EAB308; font-weight: bold;")
         if card is not None:
-            c_lay = card.layout()
-            if c_lay is not None:
-                c_lay.addWidget(p_bar)
-                c_lay.addWidget(s_lbl)
+            try:
+                import shiboken6
+                if shiboken6.isValid(card):
+                    c_lay = card.layout()
+                    if c_lay is not None:
+                        c_lay.addWidget(p_bar)
+                        c_lay.addWidget(s_lbl)
+            except Exception:
+                pass
 
-        worker = BackgroundSyncWorker(comp_name, source, is_full_sync=is_full_sync, parent=self)
+        worker = BackgroundSyncWorker(comp_name, source, is_full_sync=is_full_sync, is_periodic=is_periodic, from_date=from_date, to_date=to_date, parent=self)
         self._active_workers.append(worker)
+
+        # Pause background company stats polling during sync to eliminate concurrent Tally load
+        if hasattr(self, "auto_timer") and self.auto_timer.isActive():
+            self.auto_timer.stop()
+
+        # For manual sync, display modern buffering & 1-by-1 percentage modal dialog with background blur
+        if not is_periodic:
+            try:
+                from apps.desktop_app.ui.widgets.sync_progress_dialog import SyncProgressDialog
+                self._sync_progress_dlg = SyncProgressDialog(
+                    company_name=comp_name or "All Companies",
+                    source=source,
+                    from_date=from_date,
+                    to_date=to_date,
+                    parent=self
+                )
+                worker.progress_changed.connect(self._sync_progress_dlg.on_progress_changed)
+                worker.sync_completed.connect(self._sync_progress_dlg.on_sync_completed)
+                worker.sync_failed.connect(self._sync_progress_dlg.on_sync_failed)
+                self._sync_progress_dlg.show()
+            except Exception as dlg_exc:
+                logger.debug(f"SyncProgressDialog open notice: {dlg_exc}")
 
         worker.progress_changed.connect(lambda val, txt: self.safe_update_progress(p_bar, s_lbl, val, txt))
         worker.company_synced.connect(self.on_company_synced_instant)
@@ -648,6 +781,12 @@ class ConnectedDashboardScreen(QWidget):
                 self._active_workers.remove(worker)
         except Exception:
             pass
+
+        # Resume background auto-timer once all sync workers have finished
+        if hasattr(self, "auto_timer") and not self.auto_timer.isActive():
+            if not (hasattr(self, "_active_workers") and any(w.isRunning() for w in self._active_workers)):
+                self.auto_timer.start(25000)
+
         # Automatically trigger quick company list refresh so new companies / insights are synced
         QTimer.singleShot(100, self.load_live_companies)
 
@@ -662,10 +801,16 @@ class ConnectedDashboardScreen(QWidget):
 
     def safe_sync_completed(self, s_lbl: QLabel, msg: str, card: Optional[CompanyCardFrame] = None):
         try:
+            from datetime import datetime
+            now_time = datetime.now().strftime("%I:%M %p")
             if s_lbl:
                 s_lbl.setText("🟢 " + msg)
                 s_lbl.setStyleSheet("font-size: 11px; color: #00C853; font-weight: bold;")
             self.header.update_last_sync("Just now")
+            if hasattr(self, "c3_val"):
+                self.c3_val.setText(f"🟢 Synced {now_time}")
+            if hasattr(self, "refresh_sync_interval"):
+                self.refresh_sync_interval()
             if card is not None:
                 if card.status_chip:
                     card.status_chip.setText("🟢 Synced")
@@ -692,12 +837,18 @@ class ConnectedDashboardScreen(QWidget):
 
     def safe_sync_failed(self, s_lbl: QLabel, err: str):
         try:
+            clean_err = str(err or "")
+            if "no subscription" in clean_err.lower():
+                clean_err = clean_err.replace("Cloud Sync rejected: No subscription found", "This company is already registered with a different email address.")
+                clean_err = clean_err.replace("No subscription found", "This company is already registered with a different email address.")
             if s_lbl:
-                s_lbl.setText("🔴 " + err)
+                s_lbl.setText("🔴 " + clean_err)
                 s_lbl.setStyleSheet("font-size: 11px; color: #DC2626; font-weight: bold;")
             from apps.desktop_app.ui.widgets.toast import ToastNotification
-            toast = ToastNotification(f"Sync Failed: {err}", "error", self)
+            toast = ToastNotification(f"Sync Failed: {clean_err}", "error", self)
             toast.show()
+            if hasattr(self, "refresh_sync_interval"):
+                self.refresh_sync_interval()
         except RuntimeError:
             pass
 
@@ -724,14 +875,17 @@ class ConnectedDashboardScreen(QWidget):
 
         quick_sync_act = QAction("⚡  Quick Sync (Delta)", menu)
         full_sync_act = QAction("🔄  Full Sync (All Records)", menu)
+        change_date_act = QAction("📅  Change Sync Date Range", menu)
         sync_config_act = QAction("📄  Sync Tally Config", menu)
 
         menu.addAction(quick_sync_act)
         menu.addAction(full_sync_act)
+        menu.addAction(change_date_act)
         menu.addAction(sync_config_act)
 
         quick_sync_act.triggered.connect(lambda: self.start_qthread_sync(name, source, card, is_full_sync=False))
         full_sync_act.triggered.connect(lambda: self.start_qthread_sync(name, source, card, is_full_sync=True))
+        change_date_act.triggered.connect(lambda: self.handle_change_sync_date(name, source, card))
         sync_config_act.triggered.connect(lambda: self.handle_sync_config(name))
 
         menu.exec(button.mapToGlobal(button.rect().bottomLeft()))

@@ -38,6 +38,11 @@ def get_engine() -> Engine:
                 pass
         else:
             _engine = create_engine(db_url, **engine_args)
+            try:
+                from shared.db.models import Base
+                Base.metadata.create_all(bind=_engine)
+            except Exception:
+                pass
 
 
         @event.listens_for(_engine, "connect")

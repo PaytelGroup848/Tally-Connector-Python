@@ -3,7 +3,6 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Dict, Any, Tuple, Optional
 from shared.logging_config import get_logger
-from shared.db.mongo_client import get_collection
 
 logger = get_logger("app.threads.command_handlers.stock")
 
@@ -94,30 +93,33 @@ def execute_create_stock_item_command(
                 "guid": ext_id,
                 "status": "SUCCESS"
             }
-            try:
-                s_name = norm_payload.get("name")
-                for c_name in ["stock_items", "items"]:
-                    c_col = get_collection(c_name)
-                    q = {"$or": [{"name": s_name}, {"itemName": s_name}]}
-                    if comp_id:
-                        q["companyId"] = comp_id
-                    upd_doc = {
-                        "tallyExternalId": ext_id,
-                        "itemTallyExternalId": ext_id,
-                        "updatedAt": datetime.now(timezone.utc),
-                    }
-                    if norm_payload.get("quantity"):
-                        upd_doc["openingBalance"] = norm_payload.get("quantity")
-                        upd_doc["closingBalance"] = norm_payload.get("quantity")
-                    if norm_payload.get("rate"):
-                        upd_doc["openingRate"] = norm_payload.get("rate")
-                        upd_doc["closingRate"] = norm_payload.get("rate")
-                    if norm_payload.get("value"):
-                        upd_doc["openingValue"] = norm_payload.get("value")
-                        upd_doc["closingValue"] = norm_payload.get("value")
-                    c_col.update_many(q, {"$set": upd_doc})
-            except Exception as m_err:
-                logger.debug(f"Direct MongoDB stock item update notice: {m_err}")
+            from shared.config import get_settings
+            if get_settings().direct_mongo_sync_enabled:
+                try:
+                    from shared.db.mongo_client import get_collection
+                    s_name = norm_payload.get("name")
+                    for c_name in ["stock_items", "items"]:
+                        c_col = get_collection(c_name)
+                        q = {"$or": [{"name": s_name}, {"itemName": s_name}]}
+                        if comp_id:
+                            q["companyId"] = comp_id
+                        upd_doc = {
+                            "tallyExternalId": ext_id,
+                            "itemTallyExternalId": ext_id,
+                            "updatedAt": datetime.now(timezone.utc),
+                        }
+                        if norm_payload.get("quantity"):
+                            upd_doc["openingBalance"] = norm_payload.get("quantity")
+                            upd_doc["closingBalance"] = norm_payload.get("quantity")
+                        if norm_payload.get("rate"):
+                            upd_doc["openingRate"] = norm_payload.get("rate")
+                            upd_doc["closingRate"] = norm_payload.get("rate")
+                        if norm_payload.get("value"):
+                            upd_doc["openingValue"] = norm_payload.get("value")
+                            upd_doc["closingValue"] = norm_payload.get("value")
+                        c_col.update_many(q, {"$set": upd_doc})
+                except Exception as m_err:
+                    logger.debug(f"Direct MongoDB stock item update notice: {m_err}")
         else:
             success = False
             error_msg = res.get("error") or res.get("message") or "Failed to create stock item in Tally."
@@ -220,29 +222,32 @@ def execute_update_stock_item_command(
                     set_doc["companyId"] = comp_id
                     set_doc["cloud_company_id"] = str(comp_id)
 
-                for col_name in ["stock_items", "stocks", "items", "stockbalances"]:
-                    col = get_collection(col_name)
-                    doc = None
-                    if t_ext_id:
-                        f1 = {"tallyExternalId": t_ext_id}
-                        if comp_id:
-                            f1["companyId"] = comp_id
-                        doc = col.find_one(f1)
-                    if not doc and item_name:
-                        f2 = {"$or": [{"itemName": item_name}, {"name": item_name}]}
-                        if comp_id:
-                            f2["companyId"] = comp_id
-                        doc = col.find_one(f2)
+                from shared.config import get_settings
+                if get_settings().direct_mongo_sync_enabled:
+                    from shared.db.mongo_client import get_collection
+                    for col_name in ["stock_items", "stocks", "items", "stockbalances"]:
+                        col = get_collection(col_name)
+                        doc = None
+                        if t_ext_id:
+                            f1 = {"tallyExternalId": t_ext_id}
+                            if comp_id:
+                                f1["companyId"] = comp_id
+                            doc = col.find_one(f1)
+                        if not doc and item_name:
+                            f2 = {"$or": [{"itemName": item_name}, {"name": item_name}]}
+                            if comp_id:
+                                f2["companyId"] = comp_id
+                            doc = col.find_one(f2)
 
-                    if doc:
-                        col.update_one({"_id": doc["_id"]}, {"$set": set_doc})
-                    else:
-                        upsert_filter = {"tallyExternalId": t_ext_id} if t_ext_id else {"itemName": item_name}
-                        if comp_id:
-                            upsert_filter["companyId"] = comp_id
-                        col.update_one(upsert_filter, {"$set": set_doc}, upsert=True)
+                        if doc:
+                            col.update_one({"_id": doc["_id"]}, {"$set": set_doc})
+                        else:
+                            upsert_filter = {"tallyExternalId": t_ext_id} if t_ext_id else {"itemName": item_name}
+                            if comp_id:
+                                upsert_filter["companyId"] = comp_id
+                            col.update_one(upsert_filter, {"$set": set_doc}, upsert=True)
 
-                logger.info(f"Overwrote stock item '{item_name}' in MongoDB collections successfully without duplicate.")
+                    logger.info(f"Overwrote stock item '{item_name}' in MongoDB collections successfully without duplicate.")
             except Exception as m_err:
                 logger.warning(f"MongoDB update notice for stock item '{item_name}': {m_err}")
         else:

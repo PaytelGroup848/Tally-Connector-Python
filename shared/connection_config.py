@@ -43,10 +43,52 @@ CONFIG_FILE = _get_writable_data_file("connection_config.json")
 DEFAULT_CONFIG: Dict[str, Any] = {
     "tally_host": "127.0.0.1",
     "tally_port": 9000,
-    "sync_interval_minutes": "5 mins",
+    "sync_interval_minutes": "1 min",
     "auto_connect": True,
     "start_with_windows": True,
 }
+
+def parse_interval_to_ms(interval_val: Any) -> int:
+    """
+    Parses sync interval settings into milliseconds.
+    Supports:
+      - 'Real-time', 'Realtime', 'real time' -> 30,000 ms (30s)
+      - '1 min', '1 minute', '1', '1m' -> 60,000 ms (1m)
+      - '2 mins', '2 min', '2' -> 120,000 ms (2m)
+      - '5 mins', '5 min', '5' -> 300,000 ms (5m)
+      - '10 mins', '10' -> 600,000 ms (10m)
+      - '15 mins', '15' -> 900,000 ms (15m)
+      - '30 mins', '30' -> 1,800,000 ms (30m)
+      - '1 hour', '1 hr', '60 min' -> 3,600,000 ms (1h)
+      - 'Manual', 'off', '0' -> 0 (Disabled)
+    """
+    if interval_val is None:
+        return 1 * 60 * 1000
+
+    clean = str(interval_val).strip().lower()
+    if clean in ("0", "manual", "off", "disable", "none") or any(k in clean for k in ("manual", "off", "disable", "none")):
+        return 0
+
+    if any(k in clean for k in ("real-time", "realtime", "real time")):
+        return 30 * 1000  # 30 seconds
+
+    import re
+    if "hour" in clean or "hr" in clean:
+        match = re.search(r"(\d+)", clean)
+        hours = int(match.group(1)) if match else 1
+        return max(1, hours) * 60 * 60 * 1000
+
+    if "sec" in clean:
+        match = re.search(r"(\d+)", clean)
+        secs = int(match.group(1)) if match else 30
+        return max(10, secs) * 1000
+
+    match = re.search(r"(\d+)", clean)
+    if match:
+        mins = int(match.group(1))
+        return max(1, mins) * 60 * 1000
+
+    return 1 * 60 * 1000
 
 def load_connection_config() -> Dict[str, Any]:
     """Loads saved connection config from disk, falling back to defaults."""
@@ -74,27 +116,34 @@ def load_connection_config() -> Dict[str, Any]:
     return config
 
 def save_connection_config(
-    host: str = "127.0.0.1",
-    port: int = 9000,
-    sync_interval_minutes: str = "5 mins",
-    auto_connect: bool = True,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    sync_interval_minutes: Optional[str] = None,
+    auto_connect: Optional[bool] = None,
     start_with_windows: Optional[bool] = None,
 ) -> bool:
     """Persists connection parameters to disk and updates runtime settings."""
-    clean_host = (host or "127.0.0.1").strip()
-    if clean_host.lower() == "localhost":
-        clean_host = "127.0.0.1"
-
-    try:
-        clean_port = int(port)
-    except (ValueError, TypeError):
-        clean_port = 9000
-
     cfg = load_connection_config()
-    cfg["tally_host"] = clean_host
-    cfg["tally_port"] = clean_port
-    cfg["sync_interval_minutes"] = sync_interval_minutes
-    cfg["auto_connect"] = bool(auto_connect)
+
+    if host is not None:
+        clean_host = str(host).strip()
+        if clean_host.lower() == "localhost":
+            clean_host = "127.0.0.1"
+        cfg["tally_host"] = clean_host or "127.0.0.1"
+
+    if port is not None:
+        try:
+            clean_port = int(port)
+        except (ValueError, TypeError):
+            clean_port = 9000
+        cfg["tally_port"] = clean_port
+
+    if sync_interval_minutes is not None:
+        cfg["sync_interval_minutes"] = str(sync_interval_minutes).strip() or "1 min"
+
+    if auto_connect is not None:
+        cfg["auto_connect"] = bool(auto_connect)
+
     if start_with_windows is not None:
         cfg["start_with_windows"] = bool(start_with_windows)
 
@@ -102,7 +151,7 @@ def save_connection_config(
         CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
-        logger.info(f"Saved connection config to {CONFIG_FILE}: host={clean_host}, port={clean_port}")
+        logger.info(f"Saved connection config to {CONFIG_FILE}: host={cfg.get('tally_host')}, port={cfg.get('tally_port')}, sync_interval={cfg.get('sync_interval_minutes')}")
     except Exception as exc:
         logger.error(f"Failed to write connection config: {exc}")
         return False
@@ -111,8 +160,10 @@ def save_connection_config(
     try:
         from shared.config import get_settings
         settings = get_settings()
-        settings.tally_port = clean_port
-        settings.tally_host = clean_host
+        if "tally_port" in cfg:
+            settings.tally_port = int(cfg["tally_port"])
+        if "tally_host" in cfg:
+            settings.tally_host = str(cfg["tally_host"])
     except Exception:
         pass
 

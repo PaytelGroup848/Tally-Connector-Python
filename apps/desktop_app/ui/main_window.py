@@ -86,8 +86,9 @@ class ConnectorMainWindow(QMainWindow):
         self.sc_profile.nav_requested.connect(self.handle_nav)
 
         self.sc_settings = ConnectionSettingsScreen()
-        self.sc_settings.back_requested.connect(lambda: self.stack.setCurrentWidget(self.sc_dash))
+        self.sc_settings.back_requested.connect(self.on_settings_back)
         self.sc_settings.nav_requested.connect(self.handle_nav)
+        self.sc_settings.settings_saved.connect(self.on_settings_saved)
 
         self.sc_system = SystemRequirementScreen()
         self.sc_system.back_requested.connect(lambda: self.stack.setCurrentWidget(self.sc_dash))
@@ -124,6 +125,17 @@ class ConnectorMainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.sc_probe)
         QTimer.singleShot(500, self.sc_probe.check_connection)
 
+    def on_settings_saved(self, settings_dict: dict):
+        interval = settings_dict.get("sync_interval_minutes", "1 min")
+        logger.info(f"Connection settings updated by user: interval='{interval}'")
+        if hasattr(self, "sc_dash") and self.sc_dash:
+            self.sc_dash.refresh_sync_interval(interval)
+
+    def on_settings_back(self):
+        if hasattr(self, "sc_dash") and self.sc_dash:
+            self.sc_dash.refresh_sync_interval()
+        self.stack.setCurrentWidget(self.sc_dash)
+
     def on_probe_source_selected(self, source_type: str):
         self.sc_dash.set_source_filter(source_type)
         self.stack.setCurrentWidget(self.sc_dash)
@@ -142,9 +154,24 @@ class ConnectorMainWindow(QMainWindow):
         elif target == "activity":
             self.sc_activity.load_activities()
             self.stack.setCurrentWidget(self.sc_activity)
-        elif target == "logout":
+        elif target in ("logout", "login"):
             from shared.auth.cloud_auth_service import cloud_auth_service
             cloud_auth_service.logout()
+            if hasattr(self, "sc_dash") and self.sc_dash:
+                try:
+                    self.sc_dash.cleanup()
+                except Exception:
+                    pass
+            if hasattr(self, "sc_profile") and self.sc_profile:
+                try:
+                    self.sc_profile.reset_fields()
+                except Exception:
+                    pass
+            if hasattr(self, "sc_login") and self.sc_login:
+                try:
+                    self.sc_login.reset_form()
+                except Exception:
+                    pass
             self.stack.setCurrentWidget(self.sc_login)
 
     def open_web_view(self, company_name: str):
@@ -160,32 +187,19 @@ class ConnectorMainWindow(QMainWindow):
 
         company_id = None
         c_name = (company_name or "").strip()
+
+        # 1. Look up company_id from persistent local checkpoint (pure cloud mode)
+        from shared.cloud.helpers import get_local_checkpoint, set_local_checkpoint
         try:
-            from shared.db.mongo_client import get_collection
-        except Exception:
-            get_collection = None
+            cp = get_local_checkpoint(c_name)
+            if cp:
+                cand_id = cp.get("cloud_company_id") or cp.get("company_id") or cp.get("id")
+                if cand_id and re.match(r"^[0-9a-fA-F]{24}$", str(cand_id).strip()):
+                    company_id = str(cand_id).strip()
+        except Exception as exc:
+            logger.debug(f"Local checkpoint lookup notice for '{c_name}': {exc}")
 
-        # 1. Look up company_id from MongoDB 'companies' collection
-        if c_name and get_collection:
-            try:
-                col = get_collection("companies")
-                doc = col.find_one({
-                    "$or": [
-                        {"name": c_name},
-                        {"company_name": c_name},
-                        {"tallyCompanyName": c_name},
-                        {"name": {"$regex": f"^{re.escape(c_name)}$", "$options": "i"}},
-                        {"company_name": {"$regex": f"^{re.escape(c_name)}$", "$options": "i"}},
-                    ]
-                })
-                if doc:
-                    cand_id = doc.get("cloud_company_id")
-                    if cand_id and re.match(r"^[0-9a-fA-F]{24}$", str(cand_id).strip()):
-                        company_id = str(cand_id).strip()
-            except Exception as exc:
-                logger.warning(f"Error looking up company_id in MongoDB for '{c_name}': {exc}")
-
-        # 2. Fallback: Query Cloud companies API if not found or if previous ID was not a valid 24-char ObjectId
+        # 2. Fallback: Query Cloud companies API live if not found locally
         if not company_id and c_name and cloud_auth_service.access_token:
             try:
                 ok_c, c_list = cloud_auth_service.get_cloud_companies()
@@ -196,16 +210,7 @@ class ConnectorMainWindow(QMainWindow):
                             c_cand = item.get("id") or item.get("_id")
                             if c_cand and re.match(r"^[0-9a-fA-F]{24}$", str(c_cand).strip()):
                                 company_id = str(c_cand).strip()
-                                if get_collection:
-                                    try:
-                                        col = get_collection("companies")
-                                        col.update_one(
-                                            {"$or": [{"name": c_name}, {"company_name": c_name}, {"tallyCompanyName": c_name}]},
-                                            {"$set": {"cloud_company_id": company_id}},
-                                            upsert=True
-                                        )
-                                    except Exception:
-                                        pass
+                                set_local_checkpoint(company_key=c_name, company_name=c_name, cloud_company_id=company_id)
                                 break
             except Exception as exc:
                 logger.warning(f"Error querying cloud companies endpoint for '{c_name}': {exc}")
@@ -233,17 +238,9 @@ class ConnectorMainWindow(QMainWindow):
         email = (
             cloud_auth_service.current_user.get("email")
             or getattr(cloud_auth_service, "email", "")
+            or cloud_auth_service.get_email()
             or ""
         )
-        if not email:
-            try:
-                from shared.db.mongo_client import get_collection
-                up_col = get_collection("user_profile")
-                up_doc = up_col.find_one({"profile_id": "current_user"})
-                if up_doc and up_doc.get("email"):
-                    email = up_doc.get("email")
-            except Exception:
-                pass
         if email:
             params["email"] = email
 

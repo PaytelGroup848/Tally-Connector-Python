@@ -15,7 +15,7 @@ def sync_ledgers(worker, c_name: str, port: int, now_iso: str, now_dt: datetime,
     try:
         l_xml = build_collection_xml(
             "Ledger",
-            ["NAME", "PARENT", "CLOSINGBALANCE", "OPENINGBALANCE", "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM", "OPENINGBALANCEDATE", "PARTYGSTIN", "GSTIN", "LEDGERCLASSIFICATION", "GUID", "ALTERID", "EMAIL", "LEDGERPHONE", "LEDGERMOBILE", "ADDRESS.LIST", "BILLCREDITPERIOD", "CREDITLIMIT", "ISBILLWISEON", "LEDGERGSTREGISTRATIONDETAILS.LIST", "LEDGSTREGDETAILS.*", "LEDMAILINGDETAILS.*", "STATENAME", "COUNTRYNAME", "PINCODE", "BANKDETAILS", "BANKACCOUNTNUMBER", "ACCOUNTNUMBER", "IFSCODE", "BANKNAME", "BRANCHNAME", "ACCOUNTHOLDERNAME", "SWIFTCODE", "PAYMENTDETAILS.*", "BANKDETAILS.*"],
+            ["NAME", "PARENT", "CLOSINGBALANCE", "OPENINGBALANCE", "STARTINGFROM", "ACTIVEFROM", "APPLICABLEFROM", "OPENINGBALANCEDATE", "PARTYGSTIN", "GSTIN", "LEDGERCLASSIFICATION", "GUID", "ALTERID", "EMAIL", "LEDGERPHONE", "LEDGERMOBILE", "ADDRESS.LIST", "BILLCREDITPERIOD", "CREDITLIMIT", "ISBILLWISEON", "LEDGERGSTREGISTRATIONDETAILS.LIST", "LEDGSTREGDETAILS.*", "LEDMAILINGDETAILS.*", "STATENAME", "COUNTRYNAME", "PINCODE", "BANKDETAILS", "BANKACCOUNTNUMBER", "ACCOUNTNUMBER", "IFSCODE", "BANKNAME", "BRANCHNAME", "ACCOUNTHOLDERNAME", "BANKACCHOLDERNAME", "PAYMENTFAVOURING", "SWIFTCODE", "PAYMENTDETAILS.*", "BANKDETAILS.*"],
             company_name=c_name
         )
         ok_l, code_l, text_l, err_l = worker.tally_client.send_xml_request(worker.tally_host, port, l_xml, timeout=60.0)
@@ -25,6 +25,12 @@ def sync_ledgers(worker, c_name: str, port: int, now_iso: str, now_dt: datetime,
                 alt = int(l.get("alterid", 0) or 0)
                 if alt > max_ledger_alter:
                     max_ledger_alter = alt
+                # Safe cloud fallback: if bankDetails exists but accountHolderName is empty,
+                # fall back to company name (standard for Bank Accounts) or ledger name
+                b_det = l.get("bankDetails")
+                if isinstance(b_det, dict):
+                    if not b_det.get("accountHolderName") and c_name:
+                        b_det["accountHolderName"] = c_name
         else:
             logger.error(f"Ledger extraction failed for '{c_name}': {err_l or f'HTTP {code_l}'}")
     except Exception as exc:
@@ -84,8 +90,10 @@ def sync_ledgers(worker, c_name: str, port: int, now_iso: str, now_dt: datetime,
             for l in extracted_ledgers:
                 ext_id = str(l.get("tallyExternalId") or l.get("guid") or l.get("name"))
                 alt_id = int(l.get("alterid", 0) or 0)
-                c_bal = l.get("closingBalance", l.get("closing_balance", 0.0)) or 0.0
-                op_bal = l.get("openingBalance", l.get("opening_balance", 0.0)) or 0.0
+                c_bal = float(l.get("closingBalance", l.get("closing_balance", 0.0)) or 0.0)
+                op_bal = float(l.get("openingBalance", l.get("opening_balance", 0.0)) or 0.0)
+                c_bal_type = str(l.get("closingBalanceType") or l.get("balanceType") or l.get("drCr") or "")
+                op_bal_type = str(l.get("openingBalanceType") or "")
                 credit_limit_val = float(l.get("creditLimit", 0.0) or 0.0)
                 credit_days_val = int(l.get("creditDays", 0) or 0)
                 credit_period_val = str(l.get("creditPeriod") or l.get("billCreditPeriod") or "")
@@ -106,7 +114,12 @@ def sync_ledgers(worker, c_name: str, port: int, now_iso: str, now_dt: datetime,
                     "registration_type": l.get("registration_type") or "",
                     "pan": l.get("pan") or "",
                     "openingBalance": float(op_bal),
+                    "openingBalanceType": op_bal_type,
                     "closingBalance": float(c_bal),
+                    "closingBalanceType": c_bal_type,
+                    "balanceType": c_bal_type,
+                    "drCr": c_bal_type,
+                    "isBalanceProcessed": True,
                     "creditLimit": credit_limit_val,
                     "creditDays": credit_days_val,
                     "creditPeriod": credit_period_val,
@@ -158,7 +171,12 @@ def sync_ledgers(worker, c_name: str, port: int, now_iso: str, now_dt: datetime,
                         "pincode": l.get("pincode") or "",
                         "registration_type": l.get("registration_type") or "",
                         "openingBalance": float(op_bal),
+                        "openingBalanceType": op_bal_type,
                         "closingBalance": float(c_bal),
+                        "closingBalanceType": c_bal_type,
+                        "balanceType": c_bal_type,
+                        "drCr": c_bal_type,
+                        "isBalanceProcessed": True,
                         "creditLimit": credit_limit_val,
                         "creditDays": credit_days_val,
                         "creditPeriod": credit_period_val,
@@ -174,7 +192,11 @@ def sync_ledgers(worker, c_name: str, port: int, now_iso: str, now_dt: datetime,
                             "phone": l.get("phone") or "",
                             "address": l.get("address") or "",
                             "openingBalance": float(op_bal),
+                            "openingBalanceType": op_bal_type,
                             "closingBalance": float(c_bal),
+                            "closingBalanceType": c_bal_type,
+                            "balanceType": c_bal_type,
+                            "drCr": c_bal_type,
                             "creditLimit": credit_limit_val,
                             "creditDays": credit_days_val,
                             "creditPeriod": credit_period_val,
@@ -224,7 +246,12 @@ def sync_ledgers(worker, c_name: str, port: int, now_iso: str, now_dt: datetime,
                         "pincode": l.get("pincode") or "",
                         "registration_type": l.get("registration_type") or "",
                         "openingBalance": float(op_bal),
+                        "openingBalanceType": op_bal_type,
                         "closingBalance": float(c_bal),
+                        "closingBalanceType": c_bal_type,
+                        "balanceType": c_bal_type,
+                        "drCr": c_bal_type,
+                        "isBalanceProcessed": True,
                         "creditLimit": credit_limit_val,
                         "creditDays": credit_days_val,
                         "creditPeriod": credit_period_val,
@@ -244,7 +271,11 @@ def sync_ledgers(worker, c_name: str, port: int, now_iso: str, now_dt: datetime,
                             "phone": l.get("phone") or "",
                             "address": l.get("address") or "",
                             "openingBalance": float(op_bal),
+                            "openingBalanceType": op_bal_type,
                             "closingBalance": float(c_bal),
+                            "closingBalanceType": c_bal_type,
+                            "balanceType": c_bal_type,
+                            "drCr": c_bal_type,
                             "creditLimit": credit_limit_val,
                             "creditDays": credit_days_val,
                             "creditPeriod": credit_period_val,

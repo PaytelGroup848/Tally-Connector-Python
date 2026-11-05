@@ -1,12 +1,16 @@
-
-
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import uuid
 
+from shared.config import get_settings
 from shared.db.mongo_client import get_collection
 from shared.db.session import get_db_session
 from shared.db.models.company import CompanySyncConfig
+from shared.cloud.helpers import (
+    get_local_checkpoint,
+    set_local_checkpoint,
+    get_all_local_checkpoints
+)
 from shared.logging_config import get_logger
 
 logger = get_logger("app.repositories.company")
@@ -17,10 +21,48 @@ def get_all_company_configs(
     email: Optional[str] = None,
     allow_all: bool = False
 ) -> List[Dict[str, Any]]:
-    """Fetches stored company configurations from MongoDB collection 'companies', strictly filtered by tenant."""
+    """
+    Fetches company configurations.
+    In pure cloud mode (direct_mongo_sync_enabled=False), retrieves canonical linked companies
+    directly from Cloud API and enriches with persistent local checkpoints.
+    When allow_all=True or when offline, reads from MongoDB collection 'companies' / SQLite.
+    """
+    # 1. Primary: Cloud API in Pure Cloud Mode (only when not explicitly requesting allow_all for local/Mongo)
+    if not allow_all:
+        try:
+            from shared.auth.cloud_auth_service import cloud_auth_service
+            if cloud_auth_service.is_authenticated:
+                ok, cloud_comps = cloud_auth_service.get_cloud_companies()
+                if ok and isinstance(cloud_comps, list) and cloud_comps:
+                    results = []
+                    for c in cloud_comps:
+                        c_id = str(c.get("id") or c.get("_id") or "")
+                        c_name = c.get("tallyCompanyName") or c.get("companyName") or c.get("name") or ""
+                        c_guid = c.get("tallyCompanyGuid") or c.get("companyGuid")
+                        cp = get_local_checkpoint(c_id) or get_local_checkpoint(c_name) or {}
+                        results.append({
+                            "id": c_id,
+                            "cloud_company_id": c_id,
+                            "source_type": "TALLY",
+                            "company_name": c_name,
+                            "name": c_name,
+                            "company_guid": c_guid,
+                            "financial_year_from": c.get("financial_year_from", "01-Apr-2025"),
+                            "is_sync_enabled": c.get("isSyncEnabled", c.get("is_sync_enabled", True)),
+                            "status": cp.get("status") or c.get("status", "CONNECTED"),
+                            "last_sync_at": cp.get("updated_at") or c.get("last_sync_at"),
+                            "last_alter_id": cp.get("last_alter_id", 0),
+                            "last_voucher_alter_id": cp.get("last_voucher_alter_id", 0),
+                            "stats": cp.get("stats", {"ledgers": 0, "vouchers": 0, "items": 0}),
+                            "organizationId": str(c.get("organizationId") or c.get("organization_id") or "")
+                        })
+                    return results
+        except Exception as exc:
+            logger.debug(f"Cloud fetch for get_all_company_configs notice: {exc}")
+
+    # 2. Secondary: MongoDB collection 'companies'
     try:
         col = get_collection("companies")
-        # Auto-detect tenant context from active cloud session if not passed explicitly
         if not organization_id and not device_id and not email and not allow_all:
             try:
                 from shared.auth.cloud_auth_service import cloud_auth_service
@@ -56,7 +98,6 @@ def get_all_company_configs(
         if filters:
             query = {"$or": filters} if len(filters) > 1 else filters[0]
         else:
-            # Unauthenticated or local unit test execution
             query = {}
 
         docs = list(col.find(query))
@@ -65,6 +106,7 @@ def get_all_company_configs(
             for d in docs:
                 results.append({
                     "id": str(d.get("_id", d.get("id", ""))),
+                    "cloud_company_id": str(d.get("cloud_company_id") or d.get("_id", "")),
                     "source_type": d.get("source_type", "TALLY"),
                     "company_name": d.get("tallyCompanyName") or d.get("company_name") or d.get("name", ""),
                     "name": d.get("tallyCompanyName") or d.get("company_name") or d.get("name", ""),
@@ -80,29 +122,69 @@ def get_all_company_configs(
     except Exception as exc:
         logger.debug(f"MongoDB fallback for get_all_company_configs: {exc}")
 
+    # 3. Tertiary: Local SQLite Session
     try:
         with get_db_session() as session:
             configs = session.query(CompanySyncConfig).all()
-            return [
-                {
-                    "id": c.id,
-                    "source_type": c.source_type,
-                    "company_name": c.company_name,
-                    "name": c.company_name,
-                    "company_guid": c.company_guid,
-                    "financial_year_from": c.financial_year_from,
-                    "is_sync_enabled": c.is_sync_enabled,
-                    "status": c.status,
-                    "last_sync_at": c.last_sync_at.isoformat() if c.last_sync_at else None,
-                    "last_alter_id": c.last_alter_id,
-                }
-                for c in configs
-            ]
+            if configs:
+                return [
+                    {
+                        "id": c.id,
+                        "cloud_company_id": c.id,
+                        "source_type": c.source_type,
+                        "company_name": c.company_name,
+                        "name": c.company_name,
+                        "company_guid": c.company_guid,
+                        "financial_year_from": c.financial_year_from,
+                        "is_sync_enabled": c.is_sync_enabled,
+                        "status": c.status,
+                        "last_sync_at": c.last_sync_at.isoformat() if c.last_sync_at else None,
+                        "last_alter_id": c.last_alter_id,
+                    }
+                    for c in configs
+                ]
     except Exception:
-        return []
+        pass
+
+    # 4. Quaternary: Local JSON Checkpoint Cache
+    try:
+        cps = get_all_local_checkpoints()
+        if cps:
+            seen_names = set()
+            local_res = []
+            for k, val in cps.items():
+                if not isinstance(val, dict):
+                    continue
+                c_name = val.get("company_name") or k
+                if c_name in seen_names:
+                    continue
+                seen_names.add(c_name)
+                c_id = val.get("cloud_company_id") or str(uuid.uuid4())
+                local_res.append({
+                    "id": c_id,
+                    "cloud_company_id": val.get("cloud_company_id"),
+                    "source_type": "TALLY",
+                    "company_name": c_name,
+                    "name": c_name,
+                    "company_guid": val.get("company_guid"),
+                    "financial_year_from": "01-Apr-2025",
+                    "is_sync_enabled": True,
+                    "status": val.get("status", "CONNECTED"),
+                    "last_sync_at": val.get("updated_at"),
+                    "last_alter_id": val.get("last_alter_id", 0),
+                    "last_voucher_alter_id": val.get("last_voucher_alter_id", 0),
+                    "stats": val.get("stats", {"ledgers": 0, "vouchers": 0, "items": 0}),
+                })
+            if local_res:
+                return local_res
+    except Exception:
+        pass
+
+    return []
 
 def get_enabled_company_configs(source_type: str) -> List[Dict[str, Any]]:
     """Fetches company configs for a given source type where is_sync_enabled == True."""
+    # 1. SQLite session (used by unit tests and offline desktop state)
     try:
         with get_db_session() as session:
             configs = (
@@ -124,6 +206,14 @@ def get_enabled_company_configs(source_type: str) -> List[Dict[str, Any]]:
     except Exception:
         pass
 
+    # 2. Cloud or Mongo configs
+    all_configs = get_all_company_configs()
+    if all_configs:
+        return [
+            c for c in all_configs
+            if str(c.get("source_type", "")).upper() == source_type.upper() and c.get("is_sync_enabled", True)
+        ]
+
     try:
         col = get_collection("companies")
         docs = list(col.find({"source_type": source_type.upper(), "is_sync_enabled": True}))
@@ -142,7 +232,7 @@ def get_enabled_company_configs(source_type: str) -> List[Dict[str, Any]]:
         return []
 
 def is_company_sync_enabled(source_type: str, company_name: str) -> bool:
-    """Checks if sync is enabled for a specific company in MongoDB or session."""
+    """Checks if sync is enabled for a specific company."""
     try:
         with get_db_session() as session:
             cfg = (
@@ -155,15 +245,21 @@ def is_company_sync_enabled(source_type: str, company_name: str) -> bool:
     except Exception:
         pass
 
+    all_configs = get_all_company_configs()
+    for c in all_configs:
+        c_n = c.get("company_name") or c.get("name")
+        if c_n and c_n.strip().lower() == company_name.strip().lower():
+            return bool(c.get("is_sync_enabled", True))
+
     try:
         col = get_collection("companies")
         doc = col.find_one({"source_type": source_type.upper(), "company_name": company_name})
         if doc:
             return bool(doc.get("is_sync_enabled", True))
-        return True
     except Exception as exc:
         logger.error(f"MongoDB error checking company sync enabled: {exc}")
-        return True
+
+    return True
 
 def upsert_company_config(
     source_type: str,
@@ -173,9 +269,17 @@ def upsert_company_config(
     status: str = "CONNECTED",
     organization_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Inserts or updates a company configuration record in MongoDB and session."""
+    """Inserts or updates a company configuration record."""
     now_iso = datetime.now(timezone.utc).isoformat()
 
+    # 1. Update local checkpoint
+    set_local_checkpoint(
+        company_key=company_name,
+        status=status,
+        company_name=company_name
+    )
+
+    # 2. Update MongoDB collection 'companies'
     try:
         col = get_collection("companies")
         guid_val = company_guid or f"guid-{company_name}"
@@ -228,6 +332,7 @@ def upsert_company_config(
     except Exception as exc:
         logger.debug(f"MongoDB upsert notice: {exc}")
 
+    # 3. Update SQLite session
     try:
         with get_db_session() as session:
             cfg = (
@@ -259,8 +364,9 @@ def upsert_company_config(
     return {"company_name": company_name, "is_sync_enabled": True}
 
 def set_company_sync_enabled(source_type: str, company_name: str, is_enabled: bool) -> bool:
-    """Toggles sync ON/OFF for a target company in MongoDB and session."""
+    """Toggles sync ON/OFF for a target company."""
     now_iso = datetime.now(timezone.utc).isoformat()
+
     try:
         col = get_collection("companies")
         col.update_one(
@@ -287,7 +393,7 @@ def set_company_sync_enabled(source_type: str, company_name: str, is_enabled: bo
     return True
 
 def delete_company_config(company_id_or_name: str) -> bool:
-    """Deletes a company config from MongoDB and session by ID or name."""
+    """Deletes a company config by ID or name."""
     try:
         col = get_collection("companies")
         col.delete_many({
@@ -314,8 +420,17 @@ def delete_company_config(company_id_or_name: str) -> bool:
     return True
 
 def update_company_last_alter_id(source_type: str, company_name: str, last_alter_id: int) -> bool:
-    """Updates last_alter_id checkpoint for a company in MongoDB and session."""
+    """Updates last_alter_id checkpoint for a company."""
     now_iso = datetime.now(timezone.utc).isoformat()
+
+    # 1. Update local checkpoint
+    set_local_checkpoint(
+        company_key=company_name,
+        last_alter_id=last_alter_id,
+        company_name=company_name
+    )
+
+    # 2. Update MongoDB
     try:
         col = get_collection("companies")
         col.update_one(
@@ -331,6 +446,7 @@ def update_company_last_alter_id(source_type: str, company_name: str, last_alter
     except Exception:
         pass
 
+    # 3. Update SQLite session
     try:
         with get_db_session() as session:
             cfg = (

@@ -136,8 +136,7 @@ class CloudAuthService:
         except Exception as exc:
             logger.error(f"Error saving auth session file: {exc}")
 
-        if user:
-            self.sync_user_to_mongodb(user)
+
 
     def get_organization_id(self) -> Optional[str]:
         """Extracts organizationId from current_user, connector, or session."""
@@ -225,67 +224,8 @@ class CloudAuthService:
             self._device_id = str(val).strip()
 
     def sync_user_to_mongodb(self, user_data: Dict[str, Any]) -> None:
-        try:
-            col = _safe_get_collection("user_profile")
-            if col is None:
-                return
-
-            connector_data = user_data.get("connector") or {}
-            plan_data = user_data.get("plan") or {}
-            sub_data = user_data.get("subscription") or {}
-            permissions = user_data.get("permissions") or []
-
-            user_email = (
-                user_data.get("email")
-                or getattr(self, "email", "")
-                or (self.current_user.get("email") if isinstance(self.current_user, dict) else "")
-                or ""
-            ).strip().lower()
-
-            profile_key = user_email if user_email else "current_user"
-
-            # Check existing doc to preserve user-entered profile fields (name, mobile, location)
-            existing_doc = col.find_one({"profile_id": profile_key})
-            if not existing_doc and profile_key != "current_user":
-                existing_doc = col.find_one({"profile_id": "current_user"})
-
-            # Only overwrite name/mobile if new value from cloud is actually non-empty
-            incoming_name = (user_data.get("name") or user_data.get("fullName") or "").strip()
-            incoming_mobile = (user_data.get("mobile") or user_data.get("phone") or "").strip()
-
-            final_name = incoming_name or (existing_doc.get("name") if existing_doc else "") or ""
-            final_mobile = incoming_mobile or (existing_doc.get("mobile") if existing_doc else "") or ""
-            final_postal_code = (existing_doc.get("postal_code") if existing_doc else "") or ""
-            final_country_code = (existing_doc.get("country_code") if existing_doc else "🇮🇳 IN +91") or "🇮🇳 IN +91"
-
-            org_id = self.get_organization_id()
-
-            profile_doc = {
-                "profile_id": profile_key,
-                "user_id": str(user_data.get("id", user_data.get("_id", connector_data.get("id", "")))),
-                "name": final_name,
-                "email": user_email or (existing_doc.get("email") if existing_doc else ""),
-                "mobile": final_mobile,
-                "postal_code": final_postal_code,
-                "country_code": final_country_code,
-                "role": user_data.get("role", "USER"),
-                "status": connector_data.get("status", user_data.get("status", "ACTIVE")),
-                "organization_id": org_id,
-                "organizationId": org_id,
-                "connector": connector_data,
-                "plan": plan_data,
-                "subscription": sub_data,
-                "permissions": permissions,
-                "company_id": user_data.get("companyId", user_data.get("company_id")),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-                "raw": user_data,
-            }
-            col.update_one({"profile_id": profile_key}, {"$set": profile_doc}, upsert=True)
-            if profile_key != "current_user":
-                col.update_one({"profile_id": "current_user"}, {"$set": profile_doc}, upsert=True)
-            logger.info(f"Synchronized user profile '{profile_key}' into MongoDB Atlas without wiping user details.")
-        except Exception as exc:
-            logger.error(f"MongoDB profile sync error: {exc}")
+        """Deprecated/Bypassed: User profile is strictly API-driven; direct DB writes are disabled."""
+        return
 
     def send_otp(self, email: str) -> Tuple[bool, str]:
        
@@ -383,7 +323,15 @@ class CloudAuthService:
             return False, f"Token refresh error: {exc}"
 
     def logout(self) -> Tuple[bool, str]:
-    
+        """
+        Completely logs out the user:
+        1. Calls Cloud API /auth/logout to invalidate server-side token.
+        2. Clears and closes HTTP client (clears all cookies, sessions & connection pool).
+        3. Resets in-memory auth tokens (access_token, refresh_token, current_user).
+        4. Removes encrypted session from Windows Credential Manager.
+        5. Deletes local session files (auth_session.json, profile.json, pending_vouchers.json).
+        6. Flushes in-memory stock lookup and company caches.
+        """
         url = f"{self.base_url}/auth/logout"
         headers = {}
         if self.access_token:
@@ -396,23 +344,80 @@ class CloudAuthService:
         except Exception:
             pass
 
+        # 1. Clear & close HTTP client (clearing all cookies and socket pool)
+        if self._client is not None:
+            try:
+                self._client.cookies.clear()
+            except Exception:
+                pass
+            try:
+                self._client.close()
+            except Exception:
+                pass
+            self._client = None
+
+        # 2. Reset in-memory auth state
         self.access_token = None
         self.refresh_token_val = None
         self.current_user = {}
 
-        # Clear from Windows Credential Manager
+        # 3. Clear from Windows Credential Manager
         try:
             from shared.auth.win_credential_store import clear_persisted_session
             clear_persisted_session()
         except Exception:
             pass
 
+        # 4. Remove session, profile, pending vouchers, and checkpoint cache files from disk across all paths
         if AUTH_SESSION_FILE.exists():
             try:
                 AUTH_SESSION_FILE.unlink()
             except Exception:
                 pass
 
+        for p_name in ("auth_session.json", "profile.json", "pending_vouchers.json", "sync_checkpoints.json"):
+            try:
+                p_file = Path("data") / p_name
+                if p_file.exists():
+                    p_file.unlink()
+            except Exception:
+                pass
+            try:
+                from shared.cloud.helpers import _get_writable_data_file
+                p_file2 = _get_writable_data_file(p_name)
+                if p_file2.exists():
+                    p_file2.unlink()
+            except Exception:
+                pass
+
+        try:
+            from shared.cloud.helpers import clear_all_local_checkpoints
+            clear_all_local_checkpoints()
+        except Exception:
+            pass
+
+        # 5. Clear local SQLite CompanySyncConfig cache so stale company records do not leak
+        try:
+            from shared.db.session import get_db_session
+            from shared.db.models import CompanySyncConfig
+            with get_db_session() as db_sess:
+                db_sess.query(CompanySyncConfig).delete()
+        except Exception:
+            pass
+
+        # 6. Clear in-memory master & company caches
+        try:
+            from apps.backend.adapters.tally.response_parser import _ITEM_MASTER_LOOKUP_CACHE
+            _ITEM_MASTER_LOOKUP_CACHE.clear()
+        except Exception:
+            pass
+        try:
+            from apps.desktop_app.ui.threads.company_fetch_worker import clear_fetched_companies_cache
+            clear_fetched_companies_cache()
+        except Exception:
+            pass
+
+        logger.info("Complete logout cleanup performed: cookies, session, profile cache, checkpoints, and memory cleared.")
         return True, "Logged out successfully."
 
     def get_me(self) -> Tuple[bool, Dict[str, Any]]:
@@ -437,14 +442,91 @@ class CloudAuthService:
 
             if res.status_code == 200 or data.get("success") is True:
                 user_data = data.get("data") or data
-                self.current_user = user_data
-                self.sync_user_to_mongodb(user_data)
+                if isinstance(self.current_user, dict) and self.current_user:
+                    merged = dict(self.current_user)
+                    merged.update(user_data)
+                    for k in ("email", "name", "mobile", "phone", "postal_code", "country_code", "role"):
+                        if self.current_user.get(k) and not user_data.get(k):
+                            merged[k] = self.current_user[k]
+                    self.current_user = merged
+                else:
+                    self.current_user = user_data if isinstance(user_data, dict) else {}
                 return True, user_data
             else:
                 return False, data
         except Exception as exc:
             logger.error(f"Error fetching /me profile: {exc}")
             return False, {}
+
+    def update_profile(
+        self,
+        name: str = "",
+        mobile: str = "",
+        email: str = "",
+        postal_code: str = "",
+        country_code: str = ""
+    ) -> Tuple[bool, str]:
+        """Updates user profile purely via API and local session cache (100% DB-free)."""
+        if not isinstance(self.current_user, dict):
+            self.current_user = {}
+
+        if name:
+            self.current_user["name"] = name
+        if mobile:
+            self.current_user["mobile"] = mobile
+        if email:
+            self.current_user["email"] = email
+        if postal_code:
+            self.current_user["postal_code"] = postal_code
+        if country_code:
+            self.current_user["country_code"] = country_code
+
+        # 1. Update Windows Credential Store session with updated profile
+        if self.access_token:
+            self.save_session(self.access_token, self.refresh_token_val, self.current_user)
+
+        # 2. Write to local cache profile.json
+        try:
+            cache_file = _get_writable_data_file("profile.json")
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            doc = {
+                "name": name,
+                "mobile": mobile,
+                "email": email or self.get_email(),
+                "postal_code": postal_code,
+                "country_code": country_code,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(doc, f, indent=2)
+        except Exception as e:
+            logger.debug(f"Profile cache save notice: {e}")
+
+        # 3. If Cloud API has /profile or /me endpoint, attempt API call
+        if self.access_token:
+            try:
+                client = self._get_client(5.0)
+                headers = {
+                    "Authorization": f"Bearer {self.access_token}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "name": name,
+                    "mobile": mobile,
+                    "postalCode": postal_code,
+                    "countryCode": country_code,
+                }
+                for ep, meth in [("/me", "PATCH"), ("/profile", "PUT")]:
+                    try:
+                        r = client.request(meth, f"{self.base_url}{ep}", json=payload, headers=headers)
+                        if r.status_code in (200, 204):
+                            return True, "Profile updated successfully on cloud."
+                    except Exception:
+                        pass
+            except Exception as exc:
+                logger.debug(f"Cloud API profile sync attempt: {exc}")
+
+        return True, "Profile updated successfully."
 
     def link_company(self, company_name: str, company_guid: str = "", financial_year: str = "") -> Tuple[bool, str, Dict[str, Any]]:
         """Calls Cloud Link Company endpoint (/company/link)."""
@@ -486,42 +568,51 @@ class CloudAuthService:
                 comp_id_val = None
                 if isinstance(comp_obj, dict):
                     comp_id_val = comp_obj.get("id") or comp_obj.get("_id")
-                try:
-                    col = _safe_get_collection("companies")
-                    if col is not None:
-                        org_id = self.get_organization_id()
-                        user_email = (
-                            self.current_user.get("email")
-                            or getattr(self, "email", "")
-                            or ""
-                        ).strip().lower()
+                from shared.cloud.helpers import set_local_checkpoint
+                if comp_id_val or company_name:
+                    set_local_checkpoint(
+                        company_key=comp_id_val or company_name,
+                        company_name=company_name,
+                        cloud_company_id=str(comp_id_val) if comp_id_val else ""
+                    )
 
-                        set_data = {
-                            "company_name": company_name,
-                            "name": company_name,
-                            "company_guid": company_guid,
-                            "cloud_company_id": comp_id_val,
-                            "deviceId": self.device_id,
-                            "device_id": self.device_id,
-                            "financial_year_from": financial_year or "01-Apr-2025",
-                            "cloud_linked": True,
-                            "is_sync_enabled": True,
-                            "status": "CONNECTED",
-                            "updated_at": datetime.now(timezone.utc).isoformat()
-                        }
-                        if org_id:
-                            set_data["organizationId"] = org_id
-                            set_data["organization_id"] = org_id
-                        if user_email:
-                            set_data["email"] = user_email
+                if get_settings().direct_mongo_sync_enabled:
+                    try:
+                        col = _safe_get_collection("companies")
+                        if col is not None:
+                            org_id = self.get_organization_id()
+                            user_email = (
+                                self.current_user.get("email")
+                                or getattr(self, "email", "")
+                                or ""
+                            ).strip().lower()
 
-                        col.update_one(
-                            {"company_name": company_name},
-                            {"$set": set_data},
-                            upsert=True
-                        )
-                except Exception as e:
-                    logger.error(f"Error persisting linked company to MongoDB: {e}")
+                            set_data = {
+                                "company_name": company_name,
+                                "name": company_name,
+                                "company_guid": company_guid,
+                                "cloud_company_id": comp_id_val,
+                                "deviceId": self.device_id,
+                                "device_id": self.device_id,
+                                "financial_year_from": financial_year or "01-Apr-2025",
+                                "cloud_linked": True,
+                                "is_sync_enabled": True,
+                                "status": "CONNECTED",
+                                "updated_at": datetime.now(timezone.utc).isoformat()
+                            }
+                            if org_id:
+                                set_data["organizationId"] = org_id
+                                set_data["organization_id"] = org_id
+                            if user_email:
+                                set_data["email"] = user_email
+
+                            col.update_one(
+                                {"company_name": company_name},
+                                {"$set": set_data},
+                                upsert=True
+                            )
+                    except Exception as e:
+                        logger.error(f"Error persisting linked company to MongoDB: {e}")
 
                 res_comp = comp_obj if isinstance(comp_obj, dict) else {}
                 return True, str(data.get("message", "Company linked to cloud successfully!")), res_comp
@@ -562,28 +653,39 @@ class CloudAuthService:
                     companies_list = data.get("companies") or []
 
                 if isinstance(companies_list, list):
+                    from shared.cloud.helpers import set_local_checkpoint
+                    for c in companies_list:
+                        c_name = c.get("tallyCompanyName") or c.get("companyName") or c.get("name")
+                        c_id = c.get("id") or c.get("_id")
+                        if c_name or c_id:
+                            set_local_checkpoint(
+                                company_key=c_id or c_name,
+                                company_name=str(c_name or ""),
+                                cloud_company_id=str(c_id or "")
+                            )
 
-                    try:
-                        col = _safe_get_collection("companies")
-                        if col is not None:
-                            for c in companies_list:
-                                c_name = c.get("tallyCompanyName") or c.get("companyName") or c.get("name")
-                                if c_name:
-                                    col.update_one(
-                                        {"company_name": c_name},
-                                        {"$set": {
-                                            "company_name": c_name,
-                                            "company_guid": c.get("tallyCompanyGuid") or c.get("companyGuid"),
-                                            "cloud_company_id": c.get("id") or c.get("_id"),
-                                            "cloud_linked": True,
-                                            "is_sync_enabled": c.get("isSyncEnabled", True),
-                                            "status": c.get("status", "CONNECTED"),
-                                            "updated_at": datetime.now(timezone.utc).isoformat()
-                                        }},
-                                        upsert=True
-                                    )
-                    except Exception as e:
-                        logger.error(f"Error syncing cloud companies to MongoDB: {e}")
+                    if get_settings().direct_mongo_sync_enabled:
+                        try:
+                            col = _safe_get_collection("companies")
+                            if col is not None:
+                                for c in companies_list:
+                                    c_name = c.get("tallyCompanyName") or c.get("companyName") or c.get("name")
+                                    if c_name:
+                                        col.update_one(
+                                            {"company_name": c_name},
+                                            {"$set": {
+                                                "company_name": c_name,
+                                                "company_guid": c.get("tallyCompanyGuid") or c.get("companyGuid"),
+                                                "cloud_company_id": c.get("id") or c.get("_id"),
+                                                "cloud_linked": True,
+                                                "is_sync_enabled": c.get("isSyncEnabled", True),
+                                                "status": c.get("status", "CONNECTED"),
+                                                "updated_at": datetime.now(timezone.utc).isoformat()
+                                            }},
+                                            upsert=True
+                                        )
+                        except Exception as e:
+                            logger.error(f"Error syncing cloud companies to MongoDB: {e}")
 
                     return True, companies_list
                 return True, []
@@ -595,25 +697,31 @@ class CloudAuthService:
 
     def _extract_error_message(self, res: httpx.Response, data: Dict[str, Any], default_msg: str) -> str:
         """Extracts clear English error message from response or JSON payload."""
+        out_msg = default_msg
         if not data and res.text:
-            return f"{default_msg} (HTTP {res.status_code}): {res.text[:200]}"
-        detail = data.get("detail")
-        if detail:
+            out_msg = f"{default_msg} (HTTP {res.status_code}): {res.text[:200]}"
+        elif data.get("detail"):
+            detail = data.get("detail")
             if isinstance(detail, list):
                 msgs = [f"{item.get('loc', ['field'])[-1]}: {item.get('msg', 'invalid')}" for item in detail if isinstance(item, dict)]
                 if msgs:
-                    return f"{default_msg}: " + "; ".join(msgs)
+                    out_msg = f"{default_msg}: " + "; ".join(msgs)
             elif isinstance(detail, str):
-                return detail
-        if "errors" in data and isinstance(data["errors"], list) and data["errors"]:
+                out_msg = detail
+        elif "errors" in data and isinstance(data["errors"], list) and data["errors"]:
             msgs = [f"{item.get('field', 'field')}: {item.get('message', 'invalid')}" for item in data["errors"] if isinstance(item, dict)]
             if msgs:
-                return f"{default_msg}: " + "; ".join(msgs)
-        if data.get("message"):
-            return str(data["message"])
-        if data.get("error"):
-            return str(data["error"])
-        return f"{default_msg} (HTTP {res.status_code})"
+                out_msg = f"{default_msg}: " + "; ".join(msgs)
+        elif data.get("message"):
+            out_msg = str(data["message"])
+        elif data.get("error"):
+            out_msg = str(data["error"])
+        else:
+            out_msg = f"{default_msg} (HTTP {res.status_code})"
+
+        if "no subscription" in str(out_msg).lower():
+            return "This company is already registered with a different email address."
+        return out_msg
 
 
     # --- Cloud Batch Sync Delegations ---
@@ -637,10 +745,27 @@ class CloudAuthService:
         entity_type: str,
         items: list[Dict[str, Any]],
         batch_number: int = 1,
-        is_last_batch: bool = False
+        is_last_batch: bool = False,
+        company_id: Optional[str] = None,
+        sync_type: str = "INCREMENTAL",
+        is_full_replace: Optional[bool] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        pl_data: Optional[Dict[str, Any]] = None
     ) -> Tuple[bool, str, Dict[str, Any]]:
         return self._sync_client.sync_batch(
-            sync_id, company_name, entity_type, items, batch_number, is_last_batch
+            sync_id,
+            company_name,
+            entity_type,
+            items,
+            batch_number,
+            is_last_batch,
+            company_id=company_id,
+            sync_type=sync_type,
+            is_full_replace=is_full_replace,
+            start_date=start_date,
+            end_date=end_date,
+            pl_data=pl_data
         )
 
     @property

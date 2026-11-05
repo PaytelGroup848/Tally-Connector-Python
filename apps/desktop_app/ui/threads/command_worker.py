@@ -9,7 +9,6 @@ from bson import ObjectId
 from PySide6.QtCore import QThread, Signal
 from shared.auth.cloud_auth_service import cloud_auth_service
 from shared.logging_config import get_logger
-from shared.db.mongo_client import get_collection
 from shared.repositories.activity_history_repository import activity_history_repo
 from shared.repositories.voucher_queue_repository import voucher_queue_repo
 from apps.backend.services.importer_service import ImporterService
@@ -157,28 +156,28 @@ class RemoteCommandWorker(QThread):
 
                 if not resolved_company and comp_id:
                     try:
-                        from shared.db.mongo_client import get_mongo_db
-                        db = get_mongo_db()
-                        c_doc = None
-                        name_filter = {
-                            "$or": [
-                                {"company_name": {"$exists": True, "$nin": [None, "", "None"]}},
-                                {"name": {"$exists": True, "$nin": [None, "", "None"]}},
-                                {"tallyCompanyName": {"$exists": True, "$nin": [None, "", "None"]}}
-                            ]
-                        }
-                        if ObjectId.is_valid(str(comp_id)):
-                            c_doc = db.companies.find_one({"_id": ObjectId(str(comp_id)), **name_filter})
-                            if not c_doc:
-                                c_doc = db.companies.find_one({"_id": ObjectId(str(comp_id))})
-                        if not c_doc or not (c_doc.get("company_name") or c_doc.get("name") or c_doc.get("tallyCompanyName")):
-                            c_doc = db.companies.find_one({"cloud_company_id": str(comp_id), **name_filter})
-                        if not c_doc or not (c_doc.get("company_name") or c_doc.get("name") or c_doc.get("tallyCompanyName")):
-                            c_doc = db.companies.find_one({"id": str(comp_id), **name_filter})
-                        if c_doc:
-                            resolved_company = str(c_doc.get("company_name") or c_doc.get("name") or c_doc.get("tallyCompanyName") or "").strip()
+                        from shared.cloud.helpers import get_all_local_checkpoints
+                        all_cps = get_all_local_checkpoints()
+                        for c_key, c_info in all_cps.items():
+                            if isinstance(c_info, dict):
+                                cand_cid = c_info.get("cloud_company_id") or c_info.get("company_id")
+                                if cand_cid and str(cand_cid).strip().lower() == str(comp_id).strip().lower():
+                                    resolved_company = str(c_info.get("company_name") or c_key).strip()
+                                    break
                     except Exception as exc:
-                        logger.debug(f"Company ID lookup error: {exc}")
+                        logger.debug(f"Local checkpoint company lookup error: {exc}")
+
+                    if not resolved_company and cloud_auth_service.access_token:
+                        try:
+                            ok_c, c_list = cloud_auth_service.get_cloud_companies()
+                            if ok_c and c_list:
+                                for item in c_list:
+                                    cand_cid = item.get("id") or item.get("_id")
+                                    if cand_cid and str(cand_cid).strip().lower() == str(comp_id).strip().lower():
+                                        resolved_company = str(item.get("tallyCompanyName") or item.get("companyName") or item.get("name") or "").strip()
+                                        break
+                        except Exception as exc:
+                            logger.debug(f"Cloud companies API lookup error: {exc}")
 
                 if not resolved_company:
                     try:
@@ -600,23 +599,26 @@ class RemoteCommandWorker(QThread):
                 error_message=error_msg
             )
 
-            try:
-                cmd_col = get_collection("commands")
-                if ObjectId.is_valid(cmd_id):
-                    cmd_col.update_one(
-                        {"_id": ObjectId(cmd_id)},
-                        {"$set": {
-                            "status": status_str,
-                            "result": result_payload,
-                            "resultPayload": result_payload,
-                            "tallyExternalId": result_payload.get("tallyExternalId") if isinstance(result_payload, dict) else None,
-                            "errorMessage": error_msg,
-                            "completedAt": datetime.now(timezone.utc),
-                            "updatedAt": datetime.now(timezone.utc)
-                        }}
-                    )
-            except Exception as m_err:
-                logger.debug(f"Direct MongoDB command update skipped: {m_err}")
+            from shared.config import get_settings
+            if get_settings().direct_mongo_sync_enabled:
+                try:
+                    from shared.db.mongo_client import get_collection
+                    cmd_col = get_collection("commands")
+                    if ObjectId.is_valid(cmd_id):
+                        cmd_col.update_one(
+                            {"_id": ObjectId(cmd_id)},
+                            {"$set": {
+                                "status": status_str,
+                                "result": result_payload,
+                                "resultPayload": result_payload,
+                                "tallyExternalId": result_payload.get("tallyExternalId") if isinstance(result_payload, dict) else None,
+                                "errorMessage": error_msg,
+                                "completedAt": datetime.now(timezone.utc),
+                                "updatedAt": datetime.now(timezone.utc)
+                            }}
+                        )
+                except Exception as m_err:
+                    logger.debug(f"Direct MongoDB command update skipped: {m_err}")
 
             self.command_processed.emit(cmd_id, cmd_type, success, error_msg or "Executed successfully", error_details if not success else {})
 

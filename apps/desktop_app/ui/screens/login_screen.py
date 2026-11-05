@@ -353,3 +353,21 @@ class LoginScreen(QWidget):
         else:
             self._show_message(msg, is_error=True)
 
+    def reset_form(self):
+        """Clears all input fields, resets OTP state, and returns to Step 1 (Email view)."""
+        self.current_email = ""
+        if hasattr(self, "email_input") and self.email_input:
+            self.email_input.clear()
+        if hasattr(self, "otp_input") and self.otp_input:
+            self.otp_input.clear()
+        if hasattr(self, "msg_lbl") and self.msg_lbl:
+            self.msg_lbl.hide()
+            self.msg_lbl.setText("")
+        if hasattr(self, "send_otp_btn") and self.send_otp_btn:
+            self.send_otp_btn.setEnabled(True)
+            self.send_otp_btn.setText("Send Cloud OTP  ➔")
+        if hasattr(self, "verify_btn") and self.verify_btn:
+            self.verify_btn.setEnabled(True)
+            self.verify_btn.setText("Verify OTP && Login  ➔")
+        if hasattr(self, "stack") and self.stack:
+            self.stack.setCurrentIndex(0)

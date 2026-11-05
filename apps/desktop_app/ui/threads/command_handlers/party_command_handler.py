@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Dict, Any, Tuple, Optional
 from shared.logging_config import get_logger
-from shared.db.mongo_client import get_collection
 from apps.backend.adapters.tally.xml_builders.common import is_bank_ledger_name, classify_safe_ledger_parent
 
 logger = get_logger("app.threads.command_handlers.party")
@@ -159,34 +158,37 @@ def execute_party_command(
                 "status": "SUCCESS",
                 "already_exists": bool(res.get("already_exists"))
             }
-            try:
-                p_name = norm_payload.get("name")
-                is_supp = "SUPPLIER" in p_type or "VENDOR" in p_type or "CREDITOR" in p_type
-                is_bank = is_bank_ledger_name(p_name) or "BANK" in p_type
-                if is_bank:
-                    col_names = ["banks", "ledgers"]
-                elif is_supp:
-                    col_names = ["suppliers", "ledgers"]
-                else:
-                    col_names = ["customers", "ledgers"]
+            from shared.config import get_settings
+            if get_settings().direct_mongo_sync_enabled:
+                try:
+                    from shared.db.mongo_client import get_collection
+                    p_name = norm_payload.get("name")
+                    is_supp = "SUPPLIER" in p_type or "VENDOR" in p_type or "CREDITOR" in p_type
+                    is_bank = is_bank_ledger_name(p_name) or "BANK" in p_type
+                    if is_bank:
+                        col_names = ["banks", "ledgers"]
+                    elif is_supp:
+                        col_names = ["suppliers", "ledgers"]
+                    else:
+                        col_names = ["customers", "ledgers"]
 
-                update_dict: Dict[str, Any] = {
-                    "tallyExternalId": ext_id,
-                    "updatedAt": datetime.now(timezone.utc),
-                }
-                if norm_payload.get("bankDetails"):
-                    update_dict["bankDetails"] = norm_payload["bankDetails"]
-                if norm_payload.get("parent"):
-                    update_dict["parent"] = norm_payload["parent"]
+                    update_dict: Dict[str, Any] = {
+                        "tallyExternalId": ext_id,
+                        "updatedAt": datetime.now(timezone.utc),
+                    }
+                    if norm_payload.get("bankDetails"):
+                        update_dict["bankDetails"] = norm_payload["bankDetails"]
+                    if norm_payload.get("parent"):
+                        update_dict["parent"] = norm_payload["parent"]
 
-                for c_name in col_names:
-                    c_col = get_collection(c_name)
-                    q = {"name": p_name}
-                    if comp_id:
-                        q["companyId"] = comp_id
-                    c_col.update_many(q, {"$set": update_dict})
-            except Exception as m_err:
-                logger.debug(f"Direct MongoDB party update notice: {m_err}")
+                    for c_name in col_names:
+                        c_col = get_collection(c_name)
+                        q = {"name": p_name}
+                        if comp_id:
+                            q["companyId"] = comp_id
+                        c_col.update_many(q, {"$set": update_dict})
+                except Exception as m_err:
+                    logger.debug(f"Direct MongoDB party update notice: {m_err}")
         else:
             success = False
             error_msg = res.get("error") or res.get("message") or "Failed to create party/ledger in Tally."

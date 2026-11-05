@@ -107,6 +107,29 @@ class TestUIComponentsUnit(unittest.TestCase):
         self.assertEqual(res["vouchers"], 15)
 
 
+    def test_11_toast_notification_positioned_at_bottom_right(self):
+        """Verifies ToastNotification positions in the bottom-right quadrant of the screen."""
+        from apps.desktop_app.ui.widgets.toast import ToastNotification
+        from PySide6.QtGui import QGuiApplication
+
+        toast_success = ToastNotification("Data synced successfully!", "success")
+        toast_success.show()
+
+        toast_error = ToastNotification("Sync Failed: Error occurred", "error")
+        toast_error.show()
+
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            self.assertGreater(toast_success.pos().x(), geo.x() + (geo.width() // 2))
+            self.assertGreater(toast_success.pos().y(), geo.y() + (geo.height() // 2))
+            self.assertGreater(toast_error.pos().x(), geo.x() + (geo.width() // 2))
+            self.assertGreater(toast_error.pos().y(), geo.y() + (geo.height() // 2))
+
+        toast_success.close()
+        toast_error.close()
+
+
 if __name__ == "__main__":
     unittest.main()
 

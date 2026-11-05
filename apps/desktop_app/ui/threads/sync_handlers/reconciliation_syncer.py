@@ -23,6 +23,10 @@ def reconcile_pending_commands(
     already confirmed present in Tally Prime, automatically marks it 'DONE' in MongoDB
     and notifies the Cloud Server so the web portal status changes from SENT to DONE.
     """
+    from shared.config import get_settings
+    if not get_settings().direct_mongo_sync_enabled:
+        return
+
     try:
         cmd_col = get_collection("commands")
         or_comps: List[Dict[str, Any]] = [

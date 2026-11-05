@@ -29,10 +29,10 @@ class TestConnectionConfig(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(get_configured_port(), 9000)
 
-    @patch("shared.connection_config.is_socket_open")
-    def test_resolve_active_tally_port_with_open_port(self, mock_socket_open):
+    @patch("shared.connection_config.test_tally_port", return_value=(True, ["Test Co"], ""))
+    @patch("shared.connection_config.is_socket_open", return_value=True)
+    def test_resolve_active_tally_port_with_open_port(self, mock_socket_open, mock_test_port):
         from shared.connection_config import resolve_active_tally_port
-        mock_socket_open.return_value = True
 
         save_connection_config(host="127.0.0.1", port=9047)
         h, p = resolve_active_tally_port()

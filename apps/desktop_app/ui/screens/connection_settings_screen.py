@@ -39,6 +39,7 @@ class UpdateDownloadThread(QThread):
 class ConnectionSettingsScreen(QWidget):
     back_requested = Signal()
     nav_requested = Signal(str)
+    settings_saved = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -187,10 +188,26 @@ class ConnectionSettingsScreen(QWidget):
         sync_lbl.setStyleSheet("font-size: 12px; font-weight: 700; color: #334155; border: none; background: transparent;")
 
         self.interval_combo = QComboBox()
-        self.interval_combo.addItems(["Real-time", "1 min", "5 mins", "15 mins", "1 hour", "Manual"])
-        self.interval_combo.setCurrentText("5 mins")
+        self.interval_combo.addItems([
+            "Real-time",
+            "1 min",
+            "2 mins",
+            "5 mins",
+            "10 mins",
+            "15 mins",
+            "30 mins",
+            "1 hour",
+            "Manual",
+        ])
+        self.interval_combo.setEditable(False)
+        init_interval = str(saved_cfg.get("sync_interval_minutes", "1 min")).strip()
+        init_idx = self.interval_combo.findText(init_interval)
+        if init_idx >= 0:
+            self.interval_combo.setCurrentIndex(init_idx)
+        else:
+            self.interval_combo.setCurrentText(init_interval)
         self.interval_combo.setFixedHeight(34)
-        self.interval_combo.setFixedWidth(110)
+        self.interval_combo.setFixedWidth(120)
         self.interval_combo.setStyleSheet("""
             QComboBox {
                 border: 1.5px solid #CBD5E1;
@@ -323,7 +340,12 @@ class ConnectionSettingsScreen(QWidget):
             self.auto_chk.setChecked(bool(cfg.get("auto_connect", True)))
             self.host_input.setText(str(cfg.get("tally_host", "127.0.0.1")))
             self.port_input.setText(str(cfg.get("tally_port", 9000)))
-            self.interval_combo.setCurrentText(str(cfg.get("sync_interval_minutes", "5 mins")))
+            saved_interval = str(cfg.get("sync_interval_minutes", "1 min")).strip()
+            idx = self.interval_combo.findText(saved_interval)
+            if idx >= 0:
+                self.interval_combo.setCurrentIndex(idx)
+            else:
+                self.interval_combo.setCurrentText(saved_interval)
         except Exception:
             pass
 
@@ -338,7 +360,7 @@ class ConnectionSettingsScreen(QWidget):
             return
 
         auto_conn = self.auto_chk.isChecked()
-        interval = self.interval_combo.currentText()
+        interval = self.interval_combo.currentText().strip() or "1 min"
 
         # 1. Save locally to disk and memory
         save_connection_config(host=host, port=port, sync_interval_minutes=interval, auto_connect=auto_conn)
@@ -352,7 +374,22 @@ class ConnectionSettingsScreen(QWidget):
             self.save_btn.setText(f"Saved (Port {port} Offline)")
             self.save_btn.setStyleSheet("background-color: #D97706; color: white; font-weight: 800; border-radius: 19px; border: none; font-size: 13px;")
 
-        # 3. Optional gateway notification
+        # 3. Emit signal so running timers update immediately
+        self.settings_saved.emit({
+            "host": host,
+            "port": port,
+            "sync_interval_minutes": interval,
+            "auto_connect": auto_conn
+        })
+
+        # 4. Show non-intrusive bottom-right toast
+        try:
+            from apps.desktop_app.ui.widgets.toast import ToastNotification
+            ToastNotification.show_toast(self, f"Settings saved! Sync interval set to {interval}.", "success", duration_ms=3000)
+        except Exception:
+            pass
+
+        # 5. Optional gateway notification
         try:
             import httpx
             from shared.config import get_settings

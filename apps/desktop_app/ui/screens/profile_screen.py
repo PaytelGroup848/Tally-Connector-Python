@@ -14,7 +14,7 @@ from PySide6.QtGui import QColor
 from pathlib import Path
 import json
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Dict, Any, Optional
 
 from apps.desktop_app.ui.widgets.lk_header import CtrlBooksHeader
 from apps.desktop_app.ui.widgets.lk_footer import CtrlBooksFooter
@@ -23,14 +23,6 @@ from shared.auth.cloud_auth_service import cloud_auth_service
 from shared.logging_config import get_logger
 
 logger = get_logger("app.ui.profile")
-
-def _safe_get_collection(name: str):
-    try:
-        from shared.db.mongo_client import get_collection
-        return get_collection(name)
-    except Exception as exc:
-        logger.debug(f"MongoDB collection '{name}' access notice: {exc}")
-        return None
 
 import os
 
@@ -46,9 +38,25 @@ def _get_writable_profile_file() -> Path:
 
 PROFILE_CACHE_FILE = _get_writable_profile_file()
 
+def _safe_str(d: Any, *keys: str, default: str = "") -> str:
+    """Safely extracts a non-empty string from a dictionary for given keys without NoneType errors."""
+    if not isinstance(d, dict):
+        return default
+    for k in keys:
+        v = d.get(k)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return default
+
 class ProfileScreen(QWidget):
     back_requested = Signal()
     nav_requested = Signal(str)
+
+    # Class attribute type annotations to guarantee 0 Pylance / type-checker warnings
+    lbl_last_heartbeat: Optional[QLabel] = None
+    lbl_user_name: Optional[QLabel] = None
+    lbl_role_tag: Optional[QLabel] = None
+    avatar_lbl: Optional[QLabel] = None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -511,7 +519,7 @@ class ProfileScreen(QWidget):
         self.load_profile()
 
     def load_profile(self):
-        """Loads full profile and identity data from Cloud API, MongoDB Atlas, and local cache."""
+        """Loads full profile and identity data live from Cloud API and session (100% DB-free)."""
         raw_cloud_data = {}
 
         try:
@@ -521,69 +529,75 @@ class ProfileScreen(QWidget):
         except Exception as exc:
             logger.debug(f"Cloud API /me profile load notice: {exc}")
 
-        user_email = (
-            cloud_auth_service.current_user.get("email")
-            or getattr(cloud_auth_service, "email", "")
-            or ""
-        ).strip().lower()
+        # Cloud user from live API response or session
+        cloud_user: Dict[str, Any] = {}
+        if isinstance(raw_cloud_data, dict):
+            c_u = raw_cloud_data.get("user")
+            if isinstance(c_u, dict):
+                cloud_user = c_u
+            else:
+                cloud_user = raw_cloud_data
 
-        db_profile = {}
-        try:
-            col = _safe_get_collection("user_profile")
-            if col is not None:
-                doc = None
-                if user_email:
-                    doc = col.find_one({"$or": [{"profile_id": user_email}, {"email": user_email}]})
-                if not doc:
-                    doc = col.find_one({"profile_id": "current_user"})
-                if doc:
-                    db_profile = doc
-                    if not raw_cloud_data:
-                        raw_cloud_data = doc.get("raw") or doc
-        except Exception as exc:
-            logger.debug(f"MongoDB profile load notice: {exc}")
+        session_inner: Dict[str, Any] = {}
+        sess_u = cloud_auth_service.current_user
+        if isinstance(sess_u, dict):
+            in_u = sess_u.get("user")
+            if isinstance(in_u, dict):
+                session_inner = in_u
+            else:
+                session_inner = sess_u
 
-        cache_profile = {}
+        # Local cache file as offline fallback only
+        cache_profile: Dict[str, Any] = {}
         cache_file = _get_writable_profile_file()
         if cache_file.exists():
             try:
                 with open(cache_file, "r", encoding="utf-8") as f:
-                    cache_profile = json.load(f)
+                    loaded_cache = json.load(f)
+                    if isinstance(loaded_cache, dict):
+                        cache_profile = loaded_cache
             except Exception:
                 pass
 
-        cloud_user = raw_cloud_data.get("user") or (raw_cloud_data if isinstance(raw_cloud_data, dict) else {})
+        # Pure Cloud API & Session Priority with safe dictionary extraction:
+        user_email = (
+            _safe_str(cloud_user, "email")
+            or _safe_str(session_inner, "email")
+            or cloud_auth_service.get_email()
+            or getattr(cloud_auth_service, "email", "")
+            or _safe_str(cache_profile, "email")
+            or ""
+        ).strip().lower()
+
         name_val = (
-            db_profile.get("name")
-            or cache_profile.get("name")
-            or cloud_user.get("name")
-            or cloud_user.get("fullName")
+            _safe_str(cloud_user, "name", "fullName")
+            or _safe_str(session_inner, "name", "fullName")
+            or _safe_str(cache_profile, "name")
             or ""
         )
         mobile_val = (
-            db_profile.get("mobile")
-            or cache_profile.get("mobile")
-            or cloud_user.get("mobile")
-            or cloud_user.get("phone")
+            _safe_str(cloud_user, "mobile", "phone")
+            or _safe_str(session_inner, "mobile", "phone")
+            or _safe_str(cache_profile, "mobile")
             or ""
         )
         email_val = (
             user_email
-            or db_profile.get("email")
-            or cache_profile.get("email")
-            or cloud_user.get("email")
+            or _safe_str(cloud_user, "email")
+            or _safe_str(session_inner, "email")
+            or _safe_str(cache_profile, "email")
             or ""
         )
         zip_val = (
-            db_profile.get("postal_code")
-            or cache_profile.get("postal_code")
-            or cloud_user.get("postal_code")
-            or cloud_user.get("zip")
+            _safe_str(cloud_user, "postal_code", "zip")
+            or _safe_str(session_inner, "postal_code", "zip")
+            or _safe_str(cache_profile, "postal_code")
             or ""
         )
         c_code = (
-            db_profile.get("country_code")
-            or cache_profile.get("country_code")
+            _safe_str(cloud_user, "country_code")
+            or _safe_str(session_inner, "country_code")
+            or _safe_str(cache_profile, "country_code")
             or "🇮🇳 IN +91"
         )
 
@@ -675,7 +689,7 @@ class ProfileScreen(QWidget):
         self.perm_tags_layout.addStretch()
 
     def save_profile(self):
-        """Persists profile data to MongoDB Atlas and local cache file."""
+        """Persists profile data via Cloud Auth Service and local session cache (100% DB-free)."""
         name = self.name_input.text().strip()
         mobile = self.mobile_input.text().strip()
         email = self.email_input.text().strip()
@@ -685,15 +699,13 @@ class ProfileScreen(QWidget):
 
         user_email = (
             email
-            or cloud_auth_service.current_user.get("email")
+            or cloud_auth_service.get_email()
+            or (cloud_auth_service.current_user.get("email") if isinstance(cloud_auth_service.current_user, dict) else "")
             or getattr(cloud_auth_service, "email", "")
             or ""
         ).strip().lower()
 
-        profile_key = user_email if user_email else "current_user"
-
         profile_doc = {
-            "profile_id": profile_key,
             "name": name,
             "mobile": mobile,
             "email": user_email or email,
@@ -702,16 +714,17 @@ class ProfileScreen(QWidget):
             "updated_at": now_iso,
         }
 
-        try:
-            col = _safe_get_collection("user_profile")
-            if col is not None:
-                col.update_one({"profile_id": profile_key}, {"$set": profile_doc}, upsert=True)
-                if profile_key != "current_user":
-                    col.update_one({"profile_id": "current_user"}, {"$set": profile_doc}, upsert=True)
-                logger.info(f"User profile for '{name}' saved successfully in MongoDB Atlas.")
-        except Exception as exc:
-            logger.error(f"MongoDB profile save error: {exc}")
+        # Update via Cloud Auth Service (updates session, in-memory, credential manager, and cloud API)
+        if hasattr(cloud_auth_service, "update_profile"):
+            cloud_auth_service.update_profile(
+                name=name,
+                mobile=mobile,
+                email=user_email or email,
+                postal_code=postal_code,
+                country_code=country_code
+            )
 
+        # Write to local cache profile.json for offline resilience
         cache_file = _get_writable_profile_file()
         try:
             cache_file.parent.mkdir(parents=True, exist_ok=True)
@@ -736,3 +749,66 @@ class ProfileScreen(QWidget):
         toast = ToastNotification("Logged out successfully.", "info", self)
         toast.show()
         self.nav_requested.emit("login")
+
+    def reset_fields(self):
+        """Clears all profile fields, device labels, subscription badges and permission tags on logout."""
+        # 1. Clear input forms
+        if hasattr(self, "name_input") and self.name_input:
+            self.name_input.clear()
+        if hasattr(self, "mobile_input") and self.mobile_input:
+            self.mobile_input.clear()
+        if hasattr(self, "email_input") and self.email_input:
+            self.email_input.clear()
+        if hasattr(self, "zip_input") and self.zip_input:
+            self.zip_input.clear()
+        if hasattr(self, "val_name_lbl") and self.val_name_lbl:
+            self.val_name_lbl.setText("Not Provided")
+        if hasattr(self, "val_mobile_lbl") and self.val_mobile_lbl:
+            self.val_mobile_lbl.setText("Not Provided")
+        if hasattr(self, "val_email_lbl") and self.val_email_lbl:
+            self.val_email_lbl.setText("Not Provided")
+        if hasattr(self, "val_zip_lbl") and self.val_zip_lbl:
+            self.val_zip_lbl.setText("Not Provided")
+
+        # 2. Reset device and organization labels
+        if hasattr(self, "lbl_device_name") and self.lbl_device_name:
+            self.lbl_device_name.setText("-")
+        if hasattr(self, "lbl_device_id") and self.lbl_device_id:
+            self.lbl_device_id.setText("-")
+        if hasattr(self, "lbl_org_id") and self.lbl_org_id:
+            self.lbl_org_id.setText("-")
+        if hasattr(self, "lbl_heartbeat") and self.lbl_heartbeat:
+            self.lbl_heartbeat.setText("Never")
+        if hasattr(self, "lbl_tally_state") and self.lbl_tally_state:
+            self.lbl_tally_state.setText("-")
+        if hasattr(self, "conn_status_badge") and self.conn_status_badge:
+            self.conn_status_badge.setText("🔴 OFFLINE")
+        if hasattr(self, "lbl_last_heartbeat") and self.lbl_last_heartbeat:
+            self.lbl_last_heartbeat.setText("-")
+        if hasattr(self, "lbl_user_name") and self.lbl_user_name:
+            self.lbl_user_name.setText("-")
+        if hasattr(self, "lbl_role_tag") and self.lbl_role_tag:
+            self.lbl_role_tag.setText("-")
+        if hasattr(self, "avatar_lbl") and self.avatar_lbl:
+            self.avatar_lbl.setText("👤")
+
+        # 3. Reset plan badge and subscription status
+        if hasattr(self, "plan_badge") and self.plan_badge:
+            self.plan_badge.setText("FREE PLAN")
+        if hasattr(self, "lbl_sub_status") and self.lbl_sub_status:
+            self.lbl_sub_status.setText("INACTIVE")
+        if hasattr(self, "lbl_valid_period") and self.lbl_valid_period:
+            self.lbl_valid_period.setText("-")
+
+        # 4. Clean up permission chips from layout
+        if hasattr(self, "perm_tags_layout") and self.perm_tags_layout:
+            while self.perm_tags_layout.count():
+                item = self.perm_tags_layout.takeAt(0)
+                if item:
+                    widget = item.widget()
+                    if widget:
+                        widget.deleteLater()
+
+        # 5. Reset stack view to view mode
+        if hasattr(self, "profile_stack") and self.profile_stack:
+            self.profile_stack.setCurrentIndex(0)

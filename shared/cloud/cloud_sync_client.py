@@ -10,6 +10,16 @@ from shared.cloud.helpers import (
 logger = get_logger("app.cloud.sync_client")
 
 
+def _is_24_hex_id(val: Any) -> bool:
+    import re
+    return bool(val and isinstance(val, (str, bytes)) and re.match(r"^[0-9a-fA-F]{24}$", str(val).strip()))
+
+
+def _norm_name(s: str) -> str:
+    import re
+    return re.sub(r'[\s\.\(\)\-_]+', '', str(s or '')).lower()
+
+
 class CloudSyncClient:
     """Handles cloud batch sync streaming operations (sync/start, sync/batch, sync/complete)."""
 
@@ -64,6 +74,9 @@ class CloudSyncClient:
         def _is_24_hex_id(val: Any) -> bool:
             return bool(val and isinstance(val, (str, bytes)) and re.match(r"^[0-9a-fA-F]{24}$", str(val).strip()))
 
+        def _norm_name(s: str) -> str:
+            return re.sub(r'[\s\.\(\)\-_]+', '', str(s or '')).lower()
+
         target_cid = str(company_id).strip() if _is_24_hex_id(company_id) else None
         clean_name = str(company_name or "").strip()
         eff_guid = str(company_guid or "").strip()
@@ -75,28 +88,38 @@ class CloudSyncClient:
             ok_c, c_list = self.get_cloud_companies()
             if ok_c and c_list:
                 for c in c_list:
-                    c_n = str(c.get("tallyCompanyName") or c.get("companyName") or c.get("name") or "").strip().lower()
-                    if c_n == clean_name.lower():
+                    c_n = str(c.get("tallyCompanyName") or c.get("companyName") or c.get("name") or "").strip()
+                    if c_n.lower() == clean_name.lower() or _norm_name(c_n) == _norm_name(clean_name):
                         c_cand = c.get("id") or c.get("_id")
                         if _is_24_hex_id(c_cand):
                             target_cid = str(c_cand).strip()
                             break
 
-        # 2. If not found in cloud list, call link_company to obtain canonical cloud ObjectId
+        # 2. Lookup in local checkpoint cache as fallback
         if not target_cid:
-            link_ok, _, link_data = self.link_company(clean_name, eff_guid)
+            from shared.cloud.helpers import get_local_checkpoint
+            local_cp = get_local_checkpoint(clean_name)
+            if local_cp and _is_24_hex_id(local_cp.get("cloud_company_id")):
+                target_cid = str(local_cp["cloud_company_id"]).strip()
+
+        # 3. If not found in cloud list, call link_company to obtain canonical cloud ObjectId
+        last_link_err = ""
+        if not target_cid:
+            link_ok, link_msg, link_data = self.link_company(clean_name, eff_guid)
             if link_ok and isinstance(link_data, dict):
                 c_cand = link_data.get("id") or link_data.get("_id")
                 if _is_24_hex_id(c_cand):
                     target_cid = str(c_cand).strip()
+            else:
+                last_link_err = str(link_msg or "")
 
-        # 3. If still not resolved, re-fetch cloud companies list as fallback
+        # 4. If still not resolved, re-fetch cloud companies list as fallback
         if not target_cid:
             ok_c, c_list = self.get_cloud_companies()
             if ok_c and c_list:
                 for c in c_list:
-                    c_n = str(c.get("tallyCompanyName") or c.get("companyName") or c.get("name") or "").strip().lower()
-                    if c_n == clean_name.lower():
+                    c_n = str(c.get("tallyCompanyName") or c.get("companyName") or c.get("name") or "").strip()
+                    if c_n.lower() == clean_name.lower() or _norm_name(c_n) == _norm_name(clean_name):
                         c_cand = c.get("id") or c.get("_id")
                         if _is_24_hex_id(c_cand):
                             target_cid = str(c_cand).strip()
@@ -104,23 +127,33 @@ class CloudSyncClient:
 
         # CRITICAL: If canonical 24-char ObjectId is still missing, NEVER use Tally GUID as cloud_company_id!
         if not target_cid or not _is_24_hex_id(target_cid):
-            logger.error(f"Cannot start cloud sync for '{company_name}': Cloud server has not assigned a valid 24-character ObjectId.")
-            return False, f"Company '{company_name}' could not be registered on cloud account. Please check internet connection.", {}
+            logger.error(f"Cannot start cloud sync for '{company_name}': Cloud server has not assigned a valid 24-character ObjectId. Link error: {last_link_err}")
+            fail_reason = last_link_err if last_link_err else f"Company '{company_name}' could not be registered on cloud account. Please check internet connection."
+            return False, fail_reason, {}
 
-        # Persist the validated 24-character ObjectId into MongoDB companies collection
-        try:
-            col = _safe_get_collection("companies")
-            if col is not None:
-                col.update_one(
-                    {"$or": [{"company_name": company_name}, {"name": company_name}, {"tallyCompanyName": company_name}]},
-                    {"$set": {
-                        "cloud_company_id": str(target_cid),
-                        "company_guid": eff_guid
-                    }},
-                    upsert=True
-                )
-        except Exception:
-            pass
+        # Persist the validated 24-character ObjectId into local checkpoint and MongoDB (if enabled)
+        from shared.cloud.helpers import set_local_checkpoint
+        set_local_checkpoint(
+            company_key=target_cid,
+            company_name=company_name,
+            cloud_company_id=str(target_cid)
+        )
+
+        from shared.config import get_settings
+        if get_settings().direct_mongo_sync_enabled:
+            try:
+                col = _safe_get_collection("companies")
+                if col is not None:
+                    col.update_one(
+                        {"$or": [{"company_name": company_name}, {"name": company_name}, {"tallyCompanyName": company_name}]},
+                        {"$set": {
+                            "cloud_company_id": str(target_cid),
+                            "company_guid": eff_guid
+                        }},
+                        upsert=True
+                    )
+            except Exception:
+                pass
 
         s_type = "INITIAL" if sync_type.upper() in ("INITIAL", "FULL") else "INCREMENTAL"
 
@@ -163,13 +196,45 @@ class CloudSyncClient:
         entity_type: str,
         items: list[Dict[str, Any]],
         batch_number: int = 1,
-        is_last_batch: bool = False
+        is_last_batch: bool = False,
+        company_id: Optional[str] = None,
+        sync_type: str = "INCREMENTAL",
+        is_full_replace: Optional[bool] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        pl_data: Optional[Dict[str, Any]] = None
     ) -> Tuple[bool, str, Dict[str, Any]]:
-        """Calls Cloud Sync Batch endpoint (/sync/batch)."""
+        """Calls Cloud Sync Batch endpoint (/companies/:id/sync/batch or /sync/batch)."""
         if not self.access_token:
             return False, "Not authenticated. Please login first.", {}
 
-        url = f"{self.base_url}/sync/batch"
+        # Resolve target company ObjectId (24 hex characters)
+        target_cid = str(company_id).strip() if (company_id and _is_24_hex_id(company_id)) else (str(company_id).strip() if company_id else "")
+        if not target_cid:
+            from shared.cloud.helpers import get_local_checkpoint
+            local_cp = get_local_checkpoint(company_name)
+            if local_cp and local_cp.get("cloud_company_id"):
+                target_cid = str(local_cp["cloud_company_id"]).strip()
+
+        # Construct endpoint URL: /api/connector/:id/sync/batch (with fallbacks to /sync/batch & /companies/:id/sync/batch)
+        clean_base = self.base_url.rstrip("/")
+        if clean_base.endswith("/connector"):
+            api_root = clean_base[:-len("/connector")]
+        elif clean_base.endswith("/api"):
+            api_root = clean_base
+        else:
+            api_root = clean_base
+
+        candidate_urls = []
+        if target_cid:
+            primary_url = f"{self.base_url}/{target_cid}/sync/batch"
+            candidate_urls.append(primary_url)
+            candidate_urls.append(f"{self.base_url}/sync/batch")
+            candidate_urls.append(f"{api_root}/companies/{target_cid}/sync/batch")
+        else:
+            primary_url = f"{self.base_url}/sync/batch"
+            candidate_urls.append(primary_url)
+
         headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
         
         u_type = str(entity_type).upper()
@@ -181,6 +246,8 @@ class CloudSyncClient:
             norm_entity = "SUPPLIER"
         elif "CUSTOMER" in u_type:
             norm_entity = "CUSTOMER"
+        elif "PL" in u_type or "PROFIT" in u_type:
+            norm_entity = "PL_ACCOUNTS"
         else:
             norm_entity = "VOUCHER"
 
@@ -298,14 +365,22 @@ class CloudSyncClient:
                 credit_days_val = int(r.get("creditDays", 0) or raw_dict.get("creditDays", 0) or 0)
                 credit_period_val = str(r.get("creditPeriod") or raw_dict.get("creditPeriod") or raw_dict.get("billCreditPeriod") or "")
                 alt_id = int(r.get("alter_id", 0) or r.get("alterId", 0) or raw_dict.get("alterid", 0) or 0)
-                try:
-                    op_bal = float(r.get("openingBalance", 0.0) or raw_dict.get("openingbalance", 0.0) or 0.0)
-                except (ValueError, TypeError):
-                    op_bal = 0.0
-                try:
-                    c_bal = float(r.get("closingBalance", 0.0) or raw_dict.get("closingbalance", 0.0) or 0.0)
-                except (ValueError, TypeError):
-                    c_bal = 0.0
+                from apps.backend.adapters.tally.response_parser import compute_signed_balance
+                is_processed = bool(r.get("isBalanceProcessed") or raw_dict.get("isBalanceProcessed", False))
+                if is_processed and r.get("closingBalance") is not None:
+                    try:
+                        c_bal_val = float(r["closingBalance"])
+                    except (ValueError, TypeError):
+                        c_bal_val = 0.0
+                    try:
+                        op_bal_val = float(r.get("openingBalance", 0.0) or 0.0)
+                    except (ValueError, TypeError):
+                        op_bal_val = 0.0
+                else:
+                    raw_c = r.get("closingBalance") if r.get("closingBalance") is not None else raw_dict.get("rawClosingBalance", raw_dict.get("closingbalance", raw_dict.get("closing_balance")))
+                    raw_op = r.get("openingBalance") if r.get("openingBalance") is not None else raw_dict.get("rawOpeningBalance", raw_dict.get("openingbalance", raw_dict.get("opening_balance")))
+                    c_bal_val = compute_signed_balance(raw_c, is_asset=True)
+                    op_bal_val = compute_signed_balance(raw_op, is_asset=True)
 
                 cust_rec = {
                     "tallyExternalId": str(t_ext_id),
@@ -326,13 +401,17 @@ class CloudSyncClient:
                     "creditDays": credit_days_val,
                     "creditPeriod": credit_period_val,
                     "billCreditPeriod": credit_period_val,
-                    "openingBalance": op_bal,
-                    "closingBalance": c_bal,
+                    "openingBalance": float(op_bal_val),
+                    "closingBalance": float(c_bal_val),
+                    "isDeemedPositive": bool(c_bal_val >= 0),
                     "alterId": alt_id
                 }
                 b_det = r.get("bankDetails") or raw_dict.get("bankDetails")
                 if b_det and isinstance(b_det, dict):
-                    cust_rec["bankDetails"] = b_det
+                    b_det_copy = dict(b_det)
+                    if not b_det_copy.get("accountHolderName"):
+                        b_det_copy["accountHolderName"] = str(name_val) or company_name
+                    cust_rec["bankDetails"] = b_det_copy
                 records_to_send.append(cust_rec)
         elif norm_entity == "SUPPLIER":
             for r in items:
@@ -357,14 +436,22 @@ class CloudSyncClient:
                 credit_days_val = int(r.get("creditDays", 0) or raw_dict.get("creditDays", 0) or 0)
                 credit_period_val = str(r.get("creditPeriod") or raw_dict.get("creditPeriod") or raw_dict.get("billCreditPeriod") or "")
                 alt_id = int(r.get("alter_id", 0) or r.get("alterId", 0) or raw_dict.get("alterid", 0) or 0)
-                try:
-                    op_bal = float(r.get("openingBalance", 0.0) or raw_dict.get("openingbalance", 0.0) or 0.0)
-                except (ValueError, TypeError):
-                    op_bal = 0.0
-                try:
-                    c_bal = float(r.get("closingBalance", 0.0) or raw_dict.get("closingbalance", 0.0) or 0.0)
-                except (ValueError, TypeError):
-                    c_bal = 0.0
+                from apps.backend.adapters.tally.response_parser import compute_signed_balance
+                is_processed = bool(r.get("isBalanceProcessed") or raw_dict.get("isBalanceProcessed", False))
+                if is_processed and r.get("closingBalance") is not None:
+                    try:
+                        c_bal_val = float(r["closingBalance"])
+                    except (ValueError, TypeError):
+                        c_bal_val = 0.0
+                    try:
+                        op_bal_val = float(r.get("openingBalance", 0.0) or 0.0)
+                    except (ValueError, TypeError):
+                        op_bal_val = 0.0
+                else:
+                    raw_c = r.get("closingBalance") if r.get("closingBalance") is not None else raw_dict.get("rawClosingBalance", raw_dict.get("closingbalance", raw_dict.get("closing_balance")))
+                    raw_op = r.get("openingBalance") if r.get("openingBalance") is not None else raw_dict.get("rawOpeningBalance", raw_dict.get("openingbalance", raw_dict.get("opening_balance")))
+                    c_bal_val = compute_signed_balance(raw_c, is_asset=False)
+                    op_bal_val = compute_signed_balance(raw_op, is_asset=False)
 
                 supp_rec = {
                     "tallyExternalId": str(t_ext_id),
@@ -385,13 +472,17 @@ class CloudSyncClient:
                     "creditDays": credit_days_val,
                     "creditPeriod": credit_period_val,
                     "billCreditPeriod": credit_period_val,
-                    "openingBalance": op_bal,
-                    "closingBalance": c_bal,
+                    "openingBalance": float(op_bal_val),
+                    "closingBalance": float(c_bal_val),
+                    "isDeemedPositive": bool(c_bal_val >= 0),
                     "alterId": alt_id
                 }
                 b_det = r.get("bankDetails") or raw_dict.get("bankDetails")
                 if b_det and isinstance(b_det, dict):
-                    supp_rec["bankDetails"] = b_det
+                    b_det_copy = dict(b_det)
+                    if not b_det_copy.get("accountHolderName"):
+                        b_det_copy["accountHolderName"] = str(name_val) or company_name
+                    supp_rec["bankDetails"] = b_det_copy
                 records_to_send.append(supp_rec)
         elif norm_entity == "LEDGER":
             for r in items:
@@ -400,26 +491,28 @@ class CloudSyncClient:
                 raw_val = r.get("raw")
                 raw_dict: Dict[str, Any] = dict(raw_val) if isinstance(raw_val, dict) else {}
                 
-                c_bal = r.get("closingBalance")
-                if c_bal is None:
-                    c_bal = r.get("closing_balance")
-                if c_bal is None:
-                    c_bal = raw_dict.get("closing_balance", raw_dict.get("closingbalance"))
-                if c_bal is None:
-                    c_bal = 0.0
-
-                op_bal = r.get("openingBalance")
-                if op_bal is None:
-                    op_bal = r.get("opening_balance")
-                if op_bal is None:
-                    op_bal = raw_dict.get("opening_balance", raw_dict.get("openingbalance", 0.0))
-                if op_bal is None:
-                    op_bal = 0.0
-
+                from apps.backend.adapters.tally.response_parser import compute_signed_balance, is_asset_ledger
                 parent_val = r.get("parent") or raw_dict.get("parent") or ""
                 group_val = r.get("group") or parent_val
                 raw_ltype = r.get("ledgerType") or r.get("ledger_type") or raw_dict.get("ledger_type") or raw_dict.get("ledgerclassification")
                 comp_ltype = classify_ledger_type(parent_val, raw_ltype)
+                is_asset = is_asset_ledger(comp_ltype, parent_val)
+
+                is_processed = bool(r.get("isBalanceProcessed") or raw_dict.get("isBalanceProcessed", False))
+                if is_processed and r.get("closingBalance") is not None:
+                    try:
+                        c_bal_val = float(r["closingBalance"])
+                    except (ValueError, TypeError):
+                        c_bal_val = 0.0
+                    try:
+                        op_bal_val = float(r.get("openingBalance", 0.0) or 0.0)
+                    except (ValueError, TypeError):
+                        op_bal_val = 0.0
+                else:
+                    raw_c = r.get("closingBalance") if r.get("closingBalance") is not None else raw_dict.get("rawClosingBalance", raw_dict.get("closingbalance", raw_dict.get("closing_balance")))
+                    raw_op = r.get("openingBalance") if r.get("openingBalance") is not None else raw_dict.get("rawOpeningBalance", raw_dict.get("openingbalance", raw_dict.get("opening_balance")))
+                    c_bal_val = compute_signed_balance(raw_c, is_asset=is_asset)
+                    op_bal_val = compute_signed_balance(raw_op, is_asset=is_asset)
 
                 gstin_val = r.get("gstin") or raw_dict.get("gstin") or raw_dict.get("partygstin")
                 t_ext_id = r.get("tallyExternalId") or r.get("guid") or raw_dict.get("guid") or r.get("name") or raw_dict.get("name") or ""
@@ -444,8 +537,9 @@ class CloudSyncClient:
                     "parent": str(parent_val),
                     "group": str(group_val),
                     "ledgerType": comp_ltype,
-                    "openingBalance": float(op_bal),
-                    "closingBalance": float(c_bal),
+                    "openingBalance": float(op_bal_val),
+                    "closingBalance": float(c_bal_val),
+                    "isDeemedPositive": bool(c_bal_val >= 0),
                     "gstin": str(gstin_val) if gstin_val else None,
                     "pan": str(pan_val),
                     "email": str(email_val),
@@ -463,7 +557,10 @@ class CloudSyncClient:
                 }
                 b_det = r.get("bankDetails") or raw_dict.get("bankDetails")
                 if b_det and isinstance(b_det, dict):
-                    ledg_rec["bankDetails"] = b_det
+                    b_det_copy = dict(b_det)
+                    if not b_det_copy.get("accountHolderName"):
+                        b_det_copy["accountHolderName"] = company_name or str(name_val)
+                    ledg_rec["bankDetails"] = b_det_copy
                 records_to_send.append(ledg_rec)
         elif norm_entity == "VOUCHER":
             for r in items:
@@ -577,13 +674,20 @@ class CloudSyncClient:
                     "alterid": int(raw_dict.get("alterid") or r.get("alter_id") or r.get("alterId") or 0)
                 }
 
+                party_gstin_val = r.get("partyGstin") or r.get("party_gstin") or r.get("gstin") or raw_dict.get("partyGstin") or raw_dict.get("partygstin") or ""
+
                 records_to_send.append({
                     "voucherId": str(t_ext_id),
                     "tallyExternalId": str(t_ext_id),
                     "voucherNumber": str(v_num),
+                    "invoiceNumber": str(v_num),
                     "voucherType": str(v_type),
+                    "invoiceType": str(v_type),
                     "date": str(formatted_date),
+                    "invoiceDate": str(formatted_date),
                     "amount": float(amt_val),
+                    "partyGstin": str(party_gstin_val) if party_gstin_val else None,
+                    "gstin": str(party_gstin_val) if party_gstin_val else None,
                     "partyLedger": str(v_party),
                     "customerName": str(cust_name),
                     "customer": str(cust_name),
@@ -617,34 +721,126 @@ class CloudSyncClient:
         else:
             records_to_send = items
 
+        eff_full_replace = bool(is_full_replace) if is_full_replace is not None else bool(sync_type.upper() in ("INITIAL", "FULL"))
+        eff_sync_type = "INITIAL" if eff_full_replace else "INCREMENTAL"
+
+        # Format start and end dates
+        fmt_start = format_tally_date(start_date) if start_date else None
+        fmt_end = format_tally_date(end_date) if end_date else None
+
+        if eff_full_replace and (not fmt_start or not fmt_end):
+            from shared.cloud.helpers import get_company_sync_dates
+            f_d, t_d, is_conf = get_company_sync_dates(target_cid or company_name)
+            if f_d and not fmt_start:
+                fmt_start = format_tally_date(f_d)
+            if t_d and not fmt_end:
+                fmt_end = format_tally_date(t_d)
+
+        # Inject sync metadata directly into each record & its raw dictionary
+        # This guarantees MongoDB/backend receives & saves these fields regardless of serializer
+        for r in records_to_send:
+            if isinstance(r, dict):
+                r["syncJobId"] = sync_id
+                r["syncType"] = eff_sync_type
+                r["isFullReplace"] = eff_full_replace
+                if eff_full_replace and fmt_start:
+                    r["startDate"] = fmt_start
+                if eff_full_replace and fmt_end:
+                    r["endDate"] = fmt_end
+                if "raw" in r and isinstance(r["raw"], dict):
+                    r["raw"]["syncJobId"] = sync_id
+                    r["raw"]["syncType"] = eff_sync_type
+                    r["raw"]["isFullReplace"] = eff_full_replace
+                    if eff_full_replace and fmt_start:
+                        r["raw"]["startDate"] = fmt_start
+                    if eff_full_replace and fmt_end:
+                        r["raw"]["endDate"] = fmt_end
+
+        if norm_entity == "VOUCHER" and pl_data:
+            p_acc = pl_data.get("purchaseAccounts")
+            s_acc = pl_data.get("salesAccounts")
+            pl_sum = pl_data.get("plSummary")
+            pl_arr = pl_data.get("plAccounts")
+            for r in records_to_send:
+                if isinstance(r, dict):
+                    if p_acc:
+                        r["purchaseAccounts"] = p_acc
+                    if s_acc:
+                        r["salesAccounts"] = s_acc
+                    if pl_sum:
+                        r["plSummary"] = pl_sum
+                    if pl_arr:
+                        r["plAccounts"] = pl_arr
+                    if "raw" in r and isinstance(r["raw"], dict):
+                        if p_acc:
+                            r["raw"]["purchaseAccounts"] = p_acc
+                        if s_acc:
+                            r["raw"]["salesAccounts"] = s_acc
+                        if pl_sum:
+                            r["raw"]["plSummary"] = pl_sum
+                        if pl_arr:
+                            r["raw"]["plAccounts"] = pl_arr
+
         payload = {
             "syncJobId": sync_id,
-            "batchNumber": batch_number,
+            "companyId": target_cid or "",
             "entityType": norm_entity,
+            "syncType": eff_sync_type,
+            "isFullReplace": eff_full_replace,
             "records": records_to_send,
+            "batchNumber": batch_number,
             "isLastBatch": is_last_batch
         }
-        logger.info(f"Calling Cloud Sync Batch #{batch_number} for '{company_name}' ({norm_entity}: {len(records_to_send)} items)")
+
+        if norm_entity == "VOUCHER" and pl_data:
+            if pl_data.get("purchaseAccounts"):
+                payload["purchaseAccounts"] = pl_data.get("purchaseAccounts")
+            if pl_data.get("salesAccounts"):
+                payload["salesAccounts"] = pl_data.get("salesAccounts")
+            if pl_data.get("plSummary"):
+                payload["plSummary"] = pl_data.get("plSummary")
+            if pl_data.get("plAccounts"):
+                payload["plAccounts"] = pl_data.get("plAccounts")
+
+        if eff_full_replace:
+            if fmt_start:
+                payload["startDate"] = fmt_start
+            if fmt_end:
+                payload["endDate"] = fmt_end
+
+        date_info = f" [{fmt_start} -> {fmt_end}]" if (eff_full_replace and fmt_start and fmt_end) else ""
+        logger.info(
+            f"Calling Cloud Sync Batch #{batch_number} for '{company_name}' "
+            f"({norm_entity}: {len(records_to_send)} items, {eff_sync_type}, replace={eff_full_replace}{date_info}, url={primary_url})"
+        )
 
         try:
             client = self._get_client(30.0)
-            res = client.post(url, json=payload, headers=headers)
-            data = res.json() if res.text else {}
+            res = None
+            target_url = primary_url
+            for cand_url in candidate_urls:
+                target_url = cand_url
+                res = client.post(target_url, json=payload, headers=headers)
+                if res.status_code != 404:
+                    break
+                logger.info(f"Target {target_url} returned 404, falling back to next candidate URL...")
 
-            if res.status_code == 401 and self.refresh_token_val:
+            data = res.json() if res and res.text else {}
+
+            if res and res.status_code == 401 and self.refresh_token_val:
                 refreshed, _ = self.refresh_token()
                 if refreshed and self.access_token:
                     headers["Authorization"] = f"Bearer {self.access_token}"
-                    res = client.post(url, json=payload, headers=headers)
+                    res = client.post(target_url, json=payload, headers=headers)
                     data = res.json() if res.text else {}
 
-            if res.status_code == 200 or data.get("success") is True:
+            if res and (res.status_code == 200 or data.get("success") is True):
                 resp_data = data.get("data") or data
                 msg = data.get("message", f"Batch #{batch_number} synced successfully.")
                 return True, msg, resp_data
             else:
-                err_msg = self._extract_error_message(res, data, f"Failed to sync batch #{batch_number}")
-                logger.warning(f"Cloud sync/batch HTTP {res.status_code}: {err_msg}")
+                err_msg = self._extract_error_message(res, data, f"Failed to sync batch #{batch_number}") if res else "No response"
+                logger.warning(f"Cloud sync/batch HTTP {res.status_code if res else 'None'}: {err_msg}")
                 return False, err_msg, {}
         except Exception as exc:
             return False, f"Connection error sending sync batch: {exc}", {}

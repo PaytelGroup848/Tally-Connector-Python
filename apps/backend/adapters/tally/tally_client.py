@@ -82,7 +82,7 @@ class TallyClient:
         req_timeout = timeout or self.read_timeout
         timeout_config = httpx.Timeout(req_timeout, connect=self.connect_timeout)
 
-        lock = self.get_lock(c_host, c_port, serialize_company) if serialize_company else None
+        lock = self.get_lock(c_host, c_port, serialize_company)
 
         async def _execute():
             max_attempts = 3
@@ -119,36 +119,38 @@ class TallyClient:
         return await _execute()
 
     def send_xml_request(self, host: str, port: int, xml_content: str, timeout: Optional[float] = None) -> Tuple[bool, int, str, Optional[str]]:
-        c_host, c_port = self.validate_host_and_port(host, port)
-        url = f"http://{c_host}:{c_port}/"
-        req_timeout = timeout or self.read_timeout
-        timeout_config = httpx.Timeout(req_timeout, connect=self.connect_timeout)
+        from shared.tally_lock import get_tally_lock
+        with get_tally_lock():
+            c_host, c_port = self.validate_host_and_port(host, port)
+            url = f"http://{c_host}:{c_port}/"
+            req_timeout = timeout or self.read_timeout
+            timeout_config = httpx.Timeout(req_timeout, connect=self.connect_timeout)
 
-        max_attempts = 3
-        last_error = None
+            max_attempts = 3
+            last_error = None
 
-        for attempt in range(1, max_attempts + 1):
-            try:
-                start_time = time.perf_counter()
-                client = self._get_client(timeout_config)
-                response = client.post(url, content=xml_content, headers={"Content-Type": "text/xml"}, timeout=timeout_config)
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    start_time = time.perf_counter()
+                    client = self._get_client(timeout_config)
+                    response = client.post(url, content=xml_content, headers={"Content-Type": "text/xml"}, timeout=timeout_config)
 
-                elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
-                logger.info(f"Tally XML request to {url} succeeded HTTP {response.status_code} ({elapsed_ms}ms)")
+                    elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    logger.info(f"Tally XML request to {url} succeeded HTTP {response.status_code} ({elapsed_ms}ms)")
 
-                if response.status_code == 200:
-                    return True, 200, response.text, None
-                return False, response.status_code, response.text, f"HTTP {response.status_code}"
+                    if response.status_code == 200:
+                        return True, 200, response.text, None
+                    return False, response.status_code, response.text, f"HTTP {response.status_code}"
 
-            except httpx.ConnectError:
-                last_error = f"Unable to connect to Tally Prime at {url}. Ensure Tally Prime is running."
-            except httpx.TimeoutException:
-                last_error = f"Connection timeout ({req_timeout}s) waiting for Tally Prime response at {url}."
-            except Exception as exc:
-                last_error = f"Network error communicating with Tally: {exc}"
+                except httpx.ConnectError:
+                    last_error = f"Unable to connect to Tally Prime at {url}. Ensure Tally Prime is running."
+                except httpx.TimeoutException:
+                    last_error = f"Connection timeout ({req_timeout}s) waiting for Tally Prime response at {url}."
+                except Exception as exc:
+                    last_error = f"Network error communicating with Tally: {exc}"
 
-            if attempt < max_attempts:
-                time.sleep(0.5 * (2 ** (attempt - 1)))
+                if attempt < max_attempts:
+                    time.sleep(0.5 * (2 ** (attempt - 1)))
 
-        return False, 0, "", last_error or "Tally server unreachable"
+            return False, 0, "", last_error or "Tally server unreachable"
 

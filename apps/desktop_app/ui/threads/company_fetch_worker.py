@@ -5,6 +5,14 @@ from PySide6.QtCore import QObject, Signal
 
 logger = logging.getLogger("app.desktop.company_fetch_worker")
 
+# In-memory cache of fetched companies (cleared on logout)
+_FETCHED_COMPANIES_CACHE: Dict[str, Any] = {}
+
+
+def clear_fetched_companies_cache() -> None:
+    """Clear in-memory fetched companies cache on logout."""
+    _FETCHED_COMPANIES_CACHE.clear()
+
 
 def fetch_real_tally_companies(settings=None, return_port: bool = False) -> tuple:
     """Fetch active companies list from local Tally extractor or direct XML port."""
@@ -55,7 +63,9 @@ def fetch_real_tally_companies(settings=None, return_port: bool = False) -> tupl
 
         # Port is open! Query companies with valid TDL collection
         try:
-            h_res = httpx.post(f"http://{t_host}:{p}/", content=xml_req, headers={"Content-Type": "text/xml"}, timeout=2.5)
+            from shared.tally_lock import get_tally_lock
+            with get_tally_lock():
+                h_res = httpx.post(f"http://{t_host}:{p}/", content=xml_req, headers={"Content-Type": "text/xml"}, timeout=3.5)
             if h_res.status_code == 200 and h_res.text:
                 comp_dicts = parse_company_list(h_res.text)
                 if comp_dicts:
@@ -149,13 +159,15 @@ def fetch_all_companies() -> tuple:
             t_port = detected_port
 
         # Retrieve statistics for all discovered companies: Check live Tally Prime statistics report first, fallback to DB
+        import time
         for c in tally_comps:
             c_name = c.get("name", "")
-            t_s = fetch_tally_company_statistics(c_name, host=t_host, port=t_port, timeout=1.0)
+            t_s = fetch_tally_company_statistics(c_name, host=t_host, port=t_port, timeout=5.0)
             if t_s and any(t_s.values()):
                 c["stats"] = t_s
             else:
                 c["stats"] = fetch_db_company_statistics(c_name)
+            time.sleep(0.04)
 
         for c in registered_companies:
             c_name = c.get("name") or c.get("company_name") or c.get("tallyCompanyName") or ""
@@ -163,11 +175,12 @@ def fetch_all_companies() -> tuple:
             if tally_match and "stats" in tally_match:
                 c["stats"] = tally_match["stats"]
             else:
-                t_s = fetch_tally_company_statistics(c_name, host=t_host, port=t_port, timeout=1.0)
+                t_s = fetch_tally_company_statistics(c_name, host=t_host, port=t_port, timeout=5.0)
                 if t_s and any(t_s.values()):
                     c["stats"] = t_s
                 else:
                     c["stats"] = fetch_db_company_statistics(c_name)
+                time.sleep(0.04)
 
     except Exception as exc:
         logger.debug(f"Error fetching companies: {exc}")
@@ -182,10 +195,11 @@ MASTER_NAMES = {
 }
 
 
-def fetch_tally_company_statistics(company_name: str, host: str = "127.0.0.1", port: Optional[int] = None, timeout: float = 1.0) -> dict:
+def fetch_tally_company_statistics(company_name: str, host: str = "127.0.0.1", port: Optional[int] = None, timeout: float = 5.0) -> dict:
     """
     Directly queries Tally Prime's built-in Statistics report for truthful counts
     of total Ledgers, Stock Items, and Vouchers in milliseconds.
+    Guaranteed thread-safe and non-blocking with TALLY_LOCK to avoid memory access violations.
     """
     if not company_name:
         return {"ledgers": 0, "vouchers": 0, "items": 0}
@@ -221,7 +235,9 @@ def fetch_tally_company_statistics(company_name: str, host: str = "127.0.0.1", p
 
     try:
         import httpx
-        res = httpx.post(f"http://{host}:{port}/", content=stat_xml, timeout=timeout)
+        from shared.tally_lock import get_tally_lock
+        with get_tally_lock():
+            res = httpx.post(f"http://{host}:{port}/", content=stat_xml, timeout=timeout)
         if res.status_code == 200 and res.text:
             root = ET.fromstring(res.text)
             stat_names = [e.text or "" for e in root.findall(".//STATNAME")]
@@ -262,7 +278,7 @@ def fetch_tally_company_statistics(company_name: str, host: str = "127.0.0.1", p
 
 def fetch_db_company_statistics(company_name: str) -> dict:
     """
-    Queries local MongoDB or SQLite for total synced ledgers, vouchers, and stock items.
+    Retrieves synced statistics from local checkpoint JSON (pure cloud mode).
     """
     stats = {"ledgers": 0, "vouchers": 0, "items": 0}
     if not company_name:
@@ -270,29 +286,16 @@ def fetch_db_company_statistics(company_name: str) -> dict:
 
     clean_name = company_name.strip()
     try:
-        from shared.db.mongo_client import get_collection
-        c_filter = {"$or": [
-            {"company_name": clean_name},
-            {"companyName": clean_name},
-            {"tallyCompanyName": clean_name},
-            {"name": clean_name}
-        ]}
-        # Fast O(1) check in companies document where sync worker saved stats
-        comp_doc = get_collection("companies").find_one(c_filter, {"stats": 1})
-        if comp_doc and isinstance(comp_doc.get("stats"), dict) and any(comp_doc["stats"].values()):
-            return comp_doc["stats"]
-
-        l_count = get_collection("ledgers").count_documents(c_filter)
-        v_count = get_collection("vouchers").count_documents(c_filter)
-        i_count = get_collection("stock_items").count_documents(c_filter)
-        if not i_count:
-            i_count = get_collection("items").count_documents(c_filter)
-
-        stats["ledgers"] = l_count
-        stats["vouchers"] = v_count
-        stats["items"] = i_count
+        from shared.cloud.helpers import get_local_checkpoint
+        cp = get_local_checkpoint(clean_name)
+        if cp and isinstance(cp.get("stats"), dict):
+            c_stats = cp["stats"]
+            stats["ledgers"] = int(c_stats.get("ledgers", 0) or 0)
+            stats["vouchers"] = int(c_stats.get("vouchers", 0) or 0)
+            stats["items"] = int(c_stats.get("items", 0) or 0)
+            return stats
     except Exception as exc:
-        logger.debug(f"DB stats lookup notice for '{company_name}': {exc}")
+        logger.debug(f"Local checkpoint stats lookup notice for '{company_name}': {exc}")
 
     return stats
 
@@ -306,3 +309,14 @@ class CompanyFetchWorker(QObject):
 
     def _fetch_real_tally_companies(self, settings) -> tuple:
         return fetch_real_tally_companies(settings)
+
+
+__all__ = [
+    "fetch_real_tally_companies",
+    "fetch_all_companies",
+    "fetch_tally_company_statistics",
+    "fetch_db_company_statistics",
+    "CompanyFetchWorker",
+    "_FETCHED_COMPANIES_CACHE",
+    "clear_fetched_companies_cache",
+]
