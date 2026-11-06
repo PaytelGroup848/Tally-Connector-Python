@@ -180,3 +180,4 @@ def test_resolve_receipt_fallback():
 
     grp = resolve_voucher_group(voucher, pl_ledger_map=pl_ledger_map)
     assert grp == "Receipt"
+

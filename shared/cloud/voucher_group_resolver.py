@@ -212,3 +212,4 @@ def resolve_voucher_group(
         return "Journal"
 
     return v_type if v_type else "Sales Accounts"
+

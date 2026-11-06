@@ -115,6 +115,14 @@ def push_cloud_sync(
     if not cloud_auth_service.access_token:
         return True, "No cloud token (offline mode)"
 
+    if not start_date or not end_date:
+        from shared.cloud.helpers import get_company_sync_dates
+        f_d, t_d, is_conf = get_company_sync_dates(company_id or c_guid or c_name)
+        if f_d and not start_date:
+            start_date = f_d
+        if t_d and not end_date:
+            end_date = t_d
+
     total_records = len(extracted_ledgers) + len(extracted_stock_items) + len(extracted_vouchers)
     if is_incremental and total_records == 0:
         worker.progress_changed.emit(base_pct + 90, f"[{idx}/{total_companies}] All cloud records up-to-date.")

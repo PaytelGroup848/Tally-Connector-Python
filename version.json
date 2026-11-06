@@ -1,11 +1,11 @@
 {
-  "version": "1.0.0",
-  "latestVersion": "1.0.0",
-  "latest_version": "1.0.0",
-  "minVersion": "1.0.0",
-  "releaseNotes": "CtrlBooks Release v1.0.0 - Full Tally Prime automatic two-way synchronization, bank account holder extraction, dynamic discovery, and real-time cloud analytics.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.0.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.0.exe",
+  "version": "1.0.1",
+  "latestVersion": "1.0.1",
+  "latest_version": "1.0.1",
+  "minVersion": "1.0.1",
+  "releaseNotes": "CtrlBooks Release v1.0.1 - Added sync date range to ledger payloads, dynamic voucherGroup resolution, and cloud synchronization enhancements.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.1.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.1.exe",
   "sha256": "",
   "mandatory": false
 }

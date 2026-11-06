@@ -251,6 +251,21 @@ class CloudSyncClient:
         else:
             norm_entity = "VOUCHER"
 
+        eff_full_replace = bool(is_full_replace) if is_full_replace is not None else bool(sync_type.upper() in ("INITIAL", "FULL"))
+        eff_sync_type = "INITIAL" if eff_full_replace else "INCREMENTAL"
+
+        # Format start and end dates
+        fmt_start = format_tally_date(start_date) if start_date else None
+        fmt_end = format_tally_date(end_date) if end_date else None
+
+        if not fmt_start or not fmt_end:
+            from shared.cloud.helpers import get_company_sync_dates
+            f_d, t_d, is_conf = get_company_sync_dates(target_cid or company_name)
+            if f_d and not fmt_start:
+                fmt_start = format_tally_date(f_d)
+            if t_d and not fmt_end:
+                fmt_end = format_tally_date(t_d)
+
         records_to_send = []
         if norm_entity == "STOCK":
             for r in items:
@@ -406,6 +421,10 @@ class CloudSyncClient:
                     "isDeemedPositive": bool(c_bal_val >= 0),
                     "alterId": alt_id
                 }
+                if fmt_start:
+                    cust_rec["startDate"] = fmt_start
+                if fmt_end:
+                    cust_rec["endDate"] = fmt_end
                 b_det = r.get("bankDetails") or raw_dict.get("bankDetails")
                 if b_det and isinstance(b_det, dict):
                     b_det_copy = dict(b_det)
@@ -477,6 +496,10 @@ class CloudSyncClient:
                     "isDeemedPositive": bool(c_bal_val >= 0),
                     "alterId": alt_id
                 }
+                if fmt_start:
+                    supp_rec["startDate"] = fmt_start
+                if fmt_end:
+                    supp_rec["endDate"] = fmt_end
                 b_det = r.get("bankDetails") or raw_dict.get("bankDetails")
                 if b_det and isinstance(b_det, dict):
                     b_det_copy = dict(b_det)
@@ -555,6 +578,10 @@ class CloudSyncClient:
                     "billCreditPeriod": credit_period_val,
                     "alterId": alt_id
                 }
+                if fmt_start:
+                    ledg_rec["startDate"] = fmt_start
+                if fmt_end:
+                    ledg_rec["endDate"] = fmt_end
                 b_det = r.get("bankDetails") or raw_dict.get("bankDetails")
                 if b_det and isinstance(b_det, dict):
                     b_det_copy = dict(b_det)
@@ -730,21 +757,6 @@ class CloudSyncClient:
                 })
         else:
             records_to_send = items
-
-        eff_full_replace = bool(is_full_replace) if is_full_replace is not None else bool(sync_type.upper() in ("INITIAL", "FULL"))
-        eff_sync_type = "INITIAL" if eff_full_replace else "INCREMENTAL"
-
-        # Format start and end dates
-        fmt_start = format_tally_date(start_date) if start_date else None
-        fmt_end = format_tally_date(end_date) if end_date else None
-
-        if eff_full_replace and (not fmt_start or not fmt_end):
-            from shared.cloud.helpers import get_company_sync_dates
-            f_d, t_d, is_conf = get_company_sync_dates(target_cid or company_name)
-            if f_d and not fmt_start:
-                fmt_start = format_tally_date(f_d)
-            if t_d and not fmt_end:
-                fmt_end = format_tally_date(t_d)
 
         # Inject sync metadata directly into each record & its raw dictionary
         # This guarantees MongoDB/backend receives & saves these fields regardless of serializer
