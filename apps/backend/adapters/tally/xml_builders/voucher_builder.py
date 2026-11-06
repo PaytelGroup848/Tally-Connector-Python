@@ -8,6 +8,7 @@ from apps.backend.adapters.tally.xml_builders.common import (
     format_tally_date,
     is_bank_ledger_name,
     is_cash_ledger_name,
+    normalize_tally_state,
 )
 from shared.logging_config import get_logger
 
@@ -980,9 +981,8 @@ def build_voucher_import_xml(voucher_data: dict[str, Any]) -> str:
     auto_gstin, auto_state, auto_addr = _lookup_party_master_gstin(company_name, party_ledger)
     party_gstin = raw_party_gstin or auto_gstin or ""
     party_address = raw_party_address or auto_addr or ""
-    party_state = raw_party_state or auto_state or ""
-    if not party_state and party_gstin and len(party_gstin) >= 2 and party_gstin[:2] in GST_STATE_CODES:
-        party_state = GST_STATE_CODES[party_gstin[:2]]
+    raw_st = raw_party_state or auto_state or ""
+    party_state = normalize_tally_state(raw_st, gstin=party_gstin)
 
     total_amount = _parse_float(
         voucher_data.get("amount")

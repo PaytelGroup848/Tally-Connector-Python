@@ -2,7 +2,11 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Dict, Any, Tuple, Optional
 from shared.logging_config import get_logger
-from apps.backend.adapters.tally.xml_builders.common import is_bank_ledger_name, classify_safe_ledger_parent
+from apps.backend.adapters.tally.xml_builders.common import (
+    is_bank_ledger_name,
+    classify_safe_ledger_parent,
+    normalize_tally_state,
+)
 
 logger = get_logger("app.threads.command_handlers.party")
 
@@ -89,13 +93,14 @@ def execute_party_command(
         or norm_payload.get("gst")
         or norm_payload.get("taxNumber")
     )
-    norm_payload["state"] = (
+    raw_state = (
         norm_payload.get("state")
         or norm_payload.get("state_name")
         or norm_payload.get("stateName")
         or norm_payload.get("placeOfSupply")
         or norm_payload.get("place_of_supply")
     )
+    norm_payload["state"] = normalize_tally_state(raw_state, gstin=norm_payload["gstin"])
     norm_payload["country"] = norm_payload.get("country") or norm_payload.get("country_name") or norm_payload.get("countryName") or "India"
     norm_payload["pincode"] = (
         norm_payload.get("pincode")

@@ -1,5 +1,5 @@
 from typing import Dict, Any
-from apps.backend.adapters.tally.xml_builders.common import escape_xml, classify_safe_ledger_parent
+from apps.backend.adapters.tally.xml_builders.common import escape_xml, classify_safe_ledger_parent, normalize_tally_state
 
 
 
@@ -30,13 +30,31 @@ def build_ledger_import_xml(ledger_data: Dict[str, Any], action: str = "Create")
     is_party = any(k in parent.lower() for k in ("debtors", "creditors")) or bool(ledger_data.get("is_billwise"))
     billwise_val = "Yes" if is_party else "No"
 
-    # State & Country (Country required for Tally to bind State master)
-    state = escape_xml(str(ledger_data.get("state") or ledger_data.get("state_name") or "").strip())
+    # GST Details
+    raw_gstin = str(
+        ledger_data.get("gstin")
+        or ledger_data.get("party_gstin")
+        or ledger_data.get("gstNumber")
+        or ledger_data.get("gst_number")
+        or ledger_data.get("taxNumber")
+        or ""
+    ).strip().upper()
+    gstin = escape_xml(raw_gstin)
+
+    # State & Country (State normalized to Tally Prime Canonical State Master)
+    raw_state = (
+        ledger_data.get("state")
+        or ledger_data.get("state_name")
+        or ledger_data.get("stateName")
+        or ledger_data.get("placeOfSupply")
+        or ledger_data.get("place_of_supply")
+        or ""
+    )
+    norm_state = normalize_tally_state(raw_state, gstin=raw_gstin)
+    state = escape_xml(norm_state)
     raw_country = str(ledger_data.get("country") or "").strip()
     country = escape_xml(raw_country or ("India" if (state or is_party) else ""))
 
-    # GST Details
-    gstin = escape_xml(str(ledger_data.get("gstin") or ledger_data.get("party_gstin") or ledger_data.get("gstNumber") or ledger_data.get("gst_number") or "").strip().upper())
     raw_reg_type = str(ledger_data.get("registration_type") or ledger_data.get("registrationType") or ledger_data.get("gst_type") or "").strip()
     if raw_reg_type:
         reg_type = escape_xml(raw_reg_type)

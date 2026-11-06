@@ -462,9 +462,14 @@ class TallyImporter:
                 host=host, port=port, xml_content=xml_envelope, serialize_company=company_name
             )
             if ok and status == 200:
-                self._known_ledgers[comp_key].add(clean_name.lower())
-                logger.info(f"Auto-Ensured Ledger '{clean_name}' under '{parent}' in Tally (Company: '{company_name}')")
-                return True
+                success, _, parse_err = parse_tally_import_response(res_text, default_voucher_number="LEDGER_ENSURED")
+                if success or (parse_err and any(k in parse_err.lower() for k in ("already exists", "duplicate", "already present"))):
+                    self._known_ledgers[comp_key].add(clean_name.lower())
+                    logger.info(f"Auto-Ensured Ledger '{clean_name}' under '{safe_parent}' in Tally (Company: '{company_name}')")
+                    return True
+                else:
+                    logger.warning(f"Auto-ensure ledger '{clean_name}' rejected by Tally: {parse_err}")
+                    return False
         except Exception as exc:
             logger.warning(f"Auto-ensure ledger '{clean_name}' encountered error: {exc}")
 
@@ -816,14 +821,62 @@ class TallyImporter:
         cached[v_lower] = resolved_parent
         return True, resolved_parent
 
+    def lookup_canonical_ledger_name(self, company_name: str, ledger_name: str) -> str:
+        """
+        Resolves the exact case-sensitive ledger name as stored in Tally / MongoDB
+        to prevent XML import rejections due to casing mismatches (e.g. 'GREENA' vs 'greena').
+        """
+        if not ledger_name or not str(ledger_name).strip():
+            return ""
+        clean = str(ledger_name).strip()
+        comp_key = (company_name or "").strip().lower()
+
+        if not hasattr(self, "_canonical_ledger_map"):
+            self._canonical_ledger_map: dict[str, dict[str, str]] = {}
+        comp_map = self._canonical_ledger_map.setdefault(comp_key, {})
+
+        if clean.lower() in comp_map:
+            return comp_map[clean.lower()]
+
+        # Try to resolve from local MongoDB ledgers collection
+        try:
+            from shared.db.mongo_client import get_collection
+            l_col = get_collection("ledgers")
+            import re
+            filter_query: dict[str, Any] = {
+                "name": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}
+            }
+            if company_name:
+                filter_query["company_name"] = {"$regex": f"^{re.escape(company_name.strip())}$", "$options": "i"}
+            doc = l_col.find_one(filter_query)
+            if doc and doc.get("name"):
+                matched_name = str(doc["name"]).strip()
+                comp_map[clean.lower()] = matched_name
+                return matched_name
+        except Exception:
+            pass
+
+        return clean
+
     async def fetch_ledger_guid(self, host: str, port: int, company_name: str, ledger_name: str) -> str | None:
         """Queries Tally Prime HTTP interface for a Ledger's GUID / Master ID."""
         if not ledger_name or not str(ledger_name).strip():
             return None
-        clean_party = escape_xml(str(ledger_name).strip())
-        clean_comp = escape_xml(str(company_name).strip()) if company_name else ""
-        company_tag = f"<SVCURRENTCOMPANY>{clean_comp}</SVCURRENTCOMPANY>" if clean_comp else ""
-        xml_req = f"""<ENVELOPE>
+
+        # 1. Resolve canonical casing if known
+        canon_name = self.lookup_canonical_ledger_name(company_name, ledger_name) or str(ledger_name).strip()
+
+        # Try candidate casings: primary canonical, uppercase, title-case, lowercase
+        candidates = [canon_name]
+        for alt in (canon_name.upper(), canon_name.title(), canon_name.lower()):
+            if alt not in candidates:
+                candidates.append(alt)
+
+        for cand_name in candidates:
+            clean_party = escape_xml(cand_name)
+            clean_comp = escape_xml(str(company_name).strip()) if company_name else ""
+            company_tag = f"<SVCURRENTCOMPANY>{clean_comp}</SVCURRENTCOMPANY>" if clean_comp else ""
+            xml_req = f"""<ENVELOPE>
   <HEADER>
     <VERSION>1</VERSION>
     <TALLYREQUEST>EXPORT</TALLYREQUEST>
@@ -846,24 +899,28 @@ class TallyImporter:
     </DESC>
   </BODY>
 </ENVELOPE>"""
-        try:
-            ok, code, text, _ = await self.client.send_xml_request_async(host, port, xml_req, timeout=5.0)
-            if ok and code == 200 and text:
-                import xml.etree.ElementTree as ET
-                root = ET.fromstring(text)
-                led = root.find(".//LEDGER")
-                if led is not None:
-                    guid_val = led.findtext("GUID")
-                    if guid_val and guid_val.strip():
-                        return guid_val.strip()
-                    master_id = led.findtext("MASTERID") or led.attrib.get("ID")
-                    if master_id and master_id.strip():
-                        return master_id.strip()
-                    alt_id = led.findtext("ALTERID")
-                    if alt_id and alt_id.strip():
-                        return alt_id.strip()
-        except Exception as exc:
-            logger.debug(f"fetch_ledger_guid notice: {exc}")
+            try:
+                ok, code, text, _ = await self.client.send_xml_request_async(host, port, xml_req, timeout=5.0)
+                if ok and code == 200 and text:
+                    import xml.etree.ElementTree as ET
+                    root = ET.fromstring(text)
+                    led = root.find(".//LEDGER")
+                    if led is not None:
+                        # Record canonical name in cache if Tally returned exact NAME
+                        t_name = led.findtext("NAME") or led.attrib.get("NAME")
+                        if t_name and hasattr(self, "_canonical_ledger_map"):
+                            self._canonical_ledger_map.setdefault((company_name or "").strip().lower(), {})[ledger_name.strip().lower()] = t_name.strip()
+                        guid_val = led.findtext("GUID")
+                        if guid_val and guid_val.strip():
+                            return guid_val.strip()
+                        master_id = led.findtext("MASTERID") or led.attrib.get("ID")
+                        if master_id and master_id.strip():
+                            return master_id.strip()
+                        alt_id = led.findtext("ALTERID")
+                        if alt_id and alt_id.strip():
+                            return alt_id.strip()
+            except Exception as exc:
+                logger.debug(f"fetch_ledger_guid notice for '{cand_name}': {exc}")
         return None
 
     async def fetch_stock_item_guid(self, host: str, port: int, company_name: str, item_name: str) -> str | None:
@@ -1022,22 +1079,26 @@ class TallyImporter:
         if not success:
             if req_action == "Create" and parse_err and any(k in parse_err.lower() for k in ("already exists", "duplicate", "already present")):
                 logger.info(f"Ledger '{ledger_name}' already exists in Tally Prime. Attempting ACTION='Alter' to sync full details (Address, Mobile, GSTIN, State, Pincode, Bank Details)...")
-                alter_payload = build_ledger_import_xml(ledger_data, action="Alter")
+                canon_target = self.lookup_canonical_ledger_name(comp_name, ledger_name) or ledger_name
+                alter_data = dict(ledger_data)
+                alter_data["name"] = canon_target
+                alter_data["party_ledger"] = canon_target
+                alter_payload = build_ledger_import_xml(alter_data, action="Alter")
                 alt_ok, alt_status, alt_res, _ = await self.client.send_xml_request_async(
                     host=host, port=port, xml_content=alter_payload, serialize_company=comp_name
                 )
                 if alt_ok and alt_status == 200:
                     alt_success, _, _ = parse_tally_import_response(alt_res, default_voucher_number="LEDGER_ALTERED")
                     if alt_success:
-                        logger.info(f"Ledger '{ledger_name}' successfully updated in Tally Prime via ACTION='Alter'.")
-                tally_guid = await self.fetch_ledger_guid(host, port, comp_name, ledger_name)
+                        logger.info(f"Ledger '{canon_target}' successfully updated in Tally Prime via ACTION='Alter'.")
+                tally_guid = await self.fetch_ledger_guid(host, port, comp_name, canon_target)
                 return {
                     "success": True,
                     "already_exists": True,
-                    "message": f"Ledger '{ledger_name}' updated in Tally Prime with full details.",
+                    "message": f"Ledger '{canon_target}' updated in Tally Prime with full details.",
                     "error": None,
-                    "tallyExternalId": tally_guid or f"TALLY-{ledger_name}",
-                    "guid": tally_guid or f"TALLY-{ledger_name}",
+                    "tallyExternalId": tally_guid or f"TALLY-{canon_target}",
+                    "guid": tally_guid or f"TALLY-{canon_target}",
                 }
             elif req_action == "Alter" and parse_err and any(k in parse_err.lower() for k in ("does not exist", "not found", "cannot find", "unknown")):
                 logger.info(f"Ledger '{ledger_name}' does not exist in Tally Prime. Attempting fallback ACTION='Create'...")
@@ -1158,6 +1219,14 @@ class TallyImporter:
         is_pure_inventory = is_stock_journal or is_physical_stock
 
         if not is_pure_inventory and party_ledger and not is_cash_ledger_name(party_ledger) and party_ledger.lower() not in ("cash", "bank"):
+            canon_party = self.lookup_canonical_ledger_name(company_name, party_ledger)
+            if canon_party and canon_party != party_ledger:
+                logger.info(f"Resolved party ledger name '{party_ledger}' -> '{canon_party}' for case-insensitive Tally compatibility.")
+                party_ledger = canon_party
+                voucher_data["party_ledger"] = canon_party
+                voucher_data["partyLedger"] = canon_party
+                voucher_data["partyName"] = canon_party
+
             safe_party_parent = classify_safe_ledger_parent(party_ledger, party_parent)
             await self.ensure_ledger(
                 host=host,
@@ -1225,6 +1294,12 @@ class TallyImporter:
                             or ""
                         ).strip()
                         if j_name and not is_cash_ledger_name(j_name) and j_name.lower() not in ("cash", "cash in hand", "cash-in-hand"):
+                            canon_j = self.lookup_canonical_ledger_name(company_name, j_name)
+                            if canon_j and canon_j != j_name:
+                                j_name = canon_j
+                                for jk in ("partyName", "party_name", "ledgerName", "ledger_name", "name", "ledger", "party", "customer", "supplier"):
+                                    if jk in j_ent:
+                                        j_ent[jk] = canon_j
                             # Safeguard: Never re-parent bank account as a customer or vendor!
                             if bank_ledger_to_ensure and j_name.lower() == bank_ledger_to_ensure.lower():
                                 continue
