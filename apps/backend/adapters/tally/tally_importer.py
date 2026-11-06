@@ -448,11 +448,12 @@ class TallyImporter:
 
         # Enterprise Safeguard 2: Sanitize proposed parent against protected groups
         safe_parent = classify_safe_ledger_parent(clean_name, parent)
+        canon_parent = self.lookup_canonical_group_name(company_name, safe_parent) or safe_parent
 
         ledger_payload = {
             "company_name": company_name,
             "name": clean_name,
-            "parent": safe_parent,
+            "parent": canon_parent,
             **(extra_info or {})
         }
         xml_envelope = build_ledger_import_xml(ledger_payload)
@@ -465,14 +466,103 @@ class TallyImporter:
                 success, _, parse_err = parse_tally_import_response(res_text, default_voucher_number="LEDGER_ENSURED")
                 if success or (parse_err and any(k in parse_err.lower() for k in ("already exists", "duplicate", "already present"))):
                     self._known_ledgers[comp_key].add(clean_name.lower())
-                    logger.info(f"Auto-Ensured Ledger '{clean_name}' under '{safe_parent}' in Tally (Company: '{company_name}')")
+                    logger.info(f"Auto-Ensured Ledger '{clean_name}' under '{canon_parent}' in Tally (Company: '{company_name}')")
                     return True
-                else:
-                    logger.warning(f"Auto-ensure ledger '{clean_name}' rejected by Tally: {parse_err}")
-                    return False
+                elif parse_err and "group" in parse_err.lower() and "does not exist" in parse_err.lower():
+                    import re
+                    m = re.search(r"Group\s*['\"]([^'\"]+)['\"]\s*does not exist", parse_err, re.IGNORECASE)
+                    missing_grp = m.group(1).strip() if m else canon_parent
+
+                    # 1. Dual-casing fallback: Try alternate casing (e.g. UPPERCASE 'SUNDRY DEBTORS' vs Title 'Sundry Debtors')
+                    for alt_g in (missing_grp.upper(), missing_grp.title()):
+                        if alt_g != missing_grp:
+                            alt_payload = dict(ledger_payload)
+                            alt_payload["parent"] = alt_g
+                            alt_xml = build_ledger_import_xml(alt_payload)
+                            alt_ok, alt_st, alt_txt, _ = await self.client.send_xml_request_async(
+                                host=host, port=port, xml_content=alt_xml, serialize_company=company_name
+                            )
+                            if alt_ok and alt_st == 200:
+                                a_succ, _, _ = parse_tally_import_response(alt_txt, default_voucher_number="LEDGER_ENSURED")
+                                if a_succ:
+                                    self._known_ledgers[comp_key].add(clean_name.lower())
+                                    if hasattr(self, "_canonical_group_map"):
+                                        self._canonical_group_map.setdefault(comp_key, {})[missing_grp.lower()] = alt_g
+                                    logger.info(f"Auto-Ensured Ledger '{clean_name}' using alternate group casing '{alt_g}' in Tally.")
+                                    return True
+
+                    # 2. If alternate casing didn't work, auto-create the group in Tally and retry
+                    logger.warning(f"Group '{missing_grp}' missing during auto-ensure ledger. Auto-creating group in Tally...")
+                    grp_ok = await self.ensure_group(host, port, company_name, missing_grp)
+                    if grp_ok:
+                        r_ok, r_status, r_res, _ = await self.client.send_xml_request_async(
+                            host=host, port=port, xml_content=xml_envelope, serialize_company=company_name
+                        )
+                        if r_ok and r_status == 200:
+                            r_succ, _, _ = parse_tally_import_response(r_res, default_voucher_number="LEDGER_ENSURED")
+                            if r_succ:
+                                self._known_ledgers[comp_key].add(clean_name.lower())
+                                logger.info(f"Auto-Ensured Ledger '{clean_name}' under '{canon_parent}' after healing group in Tally.")
+                                return True
+                logger.warning(f"Auto-ensure ledger '{clean_name}' rejected by Tally: {parse_err}")
+                return False
         except Exception as exc:
             logger.warning(f"Auto-ensure ledger '{clean_name}' encountered error: {exc}")
 
+        return False
+
+    async def ensure_group(
+        self,
+        host: str,
+        port: int,
+        company_name: str,
+        group_name: str,
+        parent_group: str | None = None
+    ) -> bool:
+        """
+        Auto-Creates an accounting group (e.g. 'Sundry Debtors', 'Sundry Creditors', 'Bank Accounts')
+        in Tally Prime if missing.
+        """
+        if not group_name or not str(group_name).strip():
+            return False
+        clean_grp = str(group_name).strip()
+        comp_key = (company_name or "").strip().lower()
+
+        if not hasattr(self, "_known_groups"):
+            self._known_groups: dict[str, set] = {}
+        if comp_key not in self._known_groups:
+            self._known_groups[comp_key] = set()
+
+        if clean_grp.lower() in self._known_groups[comp_key]:
+            return True
+
+        from apps.backend.adapters.tally.xml_builders.group_builder import (
+            build_group_import_xml,
+            determine_group_parent,
+        )
+
+        p_grp = parent_group or determine_group_parent(clean_grp)
+        group_payload = {
+            "company_name": company_name,
+            "name": clean_grp,
+            "parent": p_grp,
+        }
+        xml_envelope = build_group_import_xml(group_payload)
+
+        try:
+            ok, status, res_text, _ = await self.client.send_xml_request_async(
+                host=host, port=port, xml_content=xml_envelope, serialize_company=company_name
+            )
+            if ok and status == 200:
+                success, _, parse_err = parse_tally_import_response(res_text, default_voucher_number="GROUP_ENSURED")
+                if success or (parse_err and any(k in parse_err.lower() for k in ("already exists", "duplicate", "already present"))):
+                    self._known_groups[comp_key].add(clean_grp.lower())
+                    logger.info(f"Auto-Ensured Group '{clean_grp}' under '{p_grp}' in Tally (Company: '{company_name}')")
+                    return True
+                else:
+                    logger.warning(f"Auto-ensure group '{clean_grp}' response from Tally: {parse_err}")
+        except Exception as exc:
+            logger.warning(f"Auto-ensure group '{clean_grp}' encountered error: {exc}")
         return False
 
     async def ensure_unit(
@@ -821,6 +911,42 @@ class TallyImporter:
         cached[v_lower] = resolved_parent
         return True, resolved_parent
 
+    def lookup_canonical_group_name(self, company_name: str, group_name: str) -> str:
+        """
+        Resolves the exact case-sensitive group name as stored in Tally / MongoDB
+        to prevent XML import rejections due to casing mismatches (e.g. 'SUNDRY DEBTORS' vs 'Sundry Debtors').
+        """
+        if not group_name or not str(group_name).strip():
+            return ""
+        clean = str(group_name).strip()
+        comp_key = (company_name or "").strip().lower()
+
+        if not hasattr(self, "_canonical_group_map"):
+            self._canonical_group_map: dict[str, dict[str, str]] = {}
+        comp_map = self._canonical_group_map.setdefault(comp_key, {})
+
+        if clean.lower() in comp_map:
+            return comp_map[clean.lower()]
+
+        try:
+            from shared.db.mongo_client import get_collection
+            g_col = get_collection("groups")
+            import re
+            filter_query: dict[str, Any] = {
+                "name": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}
+            }
+            if company_name:
+                filter_query["company_name"] = {"$regex": f"^{re.escape(company_name.strip())}$", "$options": "i"}
+            doc = g_col.find_one(filter_query)
+            if doc and doc.get("name"):
+                matched_name = str(doc["name"]).strip()
+                comp_map[clean.lower()] = matched_name
+                return matched_name
+        except Exception:
+            pass
+
+        return clean
+
     def lookup_canonical_ledger_name(self, company_name: str, ledger_name: str) -> str:
         """
         Resolves the exact case-sensitive ledger name as stored in Tally / MongoDB
@@ -1062,6 +1188,17 @@ class TallyImporter:
         if req_action not in ("Create", "Alter"):
             req_action = "Create"
 
+        # Proactively ensure parent group exists in Tally Prime
+        parent_candidate = str(ledger_data.get("parent") or "").strip()
+        if not parent_candidate:
+            p_type = str(ledger_data.get("partyType") or ledger_data.get("party_type") or "").strip().upper()
+            parent_candidate = "Sundry Creditors" if "SUPPLIER" in p_type or "VENDOR" in p_type else "Sundry Debtors"
+        from apps.backend.adapters.tally.xml_builders.common import classify_safe_ledger_parent
+        safe_parent = classify_safe_ledger_parent(ledger_name, parent_candidate)
+        canon_parent = self.lookup_canonical_group_name(comp_name, safe_parent) or safe_parent
+        ledger_data["parent"] = canon_parent
+        await self.ensure_group(host=host, port=port, company_name=comp_name, group_name=canon_parent)
+
         xml_payload = build_ledger_import_xml(ledger_data, action=req_action)
         ok, status_code, res_text, err_msg = await self.client.send_xml_request_async(
             host=host, port=port, xml_content=xml_payload, serialize_company=comp_name
@@ -1077,6 +1214,60 @@ class TallyImporter:
         default_vch = "LEDGER_ALTERED" if req_action == "Alter" else "LEDGER_CREATED"
         success, _, parse_err = parse_tally_import_response(res_text, default_voucher_number=default_vch)
         if not success:
+            # Auto-healing: If group is missing or in different casing in Tally
+            if parse_err and "group" in parse_err.lower() and "does not exist" in parse_err.lower():
+                import re
+                m = re.search(r"Group\s*['\"]([^'\"]+)['\"]\s*does not exist", parse_err, re.IGNORECASE)
+                missing_grp = m.group(1).strip() if m else canon_parent
+
+                # 1. Dual-casing fallback: Try alternate casing (e.g. UPPERCASE 'SUNDRY DEBTORS' vs Title 'Sundry Debtors')
+                for alt_g in (missing_grp.upper(), missing_grp.title()):
+                    if alt_g != missing_grp:
+                        alt_data = dict(ledger_data)
+                        alt_data["parent"] = alt_g
+                        alt_payload = build_ledger_import_xml(alt_data, action=req_action)
+                        alt_ok, alt_st, alt_txt, _ = await self.client.send_xml_request_async(
+                            host=host, port=port, xml_content=alt_payload, serialize_company=comp_name
+                        )
+                        if alt_ok and alt_st == 200:
+                            a_succ, _, _ = parse_tally_import_response(alt_txt, default_voucher_number=default_vch)
+                            if a_succ:
+                                if hasattr(self, "_canonical_group_map"):
+                                    self._canonical_group_map.setdefault(comp_name.strip().lower(), {})[missing_grp.lower()] = alt_g
+                                tally_guid = await self.fetch_ledger_guid(host, port, comp_name, ledger_name)
+                                logger.info(f"Ledger '{ledger_name}' created in Tally Prime using alternate group casing '{alt_g}'.")
+                                return {
+                                    "success": True,
+                                    "already_exists": False,
+                                    "message": f"Ledger '{ledger_name}' created in Tally Prime under group '{alt_g}'.",
+                                    "error": None,
+                                    "tallyExternalId": tally_guid or f"TALLY-{ledger_name}",
+                                    "guid": tally_guid or f"TALLY-{ledger_name}",
+                                }
+
+                # 2. If alternate casing didn't resolve, auto-create group in Tally and retry
+                logger.warning(f"Tally reported missing group '{missing_grp}' for company '{comp_name}'. Auto-creating group in Tally...")
+                grp_ok = await self.ensure_group(host=host, port=port, company_name=comp_name, group_name=missing_grp)
+                if grp_ok:
+                    retry_payload = build_ledger_import_xml(ledger_data, action=req_action)
+                    r_ok, r_status, r_res, _ = await self.client.send_xml_request_async(
+                        host=host, port=port, xml_content=retry_payload, serialize_company=comp_name
+                    )
+                    if r_ok and r_status == 200:
+                        r_succ, _, r_err = parse_tally_import_response(r_res, default_voucher_number=default_vch)
+                        if r_succ:
+                            tally_guid = await self.fetch_ledger_guid(host, port, comp_name, ledger_name)
+                            return {
+                                "success": True,
+                                "already_exists": False,
+                                "message": f"Ledger '{ledger_name}' created in Tally Prime after auto-healing group '{missing_grp}'.",
+                                "error": None,
+                                "tallyExternalId": tally_guid or f"TALLY-{ledger_name}",
+                                "guid": tally_guid or f"TALLY-{ledger_name}",
+                            }
+                        else:
+                            parse_err = r_err
+
             if req_action == "Create" and parse_err and any(k in parse_err.lower() for k in ("already exists", "duplicate", "already present")):
                 logger.info(f"Ledger '{ledger_name}' already exists in Tally Prime. Attempting ACTION='Alter' to sync full details (Address, Mobile, GSTIN, State, Pincode, Bank Details)...")
                 canon_target = self.lookup_canonical_ledger_name(comp_name, ledger_name) or ledger_name

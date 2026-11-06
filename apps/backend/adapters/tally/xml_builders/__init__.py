@@ -11,6 +11,10 @@ from apps.backend.adapters.tally.xml_builders.voucher_type_builder import (
     build_voucher_type_import_xml,
     determine_voucher_type_parent,
 )
+from apps.backend.adapters.tally.xml_builders.group_builder import (
+    build_group_import_xml,
+    determine_group_parent,
+)
 
 from apps.backend.adapters.tally.xml_builders.voucher_builder import (
     build_voucher_import_xml,
@@ -48,6 +52,8 @@ __all__ = [
     "build_stock_item_alter_xml",
     "build_voucher_type_import_xml",
     "determine_voucher_type_parent",
+    "build_group_import_xml",
+    "determine_group_parent",
     "build_voucher_import_xml",
     "_lookup_party_master_gstin",
     "_lookup_item_master_unit",
