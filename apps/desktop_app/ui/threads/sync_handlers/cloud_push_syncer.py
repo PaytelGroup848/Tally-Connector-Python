@@ -223,6 +223,23 @@ def push_cloud_sync(
                 "plAccounts": extracted_pl_accounts
             }
 
+        # Build comprehensive P&L ledger map from extracted PL accounts & ledgers
+        from shared.cloud.voucher_group_resolver import build_pl_ledger_group_map, resolve_voucher_group
+
+        pl_ledger_map = build_pl_ledger_group_map(
+            extracted_pl_accounts=extracted_pl_accounts,
+            extracted_ledgers=extracted_ledgers,
+            pl_data=pl_data
+        )
+
+        # Pre-assign exact voucherGroup to every voucher based on its ledger lines
+        for v in extracted_vouchers:
+            if isinstance(v, dict):
+                v_grp = resolve_voucher_group(v, pl_ledger_map=pl_ledger_map)
+                v["voucherGroup"] = v_grp
+                if "raw" in v and isinstance(v["raw"], dict):
+                    v["raw"]["voucherGroup"] = v_grp
+
         # 25 vouchers per chunk + 250ms backpressure pause to prevent cloud server memory exhaustion
         voucher_chunks = list(chunk_list(extracted_vouchers, 25))
         total_v = len(voucher_chunks)

@@ -563,6 +563,9 @@ class CloudSyncClient:
                     ledg_rec["bankDetails"] = b_det_copy
                 records_to_send.append(ledg_rec)
         elif norm_entity == "VOUCHER":
+            from shared.cloud.voucher_group_resolver import build_pl_ledger_group_map, resolve_voucher_group
+            pl_ledger_map = build_pl_ledger_group_map(pl_data=pl_data) if pl_data else None
+
             for r in items:
                 if not isinstance(r, dict):
                     continue
@@ -573,34 +576,10 @@ class CloudSyncClient:
                 v_type = str(r.get("voucherType") or r.get("voucher_type") or raw_dict.get("parent") or raw_dict.get("vouchertypename") or "Sales")
                 v_party = str(r.get("partyLedger") or r.get("party_ledger") or raw_dict.get("party") or raw_dict.get("partyledgername") or "Cash")
 
-                # Determine voucherGroup (e.g. "Sales Accounts", "Purchase Accounts", etc.)
+                # Determine voucherGroup using ledger lines & P&L mapping
                 v_group = str(r.get("voucherGroup") or raw_dict.get("voucherGroup") or "").strip()
-                if not v_group:
-                    vt_lower = v_type.lower()
-                    rp_lower = str(raw_dict.get("parent") or "").lower()
-                    comb = f"{vt_lower} {rp_lower}"
-                    if "sale" in comb or "credit note" in comb:
-                        v_group = "Sales Accounts"
-                    elif "purchase" in comb or "debit note" in comb:
-                        v_group = "Purchase Accounts"
-                    elif "indirect exp" in comb:
-                        v_group = "Indirect Expenses"
-                    elif "direct exp" in comb:
-                        v_group = "Direct Expenses"
-                    elif "indirect inc" in comb:
-                        v_group = "Indirect Incomes"
-                    elif "direct inc" in comb:
-                        v_group = "Direct Incomes"
-                    elif "receipt" in comb:
-                        v_group = "Receipt"
-                    elif "payment" in comb:
-                        v_group = "Payment"
-                    elif "contra" in comb:
-                        v_group = "Contra"
-                    elif "journal" in comb:
-                        v_group = "Journal"
-                    else:
-                        v_group = v_type.strip() or "Sales Accounts" 
+                if not v_group or (pl_ledger_map and v_group in (v_type, "General", "Sales Accounts")):
+                    v_group = resolve_voucher_group(r, pl_ledger_map=pl_ledger_map) 
                 
                 raw_amt = r.get("amount")
                 if raw_amt is None:
@@ -778,23 +757,11 @@ class CloudSyncClient:
                     r["startDate"] = fmt_start
                 if fmt_end:
                     r["endDate"] = fmt_end
-                if norm_entity == "VOUCHER" and not r.get("voucherGroup"):
-                    vt = str(r.get("voucherType") or r.get("invoiceType") or "")
-                    comb = vt.lower()
-                    if "sale" in comb or "credit note" in comb:
-                        r["voucherGroup"] = "Sales Accounts"
-                    elif "purchase" in comb or "debit note" in comb:
-                        r["voucherGroup"] = "Purchase Accounts"
-                    elif "receipt" in comb:
-                        r["voucherGroup"] = "Receipt"
-                    elif "payment" in comb:
-                        r["voucherGroup"] = "Payment"
-                    elif "contra" in comb:
-                        r["voucherGroup"] = "Contra"
-                    elif "journal" in comb:
-                        r["voucherGroup"] = "Journal"
-                    else:
-                        r["voucherGroup"] = vt or "Sales Accounts"
+                if norm_entity == "VOUCHER":
+                    vg = str(r.get("voucherGroup") or "").strip()
+                    if not vg or vg in (str(r.get("voucherType") or ""), "General"):
+                        from shared.cloud.voucher_group_resolver import resolve_voucher_group
+                        r["voucherGroup"] = resolve_voucher_group(r, pl_ledger_map=pl_data.get("_ledgerMap") if isinstance(pl_data, dict) else None)
                 if "raw" in r and isinstance(r["raw"], dict):
                     r["raw"]["syncJobId"] = sync_id
                     r["raw"]["syncType"] = eff_sync_type
@@ -803,7 +770,7 @@ class CloudSyncClient:
                         r["raw"]["startDate"] = fmt_start
                     if fmt_end:
                         r["raw"]["endDate"] = fmt_end
-                    if norm_entity == "VOUCHER" and not r["raw"].get("voucherGroup"):
+                    if norm_entity == "VOUCHER":
                         r["raw"]["voucherGroup"] = r.get("voucherGroup")
 
         if norm_entity == "VOUCHER" and pl_data:

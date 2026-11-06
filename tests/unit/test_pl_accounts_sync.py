@@ -265,3 +265,108 @@ def test_voucher_batch_with_pl_data_payload():
     assert rec["raw"]["indirectExpenses"]["totalAmount"] == 14592.48
     assert rec["raw"]["indirectIncomes"]["totalAmount"] == 45325.0
     assert rec["raw"]["plSummary"]["grossProfit"] == 860941.29
+
+
+def test_custom_voucher_types_mapped_to_pl_groups():
+    mock_auth = MagicMock()
+    mock_auth.base_url = "https://connector.cloudata.in/api/connector"
+    mock_auth.access_token = "valid_token_xyz"
+    mock_auth.refresh_token_val = "refresh_val"
+    mock_auth._extract_error_message.return_value = "error"
+
+    mock_client = MagicMock()
+    mock_post_res = MagicMock()
+    mock_post_res.status_code = 200
+    mock_post_res.text = '{"success": true, "data": {"upserted": 3, "failed": 0}}'
+    mock_post_res.json.return_value = {"success": True, "data": {"upserted": 3, "failed": 0}}
+    mock_client.post.return_value = mock_post_res
+    mock_auth._get_client.return_value = mock_client
+
+    sync_client = CloudSyncClient(mock_auth)
+
+    # 1. Sales Quotation voucher (from User's Screenshot 4)
+    # 2. Expense Payment voucher (Payment type hitting Electricity ledger)
+    # 3. Custom Purchase voucher (e.g. Material Inward hitting Purchase OMS ledger)
+    voucher_items = [
+        {
+            "voucherId": "v-sq-01",
+            "voucherNumber": "WEB-TEST-001",
+            "voucherType": "Sales Quotation",
+            "partyLedger": "GREENA",
+            "amount": 120.0,
+            "lines": [
+                {"ledgerName": "GREENA", "amount": -120.0},
+                {"ledgerName": "Sales", "amount": 120.0}
+            ]
+        },
+        {
+            "voucherId": "v-pay-01",
+            "voucherNumber": "PAY-001",
+            "voucherType": "Payment",
+            "partyLedger": "HDFC Bank",
+            "amount": 5692.0,
+            "lines": [
+                {"ledgerName": "ELECTRICITY EXPENSES (RESIDENCE)", "amount": 5692.0},
+                {"ledgerName": "HDFC Bank", "amount": -5692.0}
+            ]
+        },
+        {
+            "voucherId": "v-mat-01",
+            "voucherNumber": "MAT-001",
+            "voucherType": "Material Inward",
+            "partyLedger": "Supplier A",
+            "amount": 57490.0,
+            "lines": [
+                {"ledgerName": "Supplier A", "amount": 57490.0},
+                {"ledgerName": "PURCHASE ON OMS", "amount": -57490.0}
+            ]
+        }
+    ]
+
+    pl_data = {
+        "salesAccounts": {
+            "groupName": "Sales Accounts",
+            "ledgers": [{"ledgerName": "Sales", "amount": 164751.63}]
+        },
+        "purchaseAccounts": {
+            "groupName": "Purchase Accounts",
+            "ledgers": [{"ledgerName": "PURCHASE ON OMS", "amount": 57490.0}]
+        },
+        "indirectExpenses": {
+            "groupName": "Indirect Expenses",
+            "ledgers": [{"ledgerName": "ELECTRICITY EXPENSES (RESIDENCE)", "amount": 5692.0}]
+        }
+    }
+
+    ok, msg, data = sync_client.sync_batch(
+        sync_id="job-custom-v",
+        company_name="Tarun Enterprise (25-26)",
+        entity_type="VOUCHER",
+        items=voucher_items,
+        batch_number=1,
+        is_last_batch=True,
+        company_id="6ae5d28e170b689d53e13f31",
+        sync_type="INCREMENTAL",
+        is_full_replace=False,
+        pl_data=pl_data
+    )
+
+    assert ok is True
+    call_args = mock_client.post.call_args
+    sent_records = call_args[1]["json"]["records"]
+
+    # Verify Sales Quotation is mapped to Sales Accounts
+    assert sent_records[0]["voucherType"] == "Sales Quotation"
+    assert sent_records[0]["voucherGroup"] == "Sales Accounts"
+    assert sent_records[0]["raw"]["voucherGroup"] == "Sales Accounts"
+
+    # Verify Expense Payment is mapped to Indirect Expenses
+    assert sent_records[1]["voucherType"] == "Payment"
+    assert sent_records[1]["voucherGroup"] == "Indirect Expenses"
+    assert sent_records[1]["raw"]["voucherGroup"] == "Indirect Expenses"
+
+    # Verify Material Inward is mapped to Purchase Accounts
+    assert sent_records[2]["voucherType"] == "Material Inward"
+    assert sent_records[2]["voucherGroup"] == "Purchase Accounts"
+    assert sent_records[2]["raw"]["voucherGroup"] == "Purchase Accounts"
+
