@@ -469,7 +469,6 @@ class TallyImporter:
                     logger.info(f"Auto-Ensured Ledger '{clean_name}' under '{canon_parent}' in Tally (Company: '{company_name}')")
                     return True
                 elif parse_err and "group" in parse_err.lower() and "does not exist" in parse_err.lower():
-                    import re
                     m = re.search(r"Group\s*['\"]([^'\"]+)['\"]\s*does not exist", parse_err, re.IGNORECASE)
                     missing_grp = m.group(1).strip() if m else canon_parent
 
@@ -931,7 +930,6 @@ class TallyImporter:
         try:
             from shared.db.mongo_client import get_collection
             g_col = get_collection("groups")
-            import re
             filter_query: dict[str, Any] = {
                 "name": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}
             }
@@ -968,7 +966,6 @@ class TallyImporter:
         try:
             from shared.db.mongo_client import get_collection
             l_col = get_collection("ledgers")
-            import re
             filter_query: dict[str, Any] = {
                 "name": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}
             }
@@ -1216,7 +1213,6 @@ class TallyImporter:
         if not success:
             # Auto-healing: If group is missing or in different casing in Tally
             if parse_err and "group" in parse_err.lower() and "does not exist" in parse_err.lower():
-                import re
                 m = re.search(r"Group\s*['\"]([^'\"]+)['\"]\s*does not exist", parse_err, re.IGNORECASE)
                 missing_grp = m.group(1).strip() if m else canon_parent
 
