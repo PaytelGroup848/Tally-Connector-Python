@@ -53,7 +53,12 @@ class UpdateAvailableDialog(QDialog):
 
         self.setWindowTitle("Update Available - CtrlBooks")
         self.setFixedWidth(500)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
         self.setStyleSheet("""
             QDialog {
                 background-color: #F8FAFC;

@@ -19,7 +19,12 @@ class VoucherErrorDialog(QDialog):
         self.setWindowTitle("Tally Import Error - Action Required")
         self.setMinimumWidth(560)
         self.setMaximumWidth(680)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
         self.setStyleSheet("""
             QDialog {
                 background-color: #FFFFFF;

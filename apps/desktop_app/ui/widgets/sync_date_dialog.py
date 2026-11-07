@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QColor
 
+from apps.desktop_app.ui.asset_helper import create_tally_logo_label
+
 
 class SyncDateDialog(QDialog):
     def __init__(
@@ -31,23 +33,17 @@ class SyncDateDialog(QDialog):
 
         self.setWindowTitle("Sync Financial Year & Date Range")
         self.setFixedWidth(430)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
         self.setStyleSheet("""
             QDialog {
                 background-color: #FFFFFF;
-                border-radius: 12px;
             }
         """)
-
-        # Drop shadow effect
-        try:
-            shadow = QGraphicsDropShadowEffect(self)
-            shadow.setBlurRadius(20)
-            shadow.setColor(QColor(15, 23, 42, 40))
-            shadow.setOffset(0, 4)
-            self.setGraphicsEffect(shadow)
-        except Exception:
-            pass
 
         self.init_ui(initial_from_date, initial_to_date)
 
@@ -167,11 +163,19 @@ class SyncDateDialog(QDialog):
 
         layout.addLayout(dates_row)
 
-        # Explanatory tip
-        lbl_info = QLabel("ℹ️ Tally Prime se sirf is date range ka data sync hoga.")
+        # Explanatory tip with official TallyPrime icon
+        tip_row = QHBoxLayout()
+        tip_row.setSpacing(6)
+        tip_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        tally_icon = create_tally_logo_label(16, 16)
+        lbl_info = QLabel("Only data within this date range will be synced from Tally Prime.")
         lbl_info.setStyleSheet("font-size: 11px; color: #64748B; font-style: italic;")
         lbl_info.setWordWrap(True)
-        layout.addWidget(lbl_info)
+
+        tip_row.addWidget(tally_icon)
+        tip_row.addWidget(lbl_info, 1)
+        layout.addLayout(tip_row)
 
         # Action Buttons
         btn_row = QHBoxLayout()
@@ -316,4 +320,9 @@ class SyncDateDialog(QDialog):
         else:
             fy_label = f"{f_str} to {t_str}"
         return f_str, t_str, fy_label
+
+    def closeEvent(self, event):
+        self.reject()
+        event.accept()
+
 

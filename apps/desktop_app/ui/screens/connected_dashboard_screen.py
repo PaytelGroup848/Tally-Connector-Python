@@ -484,21 +484,9 @@ class ConnectedDashboardScreen(QWidget):
         top_row = QHBoxLayout()
         top_row.setSpacing(10)
 
-        # Tally Logo Badge
-        tally_badge = QLabel("Tally")
-        tally_badge.setFixedSize(40, 26)
-        tally_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tally_badge.setStyleSheet("""
-            QLabel {
-                background-color: #F1F5F9;
-                border: 1px solid #E2E8F0;
-                border-radius: 6px;
-                color: #DC2626;
-                font-size: 11px;
-                font-weight: 900;
-                font-style: italic;
-            }
-        """)
+        # Tally Logo Badge (HD Original TallyPrime Icon)
+        from apps.desktop_app.ui.asset_helper import create_tally_logo_label
+        tally_badge = create_tally_logo_label(28, 28)
         top_row.addWidget(tally_badge)
 
         name_lbl = QLabel(name)
@@ -723,7 +711,7 @@ class ConnectedDashboardScreen(QWidget):
                 except Exception as dlg_exc:
                     logger.debug(f"SyncProgressDialog open notice: {dlg_exc}")
             return
-
+ 
         p_bar = QProgressBar()
         p_bar.setRange(0, 100)
         p_bar.setValue(10)

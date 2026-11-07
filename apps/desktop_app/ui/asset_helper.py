@@ -69,3 +69,66 @@ def create_more_dots_icon(color_hex: str = "#0F172A", size: int = 24):
 
     return QIcon(pix)
 
+
+_TALLY_PIXMAP_CACHE = {}
+
+def get_tally_prime_pixmap(width: int = 28, height: int = 28):
+    """
+    Returns a cached, high-definition QPixmap of the official TallyPrime icon,
+    scaled smoothly with Qt.TransformationMode.SmoothTransformation.
+    """
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtCore import Qt
+
+    key = (width, height)
+    if key in _TALLY_PIXMAP_CACHE:
+        return _TALLY_PIXMAP_CACHE[key]
+
+    path = get_asset_path("tally_prime.png")
+    if not path.exists():
+        path = get_asset_path("tally_prime_user_crop.png")
+
+    if path.exists():
+        src = QPixmap(str(path))
+        if not src.isNull():
+            pix = src.scaled(
+                width, height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            _TALLY_PIXMAP_CACHE[key] = pix
+            return pix
+
+    return QPixmap()
+
+
+def create_tally_logo_label(width: int = 28, height: int = 28):
+    """
+    Creates a QLabel displaying the crisp, HD official TallyPrime icon.
+    """
+    from PySide6.QtWidgets import QLabel
+    from PySide6.QtCore import Qt
+
+    lbl = QLabel()
+    lbl.setFixedSize(width, height)
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lbl.setToolTip("TallyPrime")
+
+    pix = get_tally_prime_pixmap(width, height)
+    if not pix.isNull():
+        lbl.setPixmap(pix)
+        lbl.setStyleSheet("border: none; background: transparent;")
+    else:
+        lbl.setText("TP")
+        lbl.setStyleSheet("""
+            QLabel {
+                background-color: #149EC2;
+                color: #FFFFFF;
+                font-weight: 900;
+                font-size: 11px;
+                border-radius: 6px;
+            }
+        """)
+    return lbl
+
+

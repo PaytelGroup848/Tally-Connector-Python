@@ -431,20 +431,22 @@ class TallyImporter:
         if clean_name.lower() in self._known_ledgers[comp_key]:
             return True
 
-        # Enterprise Safeguard 1: Inspect local DB to see if ledger already exists in this company
-        try:
-            from shared.db.mongo_client import get_collection
-            l_col = get_collection("ledgers")
-            existing_doc = l_col.find_one({
-                "company_name": company_name,
-                "name": {"$regex": f"^{re.escape(clean_name)}$", "$options": "i"}
-            })
-            if existing_doc:
-                # Ledger is already present in Tally! Do not alter its group.
-                self._known_ledgers[comp_key].add(clean_name.lower())
-                return True
-        except Exception:
-            pass
+        # Enterprise Safeguard 1: Inspect local DB to see if ledger already exists in this company (only if direct_mongo_sync_enabled)
+        from shared.config import get_settings
+        if get_settings().direct_mongo_sync_enabled:
+            try:
+                from shared.db.mongo_client import get_collection
+                l_col = get_collection("ledgers")
+                existing_doc = l_col.find_one({
+                    "company_name": company_name,
+                    "name": {"$regex": f"^{re.escape(clean_name)}$", "$options": "i"}
+                })
+                if existing_doc:
+                    # Ledger is already present in Tally! Do not alter its group.
+                    self._known_ledgers[comp_key].add(clean_name.lower())
+                    return True
+            except Exception:
+                pass
 
         # Enterprise Safeguard 2: Sanitize proposed parent against protected groups
         safe_parent = classify_safe_ledger_parent(clean_name, parent)
@@ -927,21 +929,23 @@ class TallyImporter:
         if clean.lower() in comp_map:
             return comp_map[clean.lower()]
 
-        try:
-            from shared.db.mongo_client import get_collection
-            g_col = get_collection("groups")
-            filter_query: dict[str, Any] = {
-                "name": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}
-            }
-            if company_name:
-                filter_query["company_name"] = {"$regex": f"^{re.escape(company_name.strip())}$", "$options": "i"}
-            doc = g_col.find_one(filter_query)
-            if doc and doc.get("name"):
-                matched_name = str(doc["name"]).strip()
-                comp_map[clean.lower()] = matched_name
-                return matched_name
-        except Exception:
-            pass
+        from shared.config import get_settings
+        if get_settings().direct_mongo_sync_enabled:
+            try:
+                from shared.db.mongo_client import get_collection
+                g_col = get_collection("groups")
+                filter_query: dict[str, Any] = {
+                    "name": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}
+                }
+                if company_name:
+                    filter_query["company_name"] = {"$regex": f"^{re.escape(company_name.strip())}$", "$options": "i"}
+                doc = g_col.find_one(filter_query)
+                if doc and doc.get("name"):
+                    matched_name = str(doc["name"]).strip()
+                    comp_map[clean.lower()] = matched_name
+                    return matched_name
+            except Exception:
+                pass
 
         return clean
 
@@ -962,22 +966,24 @@ class TallyImporter:
         if clean.lower() in comp_map:
             return comp_map[clean.lower()]
 
-        # Try to resolve from local MongoDB ledgers collection
-        try:
-            from shared.db.mongo_client import get_collection
-            l_col = get_collection("ledgers")
-            filter_query: dict[str, Any] = {
-                "name": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}
-            }
-            if company_name:
-                filter_query["company_name"] = {"$regex": f"^{re.escape(company_name.strip())}$", "$options": "i"}
-            doc = l_col.find_one(filter_query)
-            if doc and doc.get("name"):
-                matched_name = str(doc["name"]).strip()
-                comp_map[clean.lower()] = matched_name
-                return matched_name
-        except Exception:
-            pass
+        # Try to resolve from local MongoDB ledgers collection (only if direct_mongo_sync_enabled)
+        from shared.config import get_settings
+        if get_settings().direct_mongo_sync_enabled:
+            try:
+                from shared.db.mongo_client import get_collection
+                l_col = get_collection("ledgers")
+                filter_query: dict[str, Any] = {
+                    "name": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}
+                }
+                if company_name:
+                    filter_query["company_name"] = {"$regex": f"^{re.escape(company_name.strip())}$", "$options": "i"}
+                doc = l_col.find_one(filter_query)
+                if doc and doc.get("name"):
+                    matched_name = str(doc["name"]).strip()
+                    comp_map[clean.lower()] = matched_name
+                    return matched_name
+            except Exception:
+                pass
 
         return clean
 

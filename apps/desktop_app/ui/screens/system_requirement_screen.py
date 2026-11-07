@@ -93,7 +93,7 @@ class SystemRequirementScreen(QWidget):
         card_layout.addWidget(self.row_ram_frame)
 
         self.row_tally_frame, self.row_tally_badge = self.create_check_row(
-            icon="📊",
+            icon="tally",
             title="Tally: Tally ERP 9/ Tally Prime License",
             is_ok=False
         )
@@ -162,14 +162,15 @@ class SystemRequirementScreen(QWidget):
             QPushButton {
                 background: transparent;
                 border: none;
+                border-bottom: 2px solid transparent;
                 color: #1E293B;
                 font-size: 12px;
                 font-weight: 700;
-                padding: 2px 4px;
+                padding: 2px 4px 4px 4px;
             }
             QPushButton:hover {
                 color: #0284C7;
-                text-decoration: underline;
+                border-bottom: 2px solid #0284C7;
             }
         """)
         self.btn_check_updates.clicked.connect(self.on_check_updates)
@@ -247,7 +248,13 @@ class SystemRequirementScreen(QWidget):
         row_layout.setContentsMargins(14, 6, 14, 6)
         row_layout.setSpacing(10)
 
-        txt = QLabel(f"{icon}  {title}")
+        if icon == "tally":
+            from apps.desktop_app.ui.asset_helper import create_tally_logo_label
+            t_icon = create_tally_logo_label(22, 22)
+            row_layout.addWidget(t_icon)
+            txt = QLabel(title)
+        else:
+            txt = QLabel(f"{icon}  {title}")
         txt.setStyleSheet("font-size: 12px; font-weight: 600; color: #1E293B; border: none; background: transparent;")
         txt.setWordWrap(True)
         row_layout.addWidget(txt)
@@ -294,15 +301,11 @@ class SystemRequirementScreen(QWidget):
         import threading
         def _check_bg():
             try:
-                import httpx
-                from shared.config import get_settings
-                gateway = get_settings().gateway_url.rstrip("/")
-                res = httpx.get(f"{gateway}/api/system/check", timeout=1.5)
-                if res.status_code == 200:
-                    data = res.json()
-                    is_tally = data.get("checks", {}).get("tally_connected", False)
-                    self.system_checked.emit(is_tally)
-                    return
+                from shared.connection_config import resolve_active_tally_port, test_tally_port
+                active_host, active_port = resolve_active_tally_port()
+                is_ok, comps, msg = test_tally_port(host=active_host, port=active_port, timeout=2.0)
+                self.system_checked.emit(bool(is_ok))
+                return
             except Exception:
                 pass
             self.system_checked.emit(False)

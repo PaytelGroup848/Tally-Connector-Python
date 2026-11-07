@@ -71,12 +71,14 @@ class ActivityHistoryRepository:
             "error": activity.get("error"),
         }
 
-        try:
-            from shared.db.mongo_client import get_collection
-            col = get_collection("incoming_commands_history")
-            col.insert_one(dict(doc))
-        except Exception as exc:
-            logger.debug(f"MongoDB activity record skipped: {exc}")
+        from shared.config import get_settings
+        if get_settings().direct_mongo_sync_enabled:
+            try:
+                from shared.db.mongo_client import get_collection
+                col = get_collection("incoming_commands_history")
+                col.insert_one(dict(doc))
+            except Exception as exc:
+                logger.debug(f"MongoDB activity record skipped: {exc}")
 
         try:
             history = self._load_local_history()
@@ -124,14 +126,15 @@ class ActivityHistoryRepository:
         else:
             query_filter = {}
 
-        try:
-            from shared.db.mongo_client import get_collection
-            col = get_collection("incoming_commands_history")
-            docs = list(col.find(query_filter, {"_id": 0}).sort("timestamp", -1).limit(limit))
-            if docs:
-                return docs
-        except Exception as exc:
-            logger.debug(f"MongoDB get_recent_activities failed: {exc}")
+        if settings.direct_mongo_sync_enabled:
+            try:
+                from shared.db.mongo_client import get_collection
+                col = get_collection("incoming_commands_history")
+                docs = list(col.find(query_filter, {"_id": 0}).sort("timestamp", -1).limit(limit))
+                if docs:
+                    return docs
+            except Exception as exc:
+                logger.debug(f"MongoDB get_recent_activities failed: {exc}")
 
         return self._load_local_history(organization_id=target_org, user_email=target_email)[:limit]
 
@@ -171,12 +174,13 @@ class ActivityHistoryRepository:
 
         delete_query = {"$and": and_clauses} if len(and_clauses) > 1 else and_clauses[0]
 
-        try:
-            from shared.db.mongo_client import get_collection
-            col = get_collection("incoming_commands_history")
-            col.delete_many(delete_query)
-        except Exception as exc:
-            logger.debug(f"MongoDB clear_activities failed: {exc}")
+        if settings.direct_mongo_sync_enabled:
+            try:
+                from shared.db.mongo_client import get_collection
+                col = get_collection("incoming_commands_history")
+                col.delete_many(delete_query)
+            except Exception as exc:
+                logger.debug(f"MongoDB clear_activities failed: {exc}")
 
         try:
             if not LOCAL_HISTORY_FILE.exists():

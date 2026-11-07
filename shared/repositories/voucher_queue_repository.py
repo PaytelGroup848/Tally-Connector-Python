@@ -103,16 +103,18 @@ class VoucherQueueRepository:
             "last_attempt_at": now_iso,
         }
 
-        # 1. Persist to MongoDB
-        try:
-            col = get_collection("pending_voucher_queue")
-            col.update_one(
-                {"cmd_id": str(cmd_id)},
-                {"$set": doc},
-                upsert=True
-            )
-        except Exception as exc:
-            logger.debug(f"MongoDB pending queue enqueue error: {exc}")
+        # 1. Persist to MongoDB (only if direct_mongo_sync_enabled)
+        from shared.config import get_settings
+        if get_settings().direct_mongo_sync_enabled:
+            try:
+                col = get_collection("pending_voucher_queue")
+                col.update_one(
+                    {"cmd_id": str(cmd_id)},
+                    {"$set": doc},
+                    upsert=True
+                )
+            except Exception as exc:
+                logger.debug(f"MongoDB pending queue enqueue error: {exc}")
 
         # 2. Persist to local JSON cache
         local_items = self._read_local_queue()
@@ -140,28 +142,30 @@ class VoucherQueueRepository:
         """
         pending_list: List[Dict[str, Any]] = []
 
-        try:
-            col = get_collection("pending_voucher_queue")
-            query: Dict[str, Any] = {"status": "PENDING_TALLY"}
-            if organization_id:
-                query["$or"] = [
-                    {"organization_id": str(organization_id)},
-                    {"organization_id": ""},
-                    {"organization_id": {"$exists": False}}
-                ]
-            if user_email:
-                query["user_email"] = str(user_email).strip().lower()
-            if company_name:
-                query["target_company"] = {"$regex": f"^{company_name.strip()}$", "$options": "i"}
+        from shared.config import get_settings
+        if get_settings().direct_mongo_sync_enabled:
+            try:
+                col = get_collection("pending_voucher_queue")
+                query: Dict[str, Any] = {"status": "PENDING_TALLY"}
+                if organization_id:
+                    query["$or"] = [
+                        {"organization_id": str(organization_id)},
+                        {"organization_id": ""},
+                        {"organization_id": {"$exists": False}}
+                    ]
+                if user_email:
+                    query["user_email"] = str(user_email).strip().lower()
+                if company_name:
+                    query["target_company"] = {"$regex": f"^{company_name.strip()}$", "$options": "i"}
 
-            docs = list(col.find(query).sort("created_at", 1))
-            if docs:
-                for d in docs:
-                    d["id"] = str(d.get("_id", d.get("queue_id", "")))
-                    pending_list.append(d)
-                return pending_list
-        except Exception as exc:
-            logger.debug(f"MongoDB pending queue lookup error: {exc}")
+                docs = list(col.find(query).sort("created_at", 1))
+                if docs:
+                    for d in docs:
+                        d["id"] = str(d.get("_id", d.get("queue_id", "")))
+                        pending_list.append(d)
+                    return pending_list
+            except Exception as exc:
+                logger.debug(f"MongoDB pending queue lookup error: {exc}")
 
         # Fallback to local queue file
         local_items = self._read_local_queue()
@@ -181,18 +185,20 @@ class VoucherQueueRepository:
     def mark_voucher_completed(self, cmd_id: str, tally_voucher_number: Optional[str] = None) -> bool:
         """Marks a voucher in the pending queue as successfully posted into Tally."""
         now_iso = datetime.now(timezone.utc).isoformat()
-        try:
-            col = get_collection("pending_voucher_queue")
-            col.update_one(
-                {"cmd_id": str(cmd_id)},
-                {"$set": {
-                    "status": "COMPLETED",
-                    "tally_voucher_number": tally_voucher_number,
-                    "completed_at": now_iso
-                }}
-            )
-        except Exception as exc:
-            logger.debug(f"MongoDB queue completion update error: {exc}")
+        from shared.config import get_settings
+        if get_settings().direct_mongo_sync_enabled:
+            try:
+                col = get_collection("pending_voucher_queue")
+                col.update_one(
+                    {"cmd_id": str(cmd_id)},
+                    {"$set": {
+                        "status": "COMPLETED",
+                        "tally_voucher_number": tally_voucher_number,
+                        "completed_at": now_iso
+                    }}
+                )
+            except Exception as exc:
+                logger.debug(f"MongoDB queue completion update error: {exc}")
 
         local_items = self._read_local_queue()
         for item in local_items:
@@ -207,17 +213,19 @@ class VoucherQueueRepository:
     def mark_voucher_attempt(self, cmd_id: str, error_reason: str) -> bool:
         """Records a failed attempt or retry on a pending voucher."""
         now_iso = datetime.now(timezone.utc).isoformat()
-        try:
-            col = get_collection("pending_voucher_queue")
-            col.update_one(
-                {"cmd_id": str(cmd_id)},
-                {
-                    "$inc": {"attempts": 1},
-                    "$set": {"last_attempt_at": now_iso, "reason": error_reason}
-                }
-            )
-        except Exception:
-            pass
+        from shared.config import get_settings
+        if get_settings().direct_mongo_sync_enabled:
+            try:
+                col = get_collection("pending_voucher_queue")
+                col.update_one(
+                    {"cmd_id": str(cmd_id)},
+                    {
+                        "$inc": {"attempts": 1},
+                        "$set": {"last_attempt_at": now_iso, "reason": error_reason}
+                    }
+                )
+            except Exception:
+                pass
 
         local_items = self._read_local_queue()
         for item in local_items:
@@ -231,18 +239,20 @@ class VoucherQueueRepository:
     def mark_voucher_failed(self, cmd_id: str, error_reason: str) -> bool:
         """Marks a voucher in the queue as FAILED permanently."""
         now_iso = datetime.now(timezone.utc).isoformat()
-        try:
-            col = get_collection("pending_voucher_queue")
-            col.update_one(
-                {"cmd_id": str(cmd_id)},
-                {"$set": {
-                    "status": "FAILED",
-                    "reason": error_reason,
-                    "failed_at": now_iso
-                }}
-            )
-        except Exception as exc:
-            logger.debug(f"MongoDB queue failure update error: {exc}")
+        from shared.config import get_settings
+        if get_settings().direct_mongo_sync_enabled:
+            try:
+                col = get_collection("pending_voucher_queue")
+                col.update_one(
+                    {"cmd_id": str(cmd_id)},
+                    {"$set": {
+                        "status": "FAILED",
+                        "reason": error_reason,
+                        "failed_at": now_iso
+                    }}
+                )
+            except Exception as exc:
+                logger.debug(f"MongoDB queue failure update error: {exc}")
 
         local_items = self._read_local_queue()
         for item in local_items:
@@ -256,11 +266,13 @@ class VoucherQueueRepository:
 
     def delete_pending_voucher(self, cmd_id: str) -> bool:
         """Removes a voucher from the pending queue."""
-        try:
-            col = get_collection("pending_voucher_queue")
-            col.delete_one({"cmd_id": str(cmd_id)})
-        except Exception:
-            pass
+        from shared.config import get_settings
+        if get_settings().direct_mongo_sync_enabled:
+            try:
+                col = get_collection("pending_voucher_queue")
+                col.delete_one({"cmd_id": str(cmd_id)})
+            except Exception:
+                pass
 
         local_items = self._read_local_queue()
         local_items = [it for it in local_items if str(it.get("cmd_id")) != str(cmd_id)]

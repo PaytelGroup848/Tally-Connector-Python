@@ -304,26 +304,28 @@ class ImporterService:
                 self._idempotency_cache[idemp_key] = response
                 if len(self._idempotency_cache) > self._max_cache_size:
                     self._idempotency_cache.popitem(last=False)
-                try:
-                    from datetime import datetime, timezone
+                from shared.config import get_settings
+                if get_settings().direct_mongo_sync_enabled:
+                    try:
+                        from datetime import datetime, timezone
 
-                    from shared.db.mongo_client import get_collection
-                    col = get_collection("imported_vouchers_idempotency")
-                    col.update_one(
-                        {"idempotency_key": idemp_key},
-                        {"$set": {
-                            "idempotency_key": idemp_key,
-                            "company_name": comp_name_raw,
-                            "voucher_type": v_type_raw,
-                            "voucher_number": result.get("voucher_number"),
-                            "amount": response["amount"],
-                            "response": response,
-                            "created_at": datetime.now(timezone.utc)
-                        }},
-                        upsert=True
-                    )
-                except Exception as ex:  # noqa: BLE001
-                    logger.debug(f"Idempotency persistence notice: {ex}")
+                        from shared.db.mongo_client import get_collection
+                        col = get_collection("imported_vouchers_idempotency")
+                        col.update_one(
+                            {"idempotency_key": idemp_key},
+                            {"$set": {
+                                "idempotency_key": idemp_key,
+                                "company_name": comp_name_raw,
+                                "voucher_type": v_type_raw,
+                                "voucher_number": result.get("voucher_number"),
+                                "amount": response["amount"],
+                                "response": response,
+                                "created_at": datetime.now(timezone.utc)
+                            }},
+                            upsert=True
+                        )
+                    except Exception as ex:  # noqa: BLE001
+                        logger.debug(f"Idempotency persistence notice: {ex}")
         else:
             logger.error(f"Voucher import failed for {target}: {result.get('error')}")
 

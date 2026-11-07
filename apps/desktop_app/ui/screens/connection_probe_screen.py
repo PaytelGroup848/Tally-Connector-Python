@@ -90,20 +90,8 @@ class ConnectionProbeScreen(QWidget):
         card_hdr_row = QHBoxLayout()
         card_hdr_row.setSpacing(8)
 
-        tally_badge = QLabel("Tally")
-        tally_badge.setFixedSize(38, 26)
-        tally_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tally_badge.setStyleSheet("""
-            QLabel {
-                background-color: #F1F5F9;
-                border: 1px solid #E2E8F0;
-                border-radius: 6px;
-                color: #DC2626;
-                font-size: 11px;
-                font-weight: 900;
-                font-style: italic;
-            }
-        """)
+        from apps.desktop_app.ui.asset_helper import create_tally_logo_label
+        tally_badge = create_tally_logo_label(28, 28)
         card_hdr_row.addWidget(tally_badge)
 
         title_lbl = QLabel("Tally Connection Probing")

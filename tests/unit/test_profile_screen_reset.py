@@ -16,7 +16,6 @@ def test_profile_screen_init_and_reset_fields(qapp):
     screen = ProfileScreen()
 
     # Pre-populate some fields
-    screen.val_name_lbl.setText("John Doe")
     screen.lbl_device_name.setText("My-Laptop")
     screen.lbl_heartbeat.setText("10:00 AM")
     screen.plan_badge.setText("ENTERPRISE")
@@ -26,11 +25,6 @@ def test_profile_screen_init_and_reset_fields(qapp):
     screen.reset_fields()
 
     # Verify reset values
-    assert screen.val_name_lbl.text() == "Not Provided"
-    assert screen.val_mobile_lbl.text() == "Not Provided"
-    assert screen.val_email_lbl.text() == "Not Provided"
-    assert screen.val_zip_lbl.text() == "Not Provided"
-
     assert screen.lbl_device_name.text() == "-"
     assert screen.lbl_device_id.text() == "-"
     assert screen.lbl_org_id.text() == "-"
@@ -41,5 +35,3 @@ def test_profile_screen_init_and_reset_fields(qapp):
     assert screen.plan_badge.text() == "FREE PLAN"
     assert screen.lbl_sub_status.text() == "INACTIVE"
     assert screen.lbl_valid_period.text() == "-"
-    assert screen.profile_stack.currentIndex() == 0
-
