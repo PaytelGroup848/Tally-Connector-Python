@@ -6,6 +6,6 @@
   "releaseNotes": "CtrlBooks Release v1.0.3 - Fixed UnboundLocalError during date-range change full sync, plus improved sync speed and polished UI dialogs and toasts.",
   "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.3.exe",
   "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.3.exe",
-  "sha256": "93f3c50fafef166f609611e9b2dc2b2e19a2776775a13c02906d0230c1365383",
+  "sha256": "c1c88a3419e3f194f0105a4c9b0d305f80c8bf83e1e7782b591ed3f4c5600311",
   "mandatory": false
 }
