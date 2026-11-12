@@ -1,11 +1,11 @@
 {
-  "version": "1.0.1",
-  "latestVersion": "1.0.1",
-  "latest_version": "1.0.1",
-  "minVersion": "1.0.1",
-  "releaseNotes": "CtrlBooks Release v1.0.1 - Added sync date range to ledger payloads, dynamic voucherGroup resolution, and cloud synchronization enhancements.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.1.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.1.exe",
-  "sha256": "",
+  "version": "1.0.2",
+  "latestVersion": "1.0.2",
+  "latest_version": "1.0.2",
+  "minVersion": "1.0.2",
+  "releaseNotes": "CtrlBooks Release v1.0.2 - Eliminated sync & voucher creation lag, updated official TallyPrime branding, and polished dropdowns, date pickers, dialogs, and toast notifications.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.2.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.2.exe",
+  "sha256": "007c111ff9c182b26cabce0fecf56c013d8592239a7ef59e4b51ca691f32765d",
   "mandatory": false
 }
