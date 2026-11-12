@@ -201,4 +201,75 @@ def test_07_sync_vouchers_drops_out_of_range_vouchers(monkeypatch):
     assert max_alter == 200
 
 
+def test_08_full_sync_with_cloud_id_and_date_range_wipe_replace(tmp_path, monkeypatch):
+    """
+    Regression test for UnboundLocalError ('local_cp') when cloud_company_id is already
+    a 24-char ObjectId AND is_full_sync=True (Change Date Range / First Sync with Date).
+    Also verifies that both full sync and changed date ranges push with is_full_replace=True
+    so the web backend wipes old records and saves the new range.
+    """
+    from apps.desktop_app.ui.threads.sync_worker import BackgroundSyncWorker
+    import shared.cloud.helpers as helpers_mod
+
+    cp_file = tmp_path / "sync_checkpoints.json"
+    monkeypatch.setattr(helpers_mod, "SYNC_CHECKPOINTS_FILE", cp_file)
+
+    cloud_id = "67bc954f92d4b9fbb0ad70d8"
+    comp_name = "Venkateshwara Traders"
+
+    def _run_sync(is_full_sync: bool, from_date: str, to_date: str):
+        worker = BackgroundSyncWorker(
+            target_company=comp_name,
+            source="TALLY",
+            is_full_sync=is_full_sync,
+            from_date=from_date,
+            to_date=to_date,
+        )
+        monkeypatch.setattr(worker, "_resolve_ids", lambda *a, **kw: (None, None))
+        monkeypatch.setattr(worker, "_sync_groups", lambda *a, **kw: None)
+        monkeypatch.setattr(worker, "_sync_godowns", lambda *a, **kw: None)
+        monkeypatch.setattr(worker, "_sync_units", lambda *a, **kw: None)
+        monkeypatch.setattr(worker, "_sync_stock_groups", lambda *a, **kw: None)
+        monkeypatch.setattr(worker, "_sync_voucher_types", lambda *a, **kw: None)
+        monkeypatch.setattr(worker, "_sync_ledgers", lambda *a, **kw: ([], 10))
+        monkeypatch.setattr(worker, "_sync_stock_items", lambda *a, **kw: ([], 5))
+        monkeypatch.setattr(worker, "_sync_vouchers", lambda *a, **kw: ([], 20))
+        monkeypatch.setattr(worker, "_sync_pl_accounts", lambda *a, **kw: [])
+        monkeypatch.setattr(worker, "_reconcile_pending_commands", lambda *a, **kw: None)
+
+        captured_push = {}
+
+        def fake_push(*args, **kwargs):
+            captured_push.update(kwargs)
+            return True, "OK"
+
+        monkeypatch.setattr(worker, "_push_cloud_sync", fake_push)
+
+        ok, reason = worker._sync_single_company(
+            comp={"company_name": comp_name, "cloud_company_id": cloud_id},
+            idx=1,
+            total_companies=1,
+            tally_port=9000,
+            open_companies=[{"name": comp_name, "guid": "abc123456789012345"}],
+        )
+        return ok, reason, captured_push
+
+    # 1. Full sync with valid 24-char cloud_id + explicit date range (must NOT raise UnboundLocalError)
+    ok1, reason1, push1 = _run_sync(is_full_sync=True, from_date="2025-04-01", to_date="2026-03-31")
+    assert ok1 is True, reason1
+    assert push1["is_incremental"] is False
+    assert push1["is_full_replace"] is True
+    assert push1["start_date"] == "2025-04-01"
+    assert push1["end_date"] == "2026-03-31"
+
+    # 2. Normal (non-full) sync after date range changes -> must detect change & force full replace
+    ok2, reason2, push2 = _run_sync(is_full_sync=False, from_date="2024-04-01", to_date="2025-03-31")
+    assert ok2 is True, reason2
+    assert push2["is_incremental"] is False
+    assert push2["is_full_replace"] is True
+    assert push2["start_date"] == "2024-04-01"
+    assert push2["end_date"] == "2025-03-31"
+
+
+
 

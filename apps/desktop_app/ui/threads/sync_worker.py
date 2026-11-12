@@ -654,6 +654,7 @@ class BackgroundSyncWorker(QThread):
         c_guid: str = str(comp.get("company_guid") or "")
 
         cloud_cid: Optional[str] = comp.get("cloud_company_id") or comp.get("id")
+        local_cp: Optional[Dict[str, Any]] = None
 
         if not cloud_cid or not isinstance(cloud_cid, str) or len(str(cloud_cid).strip()) != 24:
 
@@ -787,8 +788,16 @@ class BackgroundSyncWorker(QThread):
 
 
 
-        # Determine if incremental sync can be used for vouchers
+        # Always load local checkpoint before incremental/date-change checks so date-range wipe detection never hits UnboundLocalError
+        from shared.cloud.helpers import get_local_checkpoint
+        local_cp = (
+            get_local_checkpoint(cloud_cid or c_name)
+            or get_local_checkpoint(c_name)
+            or get_local_checkpoint(tally_c_name)
+            or local_cp
+        )
 
+        # Determine if incremental sync can be used for vouchers
         from_alter_id: Optional[int] = None
 
         if not self.is_full_sync:
@@ -798,10 +807,6 @@ class BackgroundSyncWorker(QThread):
             # CRITICAL: Vouchers have an independent ALTERID counter in Tally from Masters (Ledgers/Stock).
 
             # NEVER fall back to last_alter_id, which would filter out vouchers with lower alter IDs.
-
-            from shared.cloud.helpers import get_local_checkpoint
-
-            local_cp = get_local_checkpoint(cloud_cid or c_name) or get_local_checkpoint(tally_c_name)
 
             if local_cp:
 

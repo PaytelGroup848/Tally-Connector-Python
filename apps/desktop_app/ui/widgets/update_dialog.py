@@ -117,7 +117,7 @@ class UpdateAvailableDialog(QDialog):
 
         # Version Pill Box
         curr_ver = self.update_info.get("current_version", "1.0.0")
-        latest_ver = self.update_info.get("latest_version", "1.0.2")
+        latest_ver = self.update_info.get("latest_version", "1.0.3")
 
         ver_box = QFrame()
         ver_box.setStyleSheet("""

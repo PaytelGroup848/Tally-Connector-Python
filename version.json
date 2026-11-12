@@ -1,11 +1,11 @@
 {
-  "version": "1.0.2",
-  "latestVersion": "1.0.2",
-  "latest_version": "1.0.2",
-  "minVersion": "1.0.2",
-  "releaseNotes": "CtrlBooks Release v1.0.2 - Eliminated sync & voucher creation lag, updated official TallyPrime branding, and polished dropdowns, date pickers, dialogs, and toast notifications.",
-  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.2.exe",
-  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.2.exe",
-  "sha256": "007c111ff9c182b26cabce0fecf56c013d8592239a7ef59e4b51ca691f32765d",
+  "version": "1.0.3",
+  "latestVersion": "1.0.3",
+  "latest_version": "1.0.3",
+  "minVersion": "1.0.3",
+  "releaseNotes": "CtrlBooks Release v1.0.3 - Fixed UnboundLocalError during date-range change full sync, plus improved sync speed and polished UI dialogs and toasts.",
+  "downloadUrl": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.3.exe",
+  "download_url": "http://191.44.87.205:8000/downloads/CtrlBooks_Setup_v1.0.3.exe",
+  "sha256": "93f3c50fafef166f609611e9b2dc2b2e19a2776775a13c02906d0230c1365383",
   "mandatory": false
 }
