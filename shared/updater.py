@@ -166,15 +166,21 @@ class OTAUpdater:
 
         try:
             logger.info(f"Starting update download from {download_url} -> {dest_path}")
-            response = requests.get(download_url, stream=True, timeout=30.0)
+            # Request uncompressed stream so server preserves Content-Length for accurate 1-100% progress
+            response = requests.get(
+                download_url,
+                headers={"Accept-Encoding": "identity"},
+                stream=True,
+                timeout=30.0,
+            )
             if response.status_code != 200:
                 return False, None, f"Download failed with HTTP status {response.status_code}"
 
-            total_size = int(response.headers.get("content-length", 0))
+            total_size = int(response.headers.get("content-length") or response.headers.get("x-file-size") or 0)
             downloaded = 0
 
             with open(dest_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1048576):
+                for chunk in response.iter_content(chunk_size=65536):
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)

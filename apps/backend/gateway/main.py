@@ -58,13 +58,23 @@ async def lifespan(app: FastAPI):
         _http_client = None
     lifecycle.shutdown()
 
+class SelectiveGZipMiddleware(GZipMiddleware):
+    """Applies GZip compression to API responses while skipping /downloads binaries so Content-Length stays intact."""
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and str(scope.get("path", "")).startswith("/downloads"):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
+
 app = FastAPI(
     title="CtrlBooks API Gateway",
     description="Unified API Gateway routing to Tally backend microservices",
     lifespan=lifespan
 )
 
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(SelectiveGZipMiddleware, minimum_size=1000)
 
 from apps.backend.router.auth_routes import router as auth_router
 from apps.backend.router.user_routes import router as user_router

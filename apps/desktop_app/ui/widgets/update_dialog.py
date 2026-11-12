@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QProgressBar, QFrame, QTextEdit, QApplication
 )
-from PySide6.QtCore import Qt, QThread, Signal, QUrl
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices, QColor
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 
@@ -50,6 +50,13 @@ class UpdateAvailableDialog(QDialog):
         super().__init__(parent)
         self.update_info = update_info or {}
         self.dl_thread: Optional[UpdateDownloadThread] = None
+        self._current_pct = 0
+        self._target_pct = 0
+        self._downloaded_bytes = 0
+        self._total_bytes = 0
+        self._pending_install_path = ""
+        self._pct_timer = QTimer(self)
+        self._pct_timer.timeout.connect(self._step_progress_pct)
 
         self.setWindowTitle("Update Available - CtrlBooks")
         self.setFixedWidth(500)
@@ -272,12 +279,22 @@ class UpdateAvailableDialog(QDialog):
             self.lbl_status.setVisible(True)
             return
 
+        self._current_pct = 0
+        self._target_pct = 0
+        self._downloaded_bytes = 0
+        self._total_bytes = 0
+        self._pending_install_path = ""
+
         self.btn_update.setEnabled(False)
         self.btn_later.setEnabled(False)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setFormat("%p%")
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
+        self.lbl_status.setStyleSheet("font-size: 11px; color: #64748B; border: none; background: transparent;")
         self.lbl_status.setVisible(True)
-        self.lbl_status.setText("Connecting to update server...")
+        self.lbl_status.setText("Connecting to update server... (0%)")
+        self._pct_timer.start(15)
 
         expected_sha = self.update_info.get("sha256")
         self.dl_thread = UpdateDownloadThread(download_url, expected_sha)
@@ -285,35 +302,62 @@ class UpdateAvailableDialog(QDialog):
         self.dl_thread.finished_signal.connect(self.on_download_finished)
         self.dl_thread.start()
 
-    def on_download_progress(self, downloaded: int, total: int):
-        if total > 0:
-            pct = int((downloaded / total) * 100)
-            self.progress_bar.setValue(pct)
-            mb_dl = downloaded / (1024 * 1024)
-            mb_tot = total / (1024 * 1024)
-            self.lbl_status.setText(f"Downloading update: {mb_dl:.1f} MB / {mb_tot:.1f} MB ({pct}%)")
+    def _update_progress_label(self):
+        if self._total_bytes > 0:
+            mb_dl = self._downloaded_bytes / (1024 * 1024)
+            mb_tot = self._total_bytes / (1024 * 1024)
+            self.lbl_status.setText(f"Downloading update: {mb_dl:.1f} MB / {mb_tot:.1f} MB ({self._current_pct}%)")
+        elif self._downloaded_bytes > 0:
+            mb_dl = self._downloaded_bytes / (1024 * 1024)
+            self.lbl_status.setText(f"Downloading update: {mb_dl:.1f} MB ({self._current_pct}%)")
+
+    def _step_progress_pct(self):
+        """Steps download progress smoothly 1% by 1% (1, 2, 3...100)."""
+        if self._current_pct < self._target_pct:
+            self._current_pct += 1
+            self.progress_bar.setValue(self._current_pct)
+            self._update_progress_label()
+
+        if self._pending_install_path and self._current_pct >= 100:
+            self._pct_timer.stop()
+            self._launch_downloaded_installer(self._pending_install_path)
+
+    def _launch_downloaded_installer(self, dest_path: str):
+        self.lbl_status.setText("Download complete (100%)! Launching setup installer...")
+        self.lbl_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #059669; border: none;")
+
+        launched = updater_service.install_and_restart(dest_path)
+        if launched:
+            logger.info(f"Update installer launched ({dest_path}). Exiting current process for update.")
+            QApplication.quit()
+            os._exit(0)
         else:
-            mb_dl = downloaded / (1024 * 1024)
-            self.lbl_status.setText(f"Downloading update: {mb_dl:.1f} MB...")
+            self.lbl_status.setText(f"Installer downloaded at: {dest_path}")
+
+    def on_download_progress(self, downloaded: int, total: int):
+        self._downloaded_bytes = downloaded
+        self._total_bytes = total
+        if total > 0:
+            pct = max(0, min(99, int((downloaded / total) * 100)))
+        else:
+            # Fallback progression if Content-Length header is ever stripped
+            pct = min(95, max(1, int(downloaded / (512 * 1024))))
+        if pct > self._target_pct:
+            self._target_pct = pct
+        self._update_progress_label()
 
     def on_download_finished(self, success: bool, dest_path: str, err_msg: str):
         self.btn_update.setEnabled(True)
         self.btn_later.setEnabled(True)
 
         if success and dest_path:
-            self.progress_bar.setValue(100)
-            self.lbl_status.setText("Download complete! Launching setup installer...")
-            self.lbl_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #059669; border: none;")
-
-            # Launch installer and exit current application immediately
-            launched = updater_service.install_and_restart(dest_path)
-            if launched:
-                logger.info(f"Update installer launched ({dest_path}). Exiting current process for update.")
-                QApplication.quit()
-                os._exit(0)
-            else:
-                self.lbl_status.setText(f"Installer downloaded at: {dest_path}")
+            self._target_pct = 100
+            self._pending_install_path = dest_path
+            if self._current_pct >= 100:
+                self._pct_timer.stop()
+                self._launch_downloaded_installer(dest_path)
         else:
+            self._pct_timer.stop()
             self.lbl_status.setText(f"Download error: {err_msg}")
             self.lbl_status.setStyleSheet("font-size: 11px; color: #EF4444; border: none;")
 
@@ -321,6 +365,13 @@ class UpdateAvailableDialog(QDialog):
             download_url = self.update_info.get("download_url")
             if download_url:
                 self.btn_update.setText("Open Download in Browser")
-                self.btn_update.clicked.disconnect()
+                try:
+                    self.btn_update.clicked.disconnect()
+                except Exception:
+                    pass
                 self.btn_update.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(download_url)))
+
+    def closeEvent(self, event):
+        self._pct_timer.stop()
+        super().closeEvent(event)
 

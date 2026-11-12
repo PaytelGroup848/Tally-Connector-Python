@@ -445,8 +445,16 @@ class ConnectionSettingsScreen(QWidget):
 
     def on_download_progress(self, downloaded: int, total: int):
         if total > 0:
-            pct = int((downloaded / total) * 100)
+            pct = max(0, min(99, int((downloaded / total) * 100)))
             self.progress_bar.setValue(pct)
+            mb_dl = downloaded / (1024 * 1024)
+            mb_tot = total / (1024 * 1024)
+            self.lbl_update_status.setText(f"Downloading update: {mb_dl:.1f} MB / {mb_tot:.1f} MB ({pct}%)")
+        else:
+            mb_dl = downloaded / (1024 * 1024)
+            pct = min(95, max(1, int(downloaded / (512 * 1024))))
+            self.progress_bar.setValue(pct)
+            self.lbl_update_status.setText(f"Downloading update: {mb_dl:.1f} MB ({pct}%)")
 
     def on_download_finished(self, success: bool, dest_path: str, err_msg: str):
         self.btn_install_update.setEnabled(True)

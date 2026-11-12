@@ -75,6 +75,66 @@ class TestOTAUpdater(unittest.TestCase):
         self.assertIsNotNone(res["download_url"])
         self.assertIn("CtrlBooks_Setup.exe", res["download_url"])
 
+    @patch("requests.get")
+    def test_download_update_identity_encoding_and_granular_progress(self, mock_get):
+        import hashlib
+        payload = b"CTRLBOOKS_BINARY_DATA" * 4000
+        expected_hash = hashlib.sha256(payload).hexdigest()
+        mid = len(payload) // 2
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"content-length": str(len(payload))}
+        mock_resp.iter_content.return_value = [payload[:mid], payload[mid:]]
+        mock_get.return_value = mock_resp
+
+        seen_progress = []
+        updater = OTAUpdater()
+        ok, path, err = updater.download_update(
+            "http://127.0.0.1:8000/downloads/CtrlBooks_Setup_v1.0.3.exe",
+            expected_sha256=expected_hash,
+            progress_callback=lambda dl, tot: seen_progress.append((dl, tot)),
+        )
+        self.assertTrue(ok, err)
+        self.assertIsNotNone(path)
+        mock_get.assert_called_once()
+        call_headers = mock_get.call_args.kwargs.get("headers") or {}
+        self.assertEqual(call_headers.get("Accept-Encoding"), "identity")
+        mock_resp.iter_content.assert_called_once_with(chunk_size=65536)
+        self.assertEqual(seen_progress[-1], (len(payload), len(payload)))
+        import os
+        if path and os.path.exists(path):
+            os.remove(path)
+
+    def test_update_dialog_serial_one_by_one_percentage(self):
+        import sys
+        from PySide6.QtWidgets import QApplication
+        from apps.desktop_app.ui.widgets.update_dialog import UpdateAvailableDialog
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        dlg = UpdateAvailableDialog({"current_version": "1.0.2", "latest_version": "1.0.3", "download_url": "http://example.com/app.exe"})
+        dlg.on_download_progress(5 * 1024 * 1024, 100 * 1024 * 1024)
+        self.assertEqual(dlg._target_pct, 5)
+        steps = []
+        for _ in range(5):
+            dlg._step_progress_pct()
+            steps.append(dlg.progress_bar.value())
+        self.assertEqual(steps, [1, 2, 3, 4, 5])
+        dlg.close()
+
+    def test_selective_gzip_skips_downloads(self):
+        import asyncio
+        from apps.backend.gateway.main import SelectiveGZipMiddleware
+
+        called_direct = []
+
+        async def dummy_app(scope, receive, send):
+            called_direct.append(scope["path"])
+
+        mw = SelectiveGZipMiddleware(dummy_app, minimum_size=1000)
+        asyncio.run(mw({"type": "http", "path": "/downloads/CtrlBooks_Setup_v1.0.3.exe"}, None, None))
+        self.assertEqual(called_direct, ["/downloads/CtrlBooks_Setup_v1.0.3.exe"])
+
 
 if __name__ == "__main__":
     unittest.main()
