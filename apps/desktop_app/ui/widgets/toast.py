@@ -6,16 +6,22 @@ Always positioned at the bottom-right corner of the active screen.
 """
 
 from typing import List, Optional
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QGraphicsDropShadowEffect
-from PySide6.QtGui import QGuiApplication, QColor
+from PySide6.QtWidgets import QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QGraphicsDropShadowEffect
+from PySide6.QtGui import QGuiApplication, QColor, QFontMetrics
 from PySide6.QtCore import Qt, QTimer
 from apps.desktop_app.styles.colors import Colors
 
 _active_toasts: List["ToastNotification"] = []
 
+_TOAST_THEMES = {
+    "success": (Colors.SUCCESS_BG, "#065F46", Colors.SUCCESS_BORDER, "#10B981", "✓"),
+    "error": (Colors.ERROR_BG, Colors.ERROR_FG, Colors.ERROR_BORDER, "#EF4444", "✕"),
+    "info": (Colors.INFO_BG, Colors.INFO_FG, Colors.INFO_BORDER, "#2563EB", "i"),
+}
 
-class ToastNotification(QFrame):
-    def __init__(self, message: str, toast_type: str = "success", parent=None):
+
+class ToastNotification(QWidget):
+    def __init__(self, message: str, toast_type: str = "success", parent=None, duration_ms: int = 4000):
         super().__init__(parent)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -23,54 +29,81 @@ class ToastNotification(QFrame):
             | Qt.WindowType.WindowStaysOnTopHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
-        bg, fg, border = Colors.SUCCESS_BG, Colors.SUCCESS_FG, Colors.SUCCESS_BORDER
-        icon = "✓"
+        bg, fg, border, icon_bg, icon = _TOAST_THEMES.get(toast_type, _TOAST_THEMES["success"])
 
-        if toast_type == "error":
-            bg, fg, border = Colors.ERROR_BG, Colors.ERROR_FG, Colors.ERROR_BORDER
-            icon = "✕"
-        elif toast_type == "info":
-            bg, fg, border = Colors.INFO_BG, Colors.INFO_FG, Colors.INFO_BORDER
-            icon = "ℹ"
+        # Outer transparent wrapper reserves padding for the card's drop shadow so corners stay artifact-free
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(12, 10, 12, 14)
 
-        self.setStyleSheet(f"""
-            QFrame {{
+        self.card = QFrame(self)
+        self.card.setObjectName("ToastCard")
+        self.card.setStyleSheet(f"""
+            QFrame#ToastCard {{
                 background-color: {bg};
-                border: 1px solid {border};
-                border-radius: 8px;
-            }}
-            QLabel {{
-                color: {fg};
-                font-weight: 600;
-                font-size: 12px;
+                border: 1.5px solid {border};
+                border-radius: 10px;
             }}
         """)
 
-        # Clean subtle shadow for modern look
         try:
-            shadow = QGraphicsDropShadowEffect(self)
-            shadow.setBlurRadius(16)
-            shadow.setColor(QColor(15, 23, 42, 35))
+            shadow = QGraphicsDropShadowEffect(self.card)
+            shadow.setBlurRadius(18)
+            shadow.setColor(QColor(15, 23, 42, 45))
             shadow.setOffset(0, 4)
-            self.setGraphicsEffect(shadow)
+            self.card.setGraphicsEffect(shadow)
         except Exception:
             pass
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
+        card_layout = QHBoxLayout(self.card)
+        card_layout.setContentsMargins(12, 9, 16, 9)
+        card_layout.setSpacing(10)
 
-        self.lbl = QLabel(f"{icon}  {message}")
-        self.lbl.setWordWrap(True)
-        layout.addWidget(self.lbl)
+        self.icon_badge = QLabel(icon, self.card)
+        self.icon_badge.setFixedSize(20, 20)
+        self.icon_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_badge.setStyleSheet(f"""
+            QLabel {{
+                background-color: {icon_bg};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 10px;
+                font-size: 11px;
+                font-weight: 900;
+            }}
+        """)
+        card_layout.addWidget(self.icon_badge, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self.setMaximumWidth(650)
-        self.setMinimumHeight(38)
+        clean_msg = str(message or "")
+        self.lbl = QLabel(clean_msg, self.card)
+        self.lbl.setStyleSheet(f"""
+            QLabel {{
+                color: {fg};
+                font-weight: 700;
+                font-size: 12px;
+                border: none;
+                background: transparent;
+            }}
+        """)
+        # Only wrap genuinely long messages; short notices stay cleanly single-line instead of collapsing width
+        max_text_width = 420
+        measure_font = self.lbl.font()
+        measure_font.setPixelSize(12)
+        measure_font.setBold(True)
+        if QFontMetrics(measure_font).horizontalAdvance(clean_msg) > max_text_width:
+            self.lbl.setWordWrap(True)
+            self.lbl.setFixedWidth(max_text_width)
+        else:
+            self.lbl.setWordWrap(False)
 
-        # Connect cleanup on destroy
+        card_layout.addWidget(self.lbl, 1, Qt.AlignmentFlag.AlignVCenter)
+        root_layout.addWidget(self.card)
+
+        self.setMaximumWidth(560)
         self.destroyed.connect(self._cleanup_active)
 
-        QTimer.singleShot(4000, self.close)
+        QTimer.singleShot(duration_ms, self.close)
 
     def _cleanup_active(self):
         global _active_toasts
@@ -125,9 +158,8 @@ class ToastNotification(QFrame):
     def show_toast(cls, parent, message: str, toast_type: str = "success", duration_ms: int = 3500):
         """Helper to create, position, and show a toast notification in bottom-right corner."""
         try:
-            toast = cls(message, toast_type=toast_type, parent=parent)
+            toast = cls(message, toast_type=toast_type, parent=parent, duration_ms=duration_ms)
             toast.show()
-            QTimer.singleShot(duration_ms, toast.close)
             return toast
         except Exception:
             return None

@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal, Qt, QThread
 from PySide6.QtGui import QColor
+from apps.desktop_app.ui.asset_helper import get_dropdown_stylesheet
 from apps.desktop_app.ui.widgets.lk_header import CtrlBooksHeader
 from apps.desktop_app.ui.widgets.lk_footer import CtrlBooksFooter
 from shared.updater import updater_service
@@ -208,20 +209,9 @@ class ConnectionSettingsScreen(QWidget):
             self.interval_combo.setCurrentText(init_interval)
         self.interval_combo.setFixedHeight(34)
         self.interval_combo.setFixedWidth(120)
-        self.interval_combo.setStyleSheet("""
-            QComboBox {
-                border: 1.5px solid #CBD5E1;
-                border-radius: 8px;
-                padding: 0 8px;
-                font-size: 11px;
-                font-weight: bold;
-                background-color: #FFFFFF;
-                color: #0F172A;
-            }
-            QComboBox:focus {
-                border-color: #10B981;
-            }
-        """)
+        self.interval_combo.setStyleSheet(
+            get_dropdown_stylesheet("QComboBox", font_size=11, font_weight="700", bg_color="#FFFFFF")
+        )
 
         sync_row.addStretch()
         sync_row.addWidget(sync_lbl)

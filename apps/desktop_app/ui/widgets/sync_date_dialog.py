@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QColor
 
-from apps.desktop_app.ui.asset_helper import create_tally_logo_label
+from apps.desktop_app.ui.asset_helper import create_tally_logo_label, get_dropdown_stylesheet
 
 
 class SyncDateDialog(QDialog):
@@ -83,27 +83,16 @@ class SyncDateDialog(QDialog):
             "Custom Date Range",
         ])
         self.combo_presets.setFixedHeight(36)
-        self.combo_presets.setStyleSheet("""
-            QComboBox {
-                border: 1.5px solid #CBD5E1;
-                border-radius: 8px;
-                padding: 0 10px;
-                font-size: 12px;
-                font-weight: 600;
-                color: #0F172A;
-                background-color: #F8FAFC;
-            }
-            QComboBox:focus {
-                border-color: #10B981;
-                background-color: #FFFFFF;
-            }
-        """)
+        self.combo_presets.setStyleSheet(
+            get_dropdown_stylesheet("QComboBox", font_size=12, font_weight="600", bg_color="#F8FAFC")
+        )
         self.combo_presets.currentIndexChanged.connect(self._on_preset_changed)
         layout.addWidget(self.combo_presets)
 
         # Dates Container
         dates_row = QHBoxLayout()
         dates_row.setSpacing(12)
+        date_css = get_dropdown_stylesheet("QDateEdit", font_size=11, font_weight="600", bg_color="#FFFFFF")
 
         # From Date
         v_from = QVBoxLayout()
@@ -114,20 +103,7 @@ class SyncDateDialog(QDialog):
         self.date_from.setCalendarPopup(True)
         self.date_from.setDisplayFormat("dd-MM-yyyy")
         self.date_from.setFixedHeight(34)
-        self.date_from.setStyleSheet("""
-            QDateEdit {
-                border: 1.5px solid #CBD5E1;
-                border-radius: 8px;
-                padding: 0 8px;
-                font-size: 11px;
-                font-weight: 600;
-                color: #0F172A;
-                background-color: #FFFFFF;
-            }
-            QDateEdit:focus {
-                border-color: #10B981;
-            }
-        """)
+        self.date_from.setStyleSheet(date_css)
         self.date_from.dateChanged.connect(self._on_date_manually_changed)
         v_from.addWidget(lbl_from)
         v_from.addWidget(self.date_from)
@@ -142,20 +118,7 @@ class SyncDateDialog(QDialog):
         self.date_to.setCalendarPopup(True)
         self.date_to.setDisplayFormat("dd-MM-yyyy")
         self.date_to.setFixedHeight(34)
-        self.date_to.setStyleSheet("""
-            QDateEdit {
-                border: 1.5px solid #CBD5E1;
-                border-radius: 8px;
-                padding: 0 8px;
-                font-size: 11px;
-                font-weight: 600;
-                color: #0F172A;
-                background-color: #FFFFFF;
-            }
-            QDateEdit:focus {
-                border-color: #10B981;
-            }
-        """)
+        self.date_to.setStyleSheet(date_css)
         self.date_to.dateChanged.connect(self._on_date_manually_changed)
         v_to.addWidget(lbl_to)
         v_to.addWidget(self.date_to)

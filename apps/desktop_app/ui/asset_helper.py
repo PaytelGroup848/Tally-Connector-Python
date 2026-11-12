@@ -132,3 +132,83 @@ def create_tally_logo_label(width: int = 28, height: int = 28):
     return lbl
 
 
+def get_dropdown_stylesheet(
+    widget_type: str = "QComboBox",
+    font_size: int = 11,
+    font_weight: str = "600",
+    bg_color: str = "#FFFFFF",
+    padding_left: int = 10,
+    border_radius: int = 8,
+) -> str:
+    """
+    Returns a clean, rounded QSS stylesheet for QComboBox and QDateEdit widgets,
+    replacing the default 3D Windows drop-down button with a smooth transparent target and chevron.
+    """
+    chevron_path = get_asset_path("chevron_down.png")
+    chevron_rule = (
+        f"image: url({chevron_path.as_posix()});\n        width: 12px;\n        height: 12px;"
+        if chevron_path.exists()
+        else ""
+    )
+
+    popup_css = ""
+    if widget_type == "QComboBox":
+        popup_css = f"""
+            QComboBox QAbstractItemView {{
+                background-color: #FFFFFF;
+                border: 1px solid #CBD5E1;
+                border-radius: {border_radius}px;
+                padding: 4px;
+                outline: 0px;
+                selection-background-color: #ECFDF5;
+                selection-color: #065F46;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 26px;
+                padding: 4px 8px;
+                border-radius: 4px;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: #F1F5F9;
+                color: #0F172A;
+            }}
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: #ECFDF5;
+                color: #065F46;
+                font-weight: 700;
+            }}
+        """
+
+    return f"""
+        {widget_type} {{
+            border: 1.5px solid #CBD5E1;
+            border-radius: {border_radius}px;
+            padding: 0 28px 0 {padding_left}px;
+            font-size: {font_size}px;
+            font-weight: {font_weight};
+            background-color: {bg_color};
+            color: #0F172A;
+        }}
+        {widget_type}:hover {{
+            border-color: #94A3B8;
+        }}
+        {widget_type}:focus, {widget_type}:on {{
+            border: 1.5px solid #10B981;
+            background-color: #FFFFFF;
+        }}
+        {widget_type}::drop-down {{
+            subcontrol-origin: border;
+            subcontrol-position: top right;
+            width: 26px;
+            border: none;
+            background: transparent;
+            border-top-right-radius: {border_radius}px;
+            border-bottom-right-radius: {border_radius}px;
+        }}
+        {widget_type}::down-arrow {{
+            {chevron_rule}
+        }}
+        {popup_css}
+    """
+
+
